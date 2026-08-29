@@ -1105,8 +1105,21 @@ async def run_diagnostics():
     except Exception as e:
         print(f"  -> FAILED: {e}")
 
-    # 4. SQLite DB
-    print("\n[4/4] Checking Local SQLite Database...")
+    # 4. GitHub Gist
+    print("\n[4/5] Checking GitHub Gist Cloud Storage (28h Retention)...")
+    if gist_storage.enabled:
+        try:
+            await gist_storage.ensure_gist()
+            data = await gist_storage.load_seen()
+            print(f"  -> SUCCESS! Connected to GitHub Gist: '{gist_storage.gist_id}'")
+            print(f"  -> Stored 28h seen message count: {len(data)}")
+        except Exception as e:
+            print(f"  -> WARNING: Gist check failed ({e})")
+    else:
+        print("  -> INFO: GitHub Gist storage not configured (using local SQLite database).")
+
+    # 5. SQLite DB
+    print("\n[5/5] Checking Local SQLite Database...")
     try:
         count = get_total_processed_count()
         print(f"  -> SUCCESS! Database connected: '{DB_FILE}'")
@@ -1130,10 +1143,8 @@ def validate_config():
         errors.append("THIRDWAVE_API_KEY is missing")
     if not TELEGRAM_GROUP_CHAT_ID and not ADMIN_USER_IDS:
         errors.append("Either TELEGRAM_GROUP_CHAT_ID or ADMIN_USER_IDS must be set")
-    if not GIST_ID:
-        errors.append("GIST_ID is missing — required for 28h persistent storage (create a GitHub Gist and add its ID)")
     if not GIST_TOKEN:
-        errors.append("GIST_TOKEN is missing — required for 28h persistent storage (create a GitHub token with 'gist' scope)")
+        errors.append("GIST_TOKEN is missing — required for 28h persistent storage (GitHub token with 'gist' scope)")
     if errors:
         print("\n❌ Configuration errors:")
         for err in errors:
