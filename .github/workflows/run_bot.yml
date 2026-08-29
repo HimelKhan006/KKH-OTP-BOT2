@@ -1,0 +1,168 @@
+name: OTP Wave 24/7 Always-Online Bot Runner
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+  schedule:
+    # Backup refresh every 5 hours (in case self-trigger fails)
+    - cron: '0 */5 * * *'
+
+# Only ONE bot instance ever runs. New run cancels the old one instantly.
+concurrency:
+  group: otp-wave-bot-single-instance
+  cancel-in-progress: true
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cancel Any Other Running Instances
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "🔍 Cancelling any other active runs..."
+          curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs?status=in_progress&per_page=20" \
+            | python3 -c "
+          import sys, json
+          runs = json.load(sys.stdin).get('workflow_runs', [])
+          for r in runs:
+              if str(r['id']) != '${{ github.run_id }}':
+                  print(r['id'])
+          " | while read r_id; do
+            echo "  🛑 Cancelling old run #$r_id..."
+            curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id/cancel" || true
+          done
+          echo "✅ Cleanup done."
+
+      - name: Clear Old Completed Workflow History
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "🧹 Deleting old completed/cancelled workflow run history..."
+          curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs?status=completed&per_page=20" \
+            | python3 -c "
+          import sys, json
+          runs = json.load(sys.stdin).get('workflow_runs', [])
+          for r in runs:
+              print(r['id'])
+          " | while read r_id; do
+            curl -s -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id" || true
+          done
+          echo "✅ History cleaned."
+
+      # ─────────────────────────────────────────────────────────────────
+      # CRITICAL: Restore the OTP database from cache so the bot knows
+      # which OTPs were already sent — prevents re-sending on restart
+      # ─────────────────────────────────────────────────────────────────
+      - name: Restore OTP Database (Prevent Re-sends)
+        uses: actions/cache/restore@v4
+        with:
+          path: otp_database.db
+          key: otp-database-persistent
+          restore-keys: |
+            otp-database-
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Validate Required Secrets
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          THIRDWAVE_API_KEY: ${{ secrets.THIRDWAVE_API_KEY }}
+          TELEGRAM_GROUP_CHAT_ID: ${{ secrets.TELEGRAM_GROUP_CHAT_ID }}
+        run: |
+          echo "🔍 Checking required GitHub Secrets..."
+          MISSING=""
+          [ -z "$TELEGRAM_BOT_TOKEN" ]     && MISSING="${MISSING}\n  - TELEGRAM_BOT_TOKEN"
+          [ -z "$THIRDWAVE_API_KEY" ]      && MISSING="${MISSING}\n  - THIRDWAVE_API_KEY"
+          [ -z "$TELEGRAM_GROUP_CHAT_ID" ] && MISSING="${MISSING}\n  - TELEGRAM_GROUP_CHAT_ID"
+          if [ -n "$MISSING" ]; then
+            echo -e "❌ Missing secrets:${MISSING}"
+            exit 1
+          fi
+          if [ -f "otp_database.db" ]; then
+            echo "✅ OTP database restored from cache — no re-sends will occur."
+          else
+            echo "ℹ️  Fresh database (first run or cache expired)."
+          fi
+          echo "✅ All secrets present!"
+
+      - name: Run Bot (Auto-Recovery & Crash Protection)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          THIRDWAVE_API_KEY: ${{ secrets.THIRDWAVE_API_KEY }}
+          THIRDWAVE_BASE_URL: ${{ secrets.THIRDWAVE_BASE_URL || 'https://app.thirdwave.im' }}
+          TELEGRAM_GROUP_CHAT_ID: ${{ secrets.TELEGRAM_GROUP_CHAT_ID }}
+          SECONDARY_GROUP_CHAT_ID: ${{ secrets.SECONDARY_GROUP_CHAT_ID }}
+          POLL_INTERVAL_SECONDS: ${{ secrets.POLL_INTERVAL_SECONDS || '2.0' }}
+          ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}
+          STARTUP_TYPE: ${{ github.event_name }}
+          # Tell the bot where to find/save the database
+          DB_FILE: ${{ github.workspace }}/otp_database.db
+        run: |
+          echo "🚀 OTP WAVE starting (trigger: ${{ github.event_name }})..."
+          echo "📦 Database path: $DB_FILE"
+
+          # Run for 5 hours, then self-trigger step will restart immediately
+          END_TIME=$((SECONDS + 18000))
+
+          while [ $SECONDS -lt $END_TIME ]; do
+            echo "⚡ [$(date -u +'%Y-%m-%d %H:%M:%S UTC')] Starting bot.py..."
+            python bot.py
+            EXIT_CODE=$?
+
+            if [ $EXIT_CODE -eq 1 ]; then
+              echo "❌ Config error. Halting."
+              exit 1
+            fi
+
+            echo "⚠️ [$(date -u +'%Y-%m-%d %H:%M:%S UTC')] Bot stopped (exit: $EXIT_CODE). Restarting in 3s..."
+            sleep 3
+          done
+
+          echo "⏱️ 5-hour session complete. Saving database and self-triggering next run..."
+
+      # ─────────────────────────────────────────────────────────────────
+      # Save the OTP database BEFORE the runner is destroyed so the
+      # next run can restore it and avoid re-sending old OTPs
+      # ─────────────────────────────────────────────────────────────────
+      - name: Save OTP Database to Cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: otp_database.db
+          key: otp-database-persistent
+
+      - name: Self-Trigger Next Run (Zero Downtime Restart)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "🔄 Triggering next bot session immediately to avoid downtime..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/run_bot.yml/dispatches" \
+            -d '{"ref":"main"}')
+          if [ "$HTTP_CODE" = "204" ]; then
+            echo "✅ Next run triggered! Bot continues without downtime."
+          else
+            echo "⚠️ Self-trigger returned HTTP $HTTP_CODE (cron will pick up as backup)."
+          fi
