@@ -904,6 +904,14 @@ async def poll_incoming_messages(application: Application):
         for k, ts in gist_seen.items():
             seen_message_ids.add(k)
             seen_timestamps[k] = ts
+        # Populate local SQLite DB from cloud memory so database is never empty on restarts
+        try:
+            with get_db_connection() as conn:
+                for k in gist_seen.keys():
+                    conn.execute("INSERT OR IGNORE INTO processed_otps (id) VALUES (?);", (k,))
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"DB sync from Gist warning: {e}")
         logger.info(f"☁️ Restored {len(gist_seen)} persistent message IDs from GitHub Gist.")
 
     # 2. Preload seen IDs from local DB
@@ -914,7 +922,7 @@ async def poll_incoming_messages(application: Application):
                 seen_message_ids.add(mid)
                 if mid not in seen_timestamps:
                     seen_timestamps[mid] = bot_start_time
-        logger.info(f"Preloaded {len(seen_message_ids)} total seen message keys.")
+        logger.info(f"Preloaded {len(seen_message_ids)} total seen message keys from persistent database.")
     except Exception as e:
         logger.warning(f"Preload error: {e}")
 
