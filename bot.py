@@ -212,20 +212,49 @@ class GistStorage:
         self.token = token
         self.filename = filename
         self.description = description
-        self.enabled = bool(token)           # Only token is required; gist_id is auto-created if missing
+        self.bot_name = "THIRDWAVE_OTP_WAVE"
+        self.enabled = bool(token)
         self.api_url = f"https://api.github.com/gists/{gist_id}" if gist_id else ""
 
     def _auth_headers(self) -> Dict[str, str]:
         return {**GIST_HEADERS, "Authorization": f"Bearer {self.token}"}
 
     async def ensure_gist(self) -> bool:
-        """Auto-create a secret Gist if GIST_ID is not set."""
-        if self.gist_id:
-            return True
+        """Finds existing Gist matching filename, deletes any duplicate Gists, or creates a new one."""
         if not self.token:
             return False
         try:
             async with httpx.AsyncClient(timeout=15.0) as http:
+                # 1. Search existing Gists to reuse and delete duplicates
+                res = await http.get("https://api.github.com/gists?per_page=100", headers=self._auth_headers())
+                if res.is_success:
+                    gists = res.json()
+                    matching_gists = []
+                    for g in gists:
+                        files = g.get("files", {})
+                        if self.filename in files:
+                            matching_gists.append(g)
+
+                    if matching_gists:
+                        # Use the first matching Gist
+                        primary = matching_gists[0]
+                        self.gist_id = primary.get("id", "")
+                        self.api_url = f"https://api.github.com/gists/{self.gist_id}"
+                        logger.info(f"☁️ Reusing existing GitHub Gist: {self.gist_id}")
+
+                        # Automatically DELETE any duplicate Gists from previous runs
+                        for dup in matching_gists[1:]:
+                            dup_id = dup.get("id")
+                            if dup_id and dup_id != self.gist_id:
+                                try:
+                                    del_res = await http.delete(f"https://api.github.com/gists/{dup_id}", headers=self._auth_headers())
+                                    if del_res.status_code in (204, 200):
+                                        logger.info(f"🗑️ Deleted duplicate Gist: {dup_id}")
+                                except Exception as e:
+                                    logger.warning(f"Could not delete duplicate Gist {dup_id}: {e}")
+                        return True
+
+                # 2. If no matching Gist exists, create a new one
                 res = await http.post(
                     "https://api.github.com/gists",
                     headers=self._auth_headers(),
@@ -234,7 +263,7 @@ class GistStorage:
                         "public": False,
                         "files": {
                             self.filename: {
-                                "content": json.dumps({"seen": {}, "bot": "THIRDWAVE_OTP_WAVE", "count": 0}, indent=2)
+                                "content": json.dumps({"seen": {}, "bot": self.bot_name, "count": 0}, indent=2)
                             }
                         }
                     }
@@ -242,13 +271,12 @@ class GistStorage:
                 if res.is_success:
                     self.gist_id = res.json().get("id", "")
                     self.api_url = f"https://api.github.com/gists/{self.gist_id}"
-                    logger.info(f"☁️ Auto-created GitHub Gist: {self.gist_id}")
-                    logger.info(f"   ➜ Add this as a GitHub Secret: GIST_ID = {self.gist_id}")
+                    logger.info(f"☁️ Created new GitHub Gist: {self.gist_id}")
                     return True
                 else:
-                    logger.warning(f"Gist auto-create failed {res.status_code}: {res.text[:120]}")
+                    logger.warning(f"Gist create failed {res.status_code}: {res.text[:120]}")
         except Exception as e:
-            logger.warning(f"Gist auto-create error: {e}")
+            logger.warning(f"Gist auto-management error: {e}")
         return False
 
     async def load_seen(self) -> Dict[str, float]:
