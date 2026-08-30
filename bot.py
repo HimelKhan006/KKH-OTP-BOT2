@@ -982,6 +982,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         f"👑 <b>OTP WAVE (Admin Panel)</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Platform:</b> <code>Thirdwave IPRN</code>\n"
         f"• <b>Status:</b> <code>Active & Running ✅</code>\n"
         f"• <b>Storage:</b> <code>{gist_status}</code>\n"
         f"• <b>Target Groups:</b> <code>{group_text}</code>\n"
