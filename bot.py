@@ -1009,7 +1009,7 @@ async def send_startup_announcement(application: Application):
         "🚀 <b>OTP WAVE ONLINE (Admin Alert)</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "• <b>Status:</b> <code>Active & Monitoring Live OTPs ✅</code>\n"
-        "• <b>Platform:</b> <code>Thirdwave IPRN ({THIRDWAVE_BASE_URL})</code>\n"
+        "• <b>Platform:</b> <code>Thirdwave IPRN</code>\n"
         "• <b>Storage:</b> <code>28h Memory Active ☁️</code>\n"
         "🔔 <i>All incoming OTPs are forwarded directly to your group in real-time.</i>\n"
         "━━━━━━━━━━━━━━━━━━━━"
