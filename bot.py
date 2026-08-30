@@ -996,26 +996,29 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_startup_announcement(application: Application):
     """
-    Sends the startup / restart alert ONLY to the Admin private chat (DM).
-    NEVER sends startup alerts to the Telegram groups, keeping groups 100% clean for OTPs only.
+    Sends startup alert ONLY on initial manual launch.
+    Periodic background keepalive rotations are 100% SILENT.
+    NEVER sends any message to Telegram groups.
     """
-    is_restart = (STARTUP_TYPE == "schedule")
-    status_header = "🔄 <b>OTP WAVE AUTO-REFRESH COMPLETED</b>" if is_restart else "🚀 <b>OTP WAVE ONLINE (Admin Alert)</b>"
-    
+    is_auto_restart = (STARTUP_TYPE == "schedule")
+    if is_auto_restart:
+        logger.info("ℹ️ Silent auto-refresh cycle active. No Telegram alert dispatched.")
+        return
+
     admin_msg = (
-        f"{status_header}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Status:</b> <code>Active & Monitoring Live OTPs ✅</code>\n"
-        f"• <b>Platform:</b> <code>Thirdwave IPRN ({THIRDWAVE_BASE_URL})</code>\n"
-        f"• <b>Storage:</b> <code>28h Memory Active ☁️</code>\n"
-        f"🔔 <i>All incoming OTPs are forwarded directly to your group in real-time.</i>\n"
-        f"━━━━━━━━━━━━━━━━━━━━"
+        "🚀 <b>OTP WAVE ONLINE (Admin Alert)</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "• <b>Status:</b> <code>Active & Monitoring Live OTPs ✅</code>\n"
+        "• <b>Platform:</b> <code>Thirdwave IPRN ({THIRDWAVE_BASE_URL})</code>\n"
+        "• <b>Storage:</b> <code>28h Memory Active ☁️</code>\n"
+        "🔔 <i>All incoming OTPs are forwarded directly to your group in real-time.</i>\n"
+        "━━━━━━━━━━━━━━━━━━━━"
     )
     for aid in ADMIN_USER_IDS:
         if aid:
             try:
                 await send_with_retry(application.bot, aid, admin_msg)
-                logger.info(f"✅ Startup/restart alert sent to admin private chat {aid}")
+                logger.info(f"✅ Startup alert sent to admin private chat {aid}")
             except Exception as e:
                 logger.warning(f"Startup alert failed for admin {aid}: {e}")
 
