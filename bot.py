@@ -995,54 +995,29 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg_obj.reply_text(msg, parse_mode=ParseMode.HTML)
 
 async def send_startup_announcement(application: Application):
-    is_auto_restart = (STARTUP_TYPE == "schedule")
-    group_ids = get_target_group_chat_ids()
-
-    if is_auto_restart:
-        # Automatic cron refresh: Send notice ONLY to the Bot Private Chat (Admins)
-        admin_msg = (
-            "🔄 <b>OTP WAVE AUTO-REFRESH COMPLETED</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "🤖 <i>System cycle refreshed automatically (24/7 keep-alive).</i>\n"
-            "🔔 <i>Live monitoring on all linked groups remains online.</i>\n"
-            "━━━━━━━━━━━━━━━━━━━━"
-        )
-        for aid in ADMIN_USER_IDS:
-            if aid:
-                try:
-                    await send_with_retry(application.bot, aid, admin_msg)
-                    logger.info(f"✅ Auto-refresh notice sent to admin private chat {aid}")
-                except Exception as e:
-                    logger.warning(f"Auto-refresh notice failed for admin {aid}: {e}")
-    else:
-        # Manual start / fresh boot: Send announcement to ALL configured Telegram Groups
-        group_msg = (
-            "🚀 <b>OTP WAVE ONLINE</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "🔔 <i>All incoming verification codes & OTPs will be delivered here in real-time.</i>\n"
-            "━━━━━━━━━━━━━━━━━━━━"
-        )
-        for gid in group_ids:
+    """
+    Sends the startup / restart alert ONLY to the Admin private chat (DM).
+    NEVER sends startup alerts to the Telegram groups, keeping groups 100% clean for OTPs only.
+    """
+    is_restart = (STARTUP_TYPE == "schedule")
+    status_header = "🔄 <b>OTP WAVE AUTO-REFRESH COMPLETED</b>" if is_restart else "🚀 <b>OTP WAVE ONLINE (Admin Alert)</b>"
+    
+    admin_msg = (
+        f"{status_header}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Status:</b> <code>Active & Monitoring Live OTPs ✅</code>\n"
+        f"• <b>Platform:</b> <code>Thirdwave IPRN ({THIRDWAVE_BASE_URL})</code>\n"
+        f"• <b>Storage:</b> <code>28h Memory Active ☁️</code>\n"
+        f"🔔 <i>All incoming OTPs are forwarded directly to your group in real-time.</i>\n"
+        f"━━━━━━━━━━━━━━━━━━━━"
+    )
+    for aid in ADMIN_USER_IDS:
+        if aid:
             try:
-                await send_with_retry(application.bot, gid, group_msg)
-                logger.info(f"✅ Manual startup announcement sent to group {gid}")
+                await send_with_retry(application.bot, aid, admin_msg)
+                logger.info(f"✅ Startup/restart alert sent to admin private chat {aid}")
             except Exception as e:
-                logger.warning(f"Startup announcement failed for group {gid}: {e}")
-
-        # Send startup confirmation directly to admin private chat
-        admin_private_msg = (
-            "🚀 <b>OTP WAVE ONLINE (Admin Alert)</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "🔔 <i>System is active and monitoring incoming OTPs for all linked groups.</i>\n"
-            "━━━━━━━━━━━━━━━━━━━━"
-        )
-        for aid in ADMIN_USER_IDS:
-            if aid:
-                try:
-                    await send_with_retry(application.bot, aid, admin_private_msg)
-                    logger.info(f"✅ Startup alert sent to admin private chat {aid}")
-                except Exception as e:
-                    logger.warning(f"Startup alert failed for admin {aid}: {e}")
+                logger.warning(f"Startup alert failed for admin {aid}: {e}")
 
 async def periodic_db_cleanup_loop():
     while True:
