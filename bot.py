@@ -101,7 +101,7 @@ _admin_raw    = os.getenv("ADMIN_USER_IDS", "").strip()
 ADMIN_USER_IDS: List[int] = [int(u.strip()) for u in _admin_raw.split(",") if u.strip().isdigit()]
 
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
-DB_FILE   = os.getenv("DB_FILE", os.path.join(BASE_DIR, "otp_database.db"))
+DB_FILE   = os.getenv("DB_FILE", os.path.join(BASE_DIR, "bot1_database.db"))
 DATA_FILE = os.path.join(BASE_DIR, "bot_data.json")
 
 # ==========================================

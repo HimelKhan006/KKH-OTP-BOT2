@@ -68,13 +68,13 @@ jobs:
       # CRITICAL: Restore the OTP database from cache so the bot knows
       # which OTPs were already sent — prevents re-sending on restart
       # ─────────────────────────────────────────────────────────────────
-      - name: Restore OTP Database (Prevent Re-sends)
+      - name: Restore Persistent Database from Cache
         uses: actions/cache/restore@v4
         with:
-          path: otp_database.db
-          key: otp-database-persistent
+          path: bot1_database.db
+          key: bot1-database-persistent
           restore-keys: |
-            otp-database-
+            bot1-database-
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -96,8 +96,8 @@ jobs:
             echo -e "❌ Missing secrets:${MISSING}"
             exit 1
           fi
-          if [ -f "otp_database.db" ]; then
-            echo "✅ OTP database restored from cache — no re-sends will occur."
+          if [ -f "bot1_database.db" ]; then
+            echo "✅ Bot 1 database restored from cache — no re-sends will occur."
           else
             echo "ℹ️  Fresh database (first run or cache expired)."
           fi
@@ -116,7 +116,7 @@ jobs:
           GIST_ID: ${{ secrets.GIST_ID }}
           STARTUP_TYPE: ${{ github.event_name }}
           # Tell the bot where to find/save the database
-          DB_FILE: ${{ github.workspace }}/otp_database.db
+          DB_FILE: ${{ github.workspace }}/bot1_database.db
         run: |
           echo "🚀 OTP WAVE starting (trigger: ${{ github.event_name }})..."
           echo "📦 Database path: $DB_FILE"
@@ -148,8 +148,8 @@ jobs:
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: otp_database.db
-          key: otp-database-persistent
+          path: bot1_database.db
+          key: bot1-database-persistent
 
       - name: Self-Trigger Next Run (Zero Downtime Restart)
         if: always()
