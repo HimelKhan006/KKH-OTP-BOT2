@@ -5,8 +5,8 @@ on:
     branches: [ main ]
   workflow_dispatch:
   schedule:
-    # Backup refresh every 5 hours (in case self-trigger fails)
-    - cron: '0 */5 * * *'
+    # 24-hour scheduled restart cycle (single time per day at 00:00 UTC)
+    - cron: '0 0 * * *'
 
 # Only ONE bot instance ever runs. New run cancels the old one instantly.
 concurrency:

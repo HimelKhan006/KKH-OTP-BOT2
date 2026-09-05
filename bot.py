@@ -1033,31 +1033,26 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_startup_announcement(application: Application):
     """
-    Sends startup alert ONLY on initial manual launch.
-    Periodic background keepalive rotations are 100% SILENT.
+    Sends restart notification to Admin private DM only on every restart.
     NEVER sends any message to Telegram groups.
     """
-    is_auto_restart = (STARTUP_TYPE == "schedule")
-    if is_auto_restart:
-        logger.info("ℹ️ Silent auto-refresh cycle active. No Telegram alert dispatched.")
-        return
-
     admin_msg = (
-        "🚀 <b>OTP WAVE ONLINE (Admin Alert)</b>\n"
+        "🔄 <b>OTP WAVE RESTARTED (Admin Alert)</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "• <b>Status:</b> <code>Active & Monitoring Live OTPs ✅</code>\n"
+        "• <b>Cycle:</b> <code>24-Hour Scheduled Cycle Active ⏱️</code>\n"
         "• <b>Platform:</b> <code>Thirdwave IPRN</code>\n"
         "• <b>Storage:</b> <code>28h Memory Active ☁️</code>\n"
-        "🔔 <i>All incoming OTPs are forwarded directly to your group in real-time.</i>\n"
-        "━━━━━━━━━━━━━━━━━━━━"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "👑 <i>Restart notification dispatched to Admin private DM only.</i>"
     )
     for aid in ADMIN_USER_IDS:
         if aid:
             try:
                 await send_with_retry(application.bot, aid, admin_msg)
-                logger.info(f"✅ Startup alert sent to admin private chat {aid}")
+                logger.info(f"✅ Restart alert sent to admin private chat {aid}")
             except Exception as e:
-                logger.warning(f"Startup alert failed for admin {aid}: {e}")
+                logger.warning(f"Restart alert failed for admin {aid}: {e}")
 
 async def periodic_db_cleanup_loop():
     while True:
