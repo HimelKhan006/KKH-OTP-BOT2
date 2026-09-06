@@ -44,6 +44,7 @@ import html
 import sqlite3
 import logging
 import asyncio
+import time
 import argparse
 from typing import Set, Dict, Any, List, Optional, Tuple
 from datetime import datetime, timezone
@@ -1210,16 +1211,33 @@ async def main():
                 logger.warning(f"Telegram polling warning on attempt {attempt}: {poll_err}")
                 await asyncio.sleep(3.0)
 
-        # Infinite resilient keepalive loop
+        # Resilient keepalive loop with optional scheduled session handover
+        start_time = time.time()
+        session_timeout = int(os.getenv("SESSION_TIMEOUT", "0"))
+        if session_timeout > 0:
+            logger.info(f"⏱️ Session handover timer armed: {session_timeout}s ({session_timeout/3600:.2f}h)")
+
         while True:
             try:
-                await asyncio.sleep(3600)
+                if session_timeout > 0 and (time.time() - start_time) >= session_timeout:
+                    logger.info(f"⏱️ Session timeout reached ({session_timeout}s). Initiating clean shutdown for handover...")
+                    break
+                sleep_chunk = min(30, session_timeout) if session_timeout > 0 else 3600
+                await asyncio.sleep(sleep_chunk)
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Keepalive loop warning: {e}")
                 await asyncio.sleep(5)
     finally:
+        try:
+            if application.updater and application.updater.running:
+                await application.updater.stop()
+            if application.running:
+                await application.stop()
+            await application.shutdown()
+        except Exception:
+            pass
         if _gist_dirty and gist_storage.enabled:
             await gist_storage.save_seen(seen_timestamps)
 
