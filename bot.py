@@ -92,7 +92,10 @@ load_environment()
 
 TELEGRAM_BOT_TOKEN    = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 THIRDWAVE_API_KEY     = os.getenv("THIRDWAVE_API_KEY", "").strip()
-THIRDWAVE_BASE_URL    = os.getenv("THIRDWAVE_BASE_URL", "https://app.thirdwave.im").rstrip("/")
+_raw_base = os.getenv("THIRDWAVE_BASE_URL", "https://clients.thirdwave.im").strip().rstrip("/")
+if _raw_base and not _raw_base.startswith(("http://", "https://")):
+    _raw_base = f"https://{_raw_base}"
+THIRDWAVE_BASE_URL    = _raw_base
 TELEGRAM_GROUP_CHAT_ID = os.getenv("TELEGRAM_GROUP_CHAT_ID", "").strip()
 SECONDARY_GROUP_CHAT_ID = os.getenv("SECONDARY_GROUP_CHAT_ID", os.getenv("TELEGRAM_SECONDARY_GROUP_CHAT_ID", "")).strip()
 POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "2.0"))
@@ -476,6 +479,14 @@ class ThirdwaveClient:
             logger.warning(f"Thirdwave API fetch error: {e}")
         return []
 
+    def update_base_url(self, new_url: str) -> str:
+        cleaned = new_url.strip().rstrip("/")
+        if cleaned and not cleaned.startswith(("http://", "https://")):
+            cleaned = f"https://{cleaned}"
+        self.base_url = cleaned
+        self._client = None
+        return self.base_url
+
 # ==========================================
 # 8. Country ISO Alpha-2 Lookup
 # ==========================================
@@ -822,10 +833,22 @@ def format_otp_notification(item: Dict[str, Any]) -> str:
 # ==========================================
 # 9. Telegram Bot Engine
 # ==========================================
+def get_effective_base_url() -> str:
+    data = load_stored_data()
+    stored = data.get("thirdwave_base_url") or data.get("base_url")
+    if stored and str(stored).strip():
+        raw = str(stored).strip()
+    else:
+        raw = THIRDWAVE_BASE_URL
+    raw = raw.rstrip("/")
+    if raw and not raw.startswith(("http://", "https://")):
+        raw = f"https://{raw}"
+    return raw
+
 total_forwarded_count: int = 0
 country_forwarded_counts: Dict[str, int] = {}  # tracks per-country OTP count (ISO display string -> count)
 client = ThirdwaveClient(
-    base_url=THIRDWAVE_BASE_URL,
+    base_url=get_effective_base_url(),
     api_key=THIRDWAVE_API_KEY,
     timeout=20.0,
 )
@@ -1020,6 +1043,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👑 <b>OTP WAVE (Admin Panel)</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"• <b>Platform:</b> <code>Thirdwave IPRN</code>\n"
+        f"• <b>API Base:</b> <code>{client.base_url}</code>\n"
         f"• <b>Status:</b> <code>Active & Running ✅</code>\n"
         f"• <b>Storage:</b> <code>{gist_status}</code>\n"
         f"• <b>Target Groups:</b> <code>{group_text}</code>\n"
@@ -1031,6 +1055,48 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔔 Real-time multi-group monitoring active."
     )
     await msg_obj.reply_text(msg, parse_mode=ParseMode.HTML)
+
+async def seturl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat    = update.effective_chat
+    user    = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj:
+        return
+    user_id = user.id if user else 0
+    if not is_user_authorized(user_id):
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        return
+
+    if not context.args:
+        await msg_obj.reply_text(
+            f"⚙️ <b>Thirdwave API Base URL Configuration</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Active URL:</b> <code>{client.base_url}</code>\n\n"
+            f"<b>How to update in the future:</b>\n"
+            f"1. <b>Instant Change (Telegram):</b>\n"
+            f"   <code>/seturl &lt;new_url&gt;</code>\n"
+            f"   <i>Example:</i> <code>/seturl https://clients.thirdwave.im</code>\n\n"
+            f"2. <b>Permanent Cloud Hosting (GitHub Secrets):</b>\n"
+            f"   Add or update the secret <code>THIRDWAVE_BASE_URL</code> in GitHub Repository Settings.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    raw_input = " ".join(context.args).strip()
+    new_url = client.update_base_url(raw_input)
+
+    # Persist in bot_data.json so it survives restarts
+    data = load_stored_data()
+    data["thirdwave_base_url"] = new_url
+    save_stored_data(data)
+
+    await msg_obj.reply_text(
+        f"✅ <b>API Base URL Successfully Updated!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>New Active URL:</b> <code>{new_url}</code>\n\n"
+        f"The bot is now requesting OTP traffic from this URL in real-time.",
+        parse_mode=ParseMode.HTML
+    )
 
 async def send_startup_announcement(application: Application):
     """
@@ -1184,6 +1250,7 @@ async def main():
         .build()
     )
     application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("seturl", seturl_command))
 
     def start_health_server():
         port_str = os.getenv("PORT")
@@ -1222,7 +1289,10 @@ async def main():
         asyncio.create_task(periodic_db_cleanup_loop())
         asyncio.create_task(periodic_gist_sync_loop())
         try:
-            await application.bot.set_my_commands([("start", "📊 Bot status & admin panel")])
+            await application.bot.set_my_commands([
+                ("start",  "📊 Bot status & admin panel"),
+                ("seturl", "🌐 View or update the Thirdwave API base URL"),
+            ])
         except Exception:
             pass
         logger.info("✅ OTP WAVE is fully online and monitoring incoming messages...")
