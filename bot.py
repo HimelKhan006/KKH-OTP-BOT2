@@ -50,7 +50,7 @@ from typing import Set, Dict, Any, List, Optional, Tuple
 from datetime import datetime, timezone
 
 import httpx
-from telegram import Update, Bot
+from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton
 from telegram.constants import ParseMode
 from telegram.error import RetryAfter, TimedOut, NetworkError, Conflict
 from telegram.request import HTTPXRequest
@@ -835,31 +835,25 @@ def parse_message_timestamp(time_str: str) -> float:
     except Exception:
         return 0.0
 
-def format_otp_notification(item: Dict[str, Any]) -> str:
-    source         = html.escape(str(item.get("sourceAddress") or item.get("source") or item.get("caller") or item.get("sender") or "SMS Service"))
-    country_display = html.escape(get_country_iso_display(item))
-    raw_number     = str(item.get("destinationNumber") or item.get("number") or item.get("rangeTemplate") or item.get("template") or item.get("dst") or "")
-    masked_number  = html.escape(mask_phone_number(raw_number)) if raw_number else ""
-    raw_message    = str(item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "")
-    escaped_msg    = html.escape(raw_message)
-    msg_time       = str(item.get("receivedAt") or item.get("messageTime") or item.get("createdAt") or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
-    if "T" in msg_time:
-        msg_time = msg_time.replace("T", " ")[:19] + " UTC"
-    otp_code   = extract_otp_code(raw_message)
-    otp_header = f"\n🔑 <b>OTP CODE:</b> <code>{otp_code}</code>\n" if otp_code else "\n"
-    number_line = f"• <b>Number:</b> <code>{masked_number}</code>\n" if masked_number else ""
+def format_otp_notification(item: Dict[str, Any]) -> tuple:
+    """Returns (text, otp_code) for the OTP message."""
+    source        = html.escape(str(item.get("sourceAddress") or item.get("source") or item.get("caller") or item.get("sender") or "SMS Service"))
+    raw_number    = str(item.get("destinationNumber") or item.get("number") or item.get("rangeTemplate") or item.get("template") or item.get("dst") or "")
+    masked_number = html.escape(mask_phone_number(raw_number)) if raw_number else ""
+    raw_message   = str(item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "")
+    otp_code      = extract_otp_code(raw_message)
 
-    return (
+    number_line = f"📱 <b>Number:</b> <code>{masked_number}</code>\n" if masked_number else ""
+    otp_line    = f"🔑 <b>OTP CODE:</b> <code>{otp_code}</code>\n" if otp_code else ""
+
+    text = (
         f"⚡ <b>NEW OTP / SMS RECEIVED</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━{otp_header}"
-        f"• <b>Service:</b> <code>{source}</code>\n"
-        f"• <b>Country:</b> <b>{country_display}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
         f"{number_line}"
-        f"• <b>Time:</b> <code>{html.escape(msg_time)}</code>\n\n"
-        f"💬 <b>Message Content:</b>\n"
-        f"<code>{escaped_msg}</code>\n"
-        f"━━━━━━━━━━━━━━━━━━━━"
+        f"{otp_line}"
+        f"📡 <b>Service:</b> <code>{source}</code>"
     )
+    return text, otp_code
 
 # ==========================================
 # 9. Telegram Bot Engine
@@ -884,13 +878,15 @@ client = ThirdwaveClient(
     timeout=20.0,
 )
 
-async def send_with_retry(bot: Bot, chat_id: int, text: str, max_retries: int = 3) -> bool:
+async def send_with_retry(bot: Bot, chat_id: int, text: str, max_retries: int = 3,
+                          reply_markup=None) -> bool:
     for attempt in range(1, max_retries + 1):
         try:
             await bot.send_message(
                 chat_id=chat_id,
                 text=text,
                 parse_mode=ParseMode.HTML,
+                reply_markup=reply_markup,
                 read_timeout=30.0,
                 write_timeout=30.0,
                 connect_timeout=30.0,
@@ -918,13 +914,21 @@ def _get_otp_dest_ids() -> Set[int]:
 
 async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> bool:
     """Formats and sends one OTP item to the Telegram Group. Returns True if sent successfully."""
-    mid            = str(item.get("id") or "").strip()
-    formatted_text = format_otp_notification(item)
-    sent_to_any    = False
+    mid                  = str(item.get("id") or "").strip()
+    formatted_text, otp  = format_otp_notification(item)
+    sent_to_any          = False
+
+    # Build 📋 Copy Code inline button if OTP code was extracted
+    markup = None
+    if otp:
+        try:
+            markup = InlineKeyboardMarkup([[InlineKeyboardButton(f"📋 Copy Code: {otp}", copy_text=CopyTextButton(text=otp))]])
+        except Exception:
+            markup = None
 
     for cid in dest_ids:
         try:
-            ok = await send_with_retry(bot, cid, formatted_text)
+            ok = await send_with_retry(bot, cid, formatted_text, reply_markup=markup)
             if ok:
                 sent_to_any = True
         except Exception as e:
