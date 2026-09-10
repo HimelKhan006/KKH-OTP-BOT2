@@ -836,7 +836,7 @@ def parse_message_timestamp(time_str: str) -> float:
         return 0.0
 
 def format_otp_notification(item: Dict[str, Any]) -> tuple:
-    """Returns (text, otp_code) formatted as:
+    """Returns (text, otp_code, raw_message) formatted as:
     [Flag] [Masked Number] • [ISO]
     Service: [Service Name]
     """
@@ -862,7 +862,7 @@ def format_otp_notification(item: Dict[str, Any]) -> tuple:
     if not otp_code and raw_message:
         lines.append(f"💬 <code>{html.escape(raw_message[:150])}</code>")
 
-    return "\n".join(lines), otp_code
+    return "\n".join(lines), otp_code, raw_message
 
 # ==========================================
 # 9. Telegram Bot Engine
@@ -923,17 +923,19 @@ def _get_otp_dest_ids() -> Set[int]:
 
 async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> bool:
     """Formats and sends one OTP item to the Telegram Group. Returns True if sent successfully."""
-    mid                  = str(item.get("id") or "").strip()
-    formatted_text, otp  = format_otp_notification(item)
-    sent_to_any          = False
+    mid                          = str(item.get("id") or "").strip()
+    formatted_text, otp, raw_msg = format_otp_notification(item)
+    sent_to_any                  = False
 
-    # Build 📋 Copy Code inline button if OTP code was extracted
+    # Build inline button: OTP copy if code found, else full SMS copy
     markup = None
-    if otp:
-        try:
+    try:
+        if otp:
             markup = InlineKeyboardMarkup([[InlineKeyboardButton(f"📋 Copy Code: {otp}", copy_text=CopyTextButton(text=otp))]])
-        except Exception:
-            markup = None
+        elif raw_msg:
+            markup = InlineKeyboardMarkup([[InlineKeyboardButton("📋 Copy Full SMS", copy_text=CopyTextButton(text=raw_msg))]])
+    except Exception:
+        markup = None
 
     for cid in dest_ids:
         try:
