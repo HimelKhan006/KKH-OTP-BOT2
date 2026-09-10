@@ -867,7 +867,7 @@ def format_otp_notification(item: Dict[str, Any]) -> tuple:
     lines.append(f"{INDENT}<b>Service:</b> <code>{source}</code>")
 
     if not otp_code and raw_message:
-        lines.append(f"{INDENT}<i>{html.escape(raw_message[:200])}</i>")
+        lines.append(f"{INDENT}<i>{html.escape(raw_message.strip())}</i>")
 
     lines.append(DIVIDER)
 
@@ -936,13 +936,11 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
     formatted_text, otp, raw_msg = format_otp_notification(item)
     sent_to_any                  = False
 
-    # Build inline button: OTP → just the code; no OTP → "Copy sms"
+    # Build inline button: only when OTP code is found (no button for plain SMS)
     markup = None
     try:
         if otp:
             markup = InlineKeyboardMarkup([[InlineKeyboardButton(otp, copy_text=CopyTextButton(text=otp))]])
-        elif raw_msg:
-            markup = InlineKeyboardMarkup([[InlineKeyboardButton("Copy sms", copy_text=CopyTextButton(text=raw_msg))]])
     except Exception:
         markup = None
 
