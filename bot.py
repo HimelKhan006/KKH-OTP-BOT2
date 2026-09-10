@@ -1017,17 +1017,36 @@ async def cmd_list_icons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
 async def cmd_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin-only: send a test OTP notification to all connected groups."""
+    """Admin-only: send a test OTP notification from the database to all connected groups."""
     if not update.effective_user or not is_admin(update.effective_user.id):
         await update.message.reply_text("❌ Admin only.")
         return
 
-    # Build a realistic fake SMS item
-    test_item: Dict[str, Any] = {
+    # 1. Fetch latest real message stored in SQLite database
+    db_item = None
+    try:
+        with get_db_connection() as conn:
+            cur = conn.execute("SELECT * FROM processed_otps ORDER BY forwarded_at DESC LIMIT 1;")
+            row = cur.fetchone()
+            if row:
+                db_item = {
+                    "id":                 row["id"],
+                    "sourceAddress":      row["source"],
+                    "country":            row["country"],
+                    "destinationNumber":  row["number"],
+                    "rangeTemplate":      row["number"],
+                    "messageBody":        row["raw_message"],
+                    "rate":               row["rate"],
+                    "receivedAt":         row["message_time"],
+                }
+    except Exception as e:
+        logger.error(f"Error querying DB for test SMS: {e}")
+
+    test_item: Dict[str, Any] = db_item or {
         "id":            "test-9999",
         "sourceAddress": "WhatsApp",
         "messageBody":   "Your WhatsApp code: 123-456\nYou can also tap this link to verify your phone: v.whatsapp.com/123456",
-        "destinationAddress": "+251900000000",
+        "destinationNumber": "+251900000000",
         "language":      "EN",
         "country":       "ET",
     }
@@ -1054,7 +1073,7 @@ async def cmd_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    prefix = "🧪 <b>[TEST MESSAGE]</b>\n"
+    prefix = "🧪 <b>[TEST MESSAGE FROM DATABASE]</b>\n" if db_item else "🧪 <b>[TEST MESSAGE]</b>\n"
     send_text = prefix + formatted_text
 
     successes = []
@@ -1072,7 +1091,8 @@ async def cmd_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             failures.append(str(gid))
 
-    lines = ["🧪 <b>Test OTP notification sent!</b>"]
+    src_label = f"Database (ID: <code>{test_item.get('id')}</code>)" if db_item else "Synthetic Test Template"
+    lines = [f"🧪 <b>Test OTP notification sent!</b>\n📦 Source: {src_label}"]
     if successes:
         lines.append(f"✅ Delivered to: {', '.join(successes)}")
     if failures:
