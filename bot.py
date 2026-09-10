@@ -835,24 +835,87 @@ def parse_message_timestamp(time_str: str) -> float:
     except Exception:
         return 0.0
 
+def get_service_badge(source: str) -> str:
+    """Returns an emoji/logo and clean service name for known services."""
+    s = (source or "").strip()
+    if not s:
+        return "💬 SMS"
+    low = s.lower()
+    if "whatsapp" in low:
+        return "💬 WhatsApp"
+    elif "telegram" in low:
+        return "✈️ Telegram"
+    elif "google" in low or "gmail" in low:
+        return "🔍 Google"
+    elif "facebook" in low or low == "fb":
+        return "🔵 Facebook"
+    elif "instagram" in low or "insta" in low:
+        return "📸 Instagram"
+    elif "tiktok" in low:
+        return "🎵 TikTok"
+    elif "twitter" in low or low == "x":
+        return "✖️ Twitter"
+    elif "discord" in low:
+        return "👾 Discord"
+    elif "apple" in low or "icloud" in low:
+        return "🍎 Apple"
+    elif "microsoft" in low or "outlook" in low or "hotmail" in low:
+        return "🪟 Microsoft"
+    elif "amazon" in low:
+        return "📦 Amazon"
+    elif "netflix" in low:
+        return "🎬 Netflix"
+    elif "uber" in low:
+        return "🚗 Uber"
+    elif "snapchat" in low:
+        return "👻 Snapchat"
+    elif "viber" in low:
+        return "🟣 Viber"
+    elif "line" in low:
+        return "🟢 LINE"
+    elif "wechat" in low:
+        return "🟢 WeChat"
+    elif "imo" in low:
+        return "🟡 IMO"
+    elif "binance" in low:
+        return "🪙 Binance"
+    elif "paypal" in low:
+        return "💳 PayPal"
+    elif "tinder" in low:
+        return "🔥 Tinder"
+    elif "steam" in low:
+        return "🎮 Steam"
+    elif "yahoo" in low:
+        return "🟣 Yahoo"
+    elif "linkedin" in low:
+        return "💼 LinkedIn"
+    elif "vk" in low or "vkontakte" in low:
+        return "🔵 VK"
+    else:
+        return f"📡 {html.escape(s)}"
+
 def format_otp_notification(item: Dict[str, Any]) -> tuple:
     """Returns (text, otp_code) for the OTP message."""
-    source        = html.escape(str(item.get("sourceAddress") or item.get("source") or item.get("caller") or item.get("sender") or "SMS Service"))
+    raw_source    = str(item.get("sourceAddress") or item.get("source") or item.get("caller") or item.get("sender") or "").strip()
+    service_badge = get_service_badge(raw_source)
     raw_number    = str(item.get("destinationNumber") or item.get("number") or item.get("rangeTemplate") or item.get("template") or item.get("dst") or "")
     masked_number = html.escape(mask_phone_number(raw_number)) if raw_number else ""
     raw_message   = str(item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "")
     otp_code      = extract_otp_code(raw_message)
 
-    number_line = f"📱 <b>Number:</b> <code>{masked_number}</code>\n" if masked_number else ""
-    otp_line    = f"🔑 <b>OTP CODE:</b> <code>{otp_code}</code>\n" if otp_code else ""
+    if masked_number:
+        num_line = f"📱 <b>Number:</b> <code>{masked_number}</code> | {service_badge}"
+    else:
+        num_line = f"📱 <b>Service:</b> {service_badge}"
 
     text = (
         f"⚡ <b>NEW OTP / SMS RECEIVED</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"{number_line}"
-        f"{otp_line}"
-        f"📡 <b>Service:</b> <code>{source}</code>"
+        f"{num_line}"
     )
+    if not otp_code and raw_message:
+        text += f"\n💬 <b>SMS:</b> <code>{html.escape(raw_message[:150])}</code>"
+
     return text, otp_code
 
 # ==========================================
