@@ -1104,6 +1104,20 @@ async def cmd_remove_icon(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"⚠️ No icon found for <b>{service}</b>.", parse_mode=ParseMode.HTML)
 
+def get_country_code(item: Dict[str, Any]) -> str:
+    """Returns 2-letter uppercase ISO country code (e.g. 'ET', 'UG', 'US')."""
+    for field in ["countryCode", "iso", "iso2", "country"]:
+        val = str(item.get(field) or "").strip().upper()
+        if len(val) == 2 and val.isalpha():
+            return val
+    display = get_country_iso_display(item)
+    parts = display.strip().split()
+    if len(parts) >= 2 and len(parts[1]) == 2 and parts[1].isalpha():
+        return parts[1].upper()
+    elif len(parts) == 1 and len(parts[0]) == 2 and parts[0].isalpha():
+        return parts[0].upper()
+    return "GLOBAL"
+
 def get_number_display(item: Dict[str, Any]) -> str:
     template = str(item.get("rangeTemplate") or item.get("template") or "").strip()
     if template:
