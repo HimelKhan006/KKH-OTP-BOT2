@@ -936,13 +936,13 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
     formatted_text, otp, raw_msg = format_otp_notification(item)
     sent_to_any                  = False
 
-    # Build inline button: OTP → just the code; no OTP → "Copy SMS"
+    # Build inline button: OTP → just the code; no OTP → "Copy sms"
     markup = None
     try:
         if otp:
             markup = InlineKeyboardMarkup([[InlineKeyboardButton(otp, copy_text=CopyTextButton(text=otp))]])
         elif raw_msg:
-            markup = InlineKeyboardMarkup([[InlineKeyboardButton("Copy SMS", copy_text=CopyTextButton(text=raw_msg))]])
+            markup = InlineKeyboardMarkup([[InlineKeyboardButton("Copy sms", copy_text=CopyTextButton(text=raw_msg))]])
     except Exception:
         markup = None
 
