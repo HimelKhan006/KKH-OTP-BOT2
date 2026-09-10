@@ -176,3 +176,7 @@ To view the current active URL:
 | `/start` | Live bot status, session uptime, next handover countdown, OTP stats |
 | `/status` | Same as `/start` |
 | `/seturl` | View or update the Thirdwave API base URL |
+| `/set_icon <service> <url>` | Set a real app logo image URL for a service (e.g. `WhatsApp`, `Telegram`) |
+| `/list_icons` | View all configured service logo icons |
+| `/remove_icon <service>` | Remove a configured icon for a service |
+| `/test` | Send a test OTP notification to all connected groups (verifies full delivery pipeline) |
