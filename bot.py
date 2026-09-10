@@ -849,7 +849,8 @@ def format_otp_notification(item: Dict[str, Any]) -> tuple:
     iso  = parts[1] if len(parts) > 1 else "XX"
 
     DIVIDER = "━━━━━━━━━━━━━━━━━━━━"
-    INDENT  = "          "  # 10 spaces for visual centering
+    INDENT_NUM = "        "  # 8 spaces for perfect visual centering of flag + number + ISO
+    INDENT  = "          "  # 10 spaces
 
     if otp_code:
         header = "⚡ <b>NEW OTP SMS RECEIVED</b> ⚡"
@@ -859,7 +860,7 @@ def format_otp_notification(item: Dict[str, Any]) -> tuple:
     lines = [header, DIVIDER]
 
     if masked_number:
-        lines.append(f"{INDENT}{flag} <code>{masked_number}</code> • <b>{iso}</b>")
+        lines.append(f"{INDENT_NUM}{flag} <code>{masked_number}</code> • <b>{iso}</b>")
     else:
         lines.append(f"{INDENT}{flag} <b>{iso}</b>")
 
