@@ -1016,6 +1016,71 @@ async def cmd_list_icons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
+async def cmd_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only: send a test OTP notification to all connected groups."""
+    if not update.effective_user or not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Admin only.")
+        return
+
+    # Build a realistic fake SMS item
+    test_item: Dict[str, Any] = {
+        "id":            "test-9999",
+        "sourceAddress": "WhatsApp",
+        "messageBody":   "Your WhatsApp code: 123-456\nYou can also tap this link to verify your phone: v.whatsapp.com/123456",
+        "destinationAddress": "+251900000000",
+        "language":      "EN",
+        "country":       "ET",
+    }
+
+    dest_ids = _get_otp_dest_ids()
+    if not dest_ids:
+        await update.message.reply_text(
+            "⚠️ No group chat IDs configured.\n"
+            "Use /seturl or set TELEGRAM_GROUP_CHAT_ID in .env first."
+        )
+        return
+
+    formatted_text, otp_code, icon_url = format_otp_notification(test_item)
+
+    # Build copy-code button if OTP extracted
+    reply_markup = None
+    if otp_code:
+        try:
+            kb = [[InlineKeyboardButton(
+                f"📋 Copy  {otp_code}",
+                copy_text=CopyTextButton(text=otp_code)
+            )]]
+            reply_markup = InlineKeyboardMarkup(kb)
+        except Exception:
+            pass
+
+    prefix = "🧪 <b>[TEST MESSAGE]</b>\n"
+    send_text = prefix + formatted_text
+
+    successes = []
+    failures  = []
+    for gid in dest_ids:
+        ok = await send_with_retry(
+            bot=update.get_bot(),
+            chat_id=gid,
+            text=send_text,
+            reply_markup=reply_markup,
+            photo_url=icon_url or None,
+        )
+        if ok:
+            successes.append(str(gid))
+        else:
+            failures.append(str(gid))
+
+    lines = ["🧪 <b>Test OTP notification sent!</b>"]
+    if successes:
+        lines.append(f"✅ Delivered to: {', '.join(successes)}")
+    if failures:
+        lines.append(f"❌ Failed for: {', '.join(failures)}")
+    lines.append(f"\n<b>Preview:</b>\n{formatted_text}")
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+
 async def cmd_remove_icon(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Remove a custom icon for a service."""
     user = update.effective_user
@@ -1666,6 +1731,7 @@ async def main():
     application.add_handler(CommandHandler("set_icon", cmd_set_icon))
     application.add_handler(CommandHandler("list_icons", cmd_list_icons))
     application.add_handler(CommandHandler("remove_icon", cmd_remove_icon))
+    application.add_handler(CommandHandler("test", cmd_test))
 
     def start_health_server():
         port_str = os.getenv("PORT")
@@ -1711,6 +1777,7 @@ async def main():
                 ("set_icon",    "🎨 Set real app custom emoji for a service"),
                 ("list_icons",  "📋 View configured real app icons"),
                 ("remove_icon", "🗑️ Remove a configured custom icon"),
+                ("test",        "🧪 Send a test OTP notification to the connected group"),
             ])
         except Exception:
             pass
