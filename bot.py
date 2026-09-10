@@ -50,7 +50,7 @@ from typing import Set, Dict, Any, List, Optional, Tuple
 from datetime import datetime, timezone
 
 import httpx
-from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton
+from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton, MessageEntity
 from telegram.constants import ParseMode
 from telegram.error import RetryAfter, TimedOut, NetworkError, Conflict
 from telegram.request import HTTPXRequest
@@ -835,69 +835,272 @@ def parse_message_timestamp(time_str: str) -> float:
     except Exception:
         return 0.0
 
+CUSTOM_EMOJI_FALLBACKS: Dict[str, str] = {
+    "whatsapp": "🟢",
+    "telegram": "✈️",
+    "google": "🔍",
+    "gmail": "✉️",
+    "facebook": "🔵",
+    "fb": "🔵",
+    "instagram": "📸",
+    "insta": "📸",
+    "tiktok": "🎵",
+    "twitter": "✖️",
+    "x": "✖️",
+    "discord": "👾",
+    "apple": "🍎",
+    "icloud": "🍎",
+    "microsoft": "🪟",
+    "outlook": "📧",
+    "amazon": "📦",
+    "netflix": "🎬",
+    "uber": "🚗",
+    "snapchat": "👻",
+    "viber": "🟣",
+    "paypal": "💳",
+    "wechat": "🟢",
+    "line": "🟢",
+    "imo": "🟡",
+    "steam": "🎮",
+    "yahoo": "🟣",
+    "linkedin": "💼",
+    "binance": "🪙",
+}
+
 SERVICE_ICONS: Dict[str, Tuple[str, str]] = {
-    "whatsapp": ("WhatsApp", "https://img.icons8.com/color/512/whatsapp--v1.png"),
-    "telegram": ("Telegram", "https://img.icons8.com/color/512/telegram-app--v1.png"),
-    "google": ("Google", "https://img.icons8.com/color/512/google-logo.png"),
-    "gmail": ("Gmail", "https://img.icons8.com/color/512/gmail-new.png"),
-    "facebook": ("Facebook", "https://img.icons8.com/color/512/facebook-new.png"),
-    "fb": ("Facebook", "https://img.icons8.com/color/512/facebook-new.png"),
-    "instagram": ("Instagram", "https://img.icons8.com/color/512/instagram-new--v1.png"),
-    "insta": ("Instagram", "https://img.icons8.com/color/512/instagram-new--v1.png"),
-    "tiktok": ("TikTok", "https://img.icons8.com/color/512/tiktok--v1.png"),
-    "twitter": ("Twitter", "https://img.icons8.com/color/512/twitterx--v1.png"),
-    "x": ("X", "https://img.icons8.com/color/512/twitterx--v1.png"),
-    "discord": ("Discord", "https://img.icons8.com/color/512/discord-logo--v1.png"),
-    "apple": ("Apple", "https://img.icons8.com/color/512/mac-os--v1.png"),
-    "icloud": ("Apple iCloud", "https://img.icons8.com/color/512/mac-os--v1.png"),
-    "microsoft": ("Microsoft", "https://img.icons8.com/color/512/microsoft.png"),
-    "outlook": ("Outlook", "https://img.icons8.com/color/512/microsoft-outlook-2019.png"),
-    "amazon": ("Amazon", "https://img.icons8.com/color/512/amazon.png"),
-    "netflix": ("Netflix", "https://img.icons8.com/color/512/netflix.png"),
-    "uber": ("Uber", "https://img.icons8.com/color/512/uber-app.png"),
-    "snapchat": ("Snapchat", "https://img.icons8.com/color/512/snapchat.png"),
-    "viber": ("Viber", "https://img.icons8.com/color/512/viber.png"),
-    "paypal": ("PayPal", "https://img.icons8.com/color/512/paypal.png"),
-    "wechat": ("WeChat", "https://img.icons8.com/color/512/weixing.png"),
-    "line": ("LINE", "https://img.icons8.com/color/512/line-me.png"),
-    "steam": ("Steam", "https://img.icons8.com/color/512/steam-circled.png"),
-    "yahoo": ("Yahoo", "https://img.icons8.com/color/512/yahoo.png"),
-    "linkedin": ("LinkedIn", "https://img.icons8.com/color/512/linkedin.png"),
+    "whatsapp": ("WhatsApp",   "https://img.icons8.com/color/512/whatsapp--v1.png"),
+    "telegram": ("Telegram",   "https://img.icons8.com/color/512/telegram-app--v1.png"),
+    "google":   ("Google",     "https://img.icons8.com/color/512/google-logo.png"),
+    "gmail":    ("Gmail",      "https://img.icons8.com/color/512/gmail-new.png"),
+    "facebook": ("Facebook",   "https://img.icons8.com/color/512/facebook-new.png"),
+    "fb":       ("Facebook",   "https://img.icons8.com/color/512/facebook-new.png"),
+    "instagram":("Instagram",  "https://img.icons8.com/color/512/instagram-new--v1.png"),
+    "insta":    ("Instagram",  "https://img.icons8.com/color/512/instagram-new--v1.png"),
+    "tiktok":   ("TikTok",     "https://img.icons8.com/color/512/tiktok--v1.png"),
+    "twitter":  ("Twitter/X",  "https://img.icons8.com/color/512/twitterx--v1.png"),
+    "x":        ("X",          "https://img.icons8.com/color/512/twitterx--v1.png"),
+    "discord":  ("Discord",    "https://img.icons8.com/color/512/discord-logo--v1.png"),
+    "apple":    ("Apple",      "https://img.icons8.com/color/512/mac-os--v1.png"),
+    "icloud":   ("iCloud",     "https://img.icons8.com/color/512/mac-os--v1.png"),
+    "microsoft":("Microsoft",  "https://img.icons8.com/color/512/microsoft.png"),
+    "outlook":  ("Outlook",    "https://img.icons8.com/color/512/microsoft-outlook-2019.png"),
+    "amazon":   ("Amazon",     "https://img.icons8.com/color/512/amazon.png"),
+    "netflix":  ("Netflix",    "https://img.icons8.com/color/512/netflix.png"),
+    "uber":     ("Uber",       "https://img.icons8.com/color/512/uber-app.png"),
+    "snapchat": ("Snapchat",   "https://img.icons8.com/color/512/snapchat.png"),
+    "viber":    ("Viber",      "https://img.icons8.com/color/512/viber.png"),
+    "paypal":   ("PayPal",     "https://img.icons8.com/color/512/paypal.png"),
+    "wechat":   ("WeChat",     "https://img.icons8.com/color/512/weixing.png"),
+    "line":     ("LINE",       "https://img.icons8.com/color/512/line-me.png"),
+    "steam":    ("Steam",      "https://img.icons8.com/color/512/steam-circled.png"),
+    "yahoo":    ("Yahoo",      "https://img.icons8.com/color/512/yahoo.png"),
+    "linkedin": ("LinkedIn",   "https://img.icons8.com/color/512/linkedin.png"),
+    "binance":  ("Binance",    "https://img.icons8.com/color/512/bitcoin.png"),
+    "imo":      ("IMO",        "https://img.icons8.com/color/512/imo.png"),
 }
 DEFAULT_ICON_URL = "https://img.icons8.com/color/512/sms.png"
 
-def get_service_info(source: str) -> Tuple[str, str]:
-    """Returns (clean_service_name, icon_url) for the given sender/service string."""
+def get_service_icon_url(source: str) -> str:
+    """Returns real app logo URL for the given service/source string."""
+    low = (source or "").lower()
+    for key, (_, url) in SERVICE_ICONS.items():
+        if key in low:
+            return url
+    return DEFAULT_ICON_URL
+
+def is_admin(user_id: int) -> bool:
+    if not ADMIN_USER_IDS:
+        return True
+    return user_id in ADMIN_USER_IDS
+
+def get_service_display(source: str) -> str:
     s = (source or "").strip()
     if not s:
-        return "SMS", DEFAULT_ICON_URL
+        return "📱"
     low = s.lower()
-    for key, (name, url) in SERVICE_ICONS.items():
+    data = load_stored_data()
+    custom_emojis = data.get("custom_emojis", {})
+    # 1. Check custom emoji set via /set_icon
+    for key, eid in custom_emojis.items():
+        if key.lower() in low and eid:
+            fallback = CUSTOM_EMOJI_FALLBACKS.get(key.lower(), "🟢")
+            return f'<tg-emoji emoji-id="{eid}">{fallback}</tg-emoji>'
+    # 2. Return fallback icon
+    for key, fallback in CUSTOM_EMOJI_FALLBACKS.items():
         if key in low:
-            return name, url
-    return html.escape(s), DEFAULT_ICON_URL
+            return fallback
+    return "📱"
+
+async def cmd_set_icon(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to set a real app custom emoji for a service."""
+    user = update.effective_user
+    if not is_admin(user.id if user else 0):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(
+            "ℹ️ <b>Usage:</b> <code>/set_icon &lt;service&gt; &lt;emoji&gt;</code>\n"
+            "Example: <code>/set_icon whatsapp 🟢</code> (send with real custom emoji)\n"
+            "Or reply to any message containing a custom emoji with <code>/set_icon whatsapp</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    service = args[0].strip().lower()
+    emoji_id = None
+
+    if len(args) > 1 and args[1].isdigit():
+        emoji_id = args[1].strip()
+
+    msg = update.message
+    if not emoji_id and msg:
+        entities = (msg.entities or ())
+        for ent in entities:
+            if ent.type in ("custom_emoji", MessageEntity.CUSTOM_EMOJI):
+                emoji_id = str(ent.custom_emoji_id)
+                break
+
+    if not emoji_id and msg and msg.reply_to_message:
+        reply_entities = (msg.reply_to_message.entities or ()) + (msg.reply_to_message.caption_entities or ())
+        for ent in reply_entities:
+            if ent.type in ("custom_emoji", MessageEntity.CUSTOM_EMOJI):
+                emoji_id = str(ent.custom_emoji_id)
+                break
+
+    if not emoji_id:
+        await update.message.reply_text(
+            f"⚠️ No Telegram Custom Emoji detected for '<b>{service}</b>'.\n"
+            "Please send a message like: <code>/set_icon whatsapp &lt;custom_emoji&gt;</code>\n"
+            "Or provide the numeric ID: <code>/set_icon whatsapp &lt;id&gt;</code>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    data = load_stored_data()
+    if "custom_emojis" not in data or not isinstance(data["custom_emojis"], dict):
+        data["custom_emojis"] = {}
+    data["custom_emojis"][service] = emoji_id
+    save_stored_data(data)
+
+    preview = f'<tg-emoji emoji-id="{emoji_id}">🟢</tg-emoji>'
+    await update.message.reply_text(
+        f"✅ <b>Real app icon saved for {service.capitalize()}!</b>\n"
+        f"Preview: {preview}\n"
+        f"Emoji ID: <code>{emoji_id}</code>",
+        parse_mode=ParseMode.HTML,
+    )
+
+async def cmd_list_icons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List all configured real app custom emoji icons."""
+    user = update.effective_user
+    if not is_admin(user.id if user else 0):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+
+    data = load_stored_data()
+    custom_emojis = data.get("custom_emojis", {})
+    if not custom_emojis:
+        await update.message.reply_text(
+            "ℹ️ No custom emoji icons configured yet.\n"
+            "Use <code>/set_icon &lt;service&gt; &lt;custom_emoji&gt;</code> to set one.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    lines = ["🎨 <b>Configured Real App Icons:</b>\n━━━━━━━━━━━━━━━━━━━━"]
+    for svc, eid in custom_emojis.items():
+        preview = f'<tg-emoji emoji-id="{eid}">🟢</tg-emoji>'
+        lines.append(f"• {preview} <b>{svc.capitalize()}:</b> <code>{eid}</code>")
+
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+async def cmd_remove_icon(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Remove a custom icon for a service."""
+    user = update.effective_user
+    if not is_admin(user.id if user else 0):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("ℹ️ <b>Usage:</b> <code>/remove_icon &lt;service&gt;</code>", parse_mode=ParseMode.HTML)
+        return
+
+    service = args[0].strip().lower()
+    data = load_stored_data()
+    custom_emojis = data.get("custom_emojis", {})
+    if service in custom_emojis:
+        del custom_emojis[service]
+        data["custom_emojis"] = custom_emojis
+        save_stored_data(data)
+        await update.message.reply_text(f"✅ Removed icon for <b>{service}</b>.", parse_mode=ParseMode.HTML)
+    else:
+        await update.message.reply_text(f"⚠️ No icon found for <b>{service}</b>.", parse_mode=ParseMode.HTML)
+
+def get_number_display(item: Dict[str, Any]) -> str:
+    template = str(item.get("rangeTemplate") or item.get("template") or "").strip()
+    if template:
+        return template
+    raw_num = str(item.get("destinationNumber") or item.get("number") or item.get("dst") or "").strip()
+    if raw_num:
+        return mask_phone_number(raw_num)
+    return ""
+
+def detect_language(text: str, item: Dict[str, Any]) -> str:
+    for k in ["language", "lang", "locale"]:
+        val = str(item.get(k) or "").strip()
+        if val:
+            return val.capitalize()
+    if not text:
+        return "English"
+    low = text.lower()
+    if any(w in low for w in ["código", "codigo", "tu código", "no compartas"]):
+        return "Spanish"
+    elif any(w in low for w in ["código", "seu código", "não compartilhe"]):
+        return "Portuguese"
+    elif any(w in low for w in ["votre code", "ne partagez"]):
+        return "French"
+    elif any(w in low for w in ["dein code", "teile"]):
+        return "German"
+    elif any(w in low for w in ["ваш код", "не сообщайте"]):
+        return "Russian"
+    elif any(w in low for w in ["كود", "رمز"]):
+        return "Arabic"
+    elif any(w in low for w in ["kodunuz", "kod"]):
+        return "Turkish"
+    elif any(w in low for w in ["kode", "verifikasi"]):
+        return "Indonesian"
+    elif any(w in low for w in ["mã", "xác minh"]):
+        return "Vietnamese"
+    return "English"
 
 def format_otp_notification(item: Dict[str, Any]) -> tuple:
-    """Returns (text, otp_code, icon_url) for the OTP message."""
-    raw_source             = str(item.get("sourceAddress") or item.get("source") or item.get("caller") or item.get("sender") or "").strip()
-    service_name, icon_url = get_service_info(raw_source)
-    raw_number             = str(item.get("destinationNumber") or item.get("number") or item.get("rangeTemplate") or item.get("template") or item.get("dst") or "")
-    masked_number          = html.escape(mask_phone_number(raw_number)) if raw_number else ""
-    raw_message            = str(item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "")
-    otp_code               = extract_otp_code(raw_message)
+    """Returns (text, otp_code, icon_url) formatted as: ET • 🟢 WhatsApp • 2519281TNE1907 • English"""
+    raw_source     = str(item.get("sourceAddress") or item.get("source") or item.get("caller") or item.get("sender") or "").strip()
+    raw_message    = str(item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "")
+    otp_code       = extract_otp_code(raw_message)
 
-    if masked_number:
-        num_line = f"📱 <b>Number:</b> <code>{masked_number}</code> | <b>{service_name}</b>"
-    else:
-        num_line = f"📱 <b>Service:</b> <b>{service_name}</b>"
+    country_code   = get_country_code(item)
+    service_disp   = get_service_display(raw_source)
+    icon_url       = get_service_icon_url(raw_source)
+    number_disp    = get_number_display(item)
+    language_disp  = detect_language(raw_message, item)
 
-    text = (
-        f"⚡ <b>NEW OTP / SMS RECEIVED</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"{num_line}"
-    )
+    parts = []
+    if country_code:
+        parts.append(f"<b>{country_code}</b>")
+    if service_disp:
+        parts.append(service_disp)
+    if number_disp:
+        parts.append(f"<b>{number_disp}</b>")
+    if language_disp:
+        parts.append(language_disp)
+
+    text = " • ".join(parts) if parts else "⚡ <b>NEW OTP</b>"
     if not otp_code and raw_message:
-        text += f"\n💬 <b>SMS:</b> <code>{html.escape(raw_message[:150])}</code>"
+        text += f"\n💬 <code>{html.escape(raw_message[:150])}</code>"
 
     return text, otp_code, icon_url
 
@@ -942,7 +1145,7 @@ async def send_with_retry(bot: Bot, chat_id: int, text: str, max_retries: int = 
                     )
                     return True
                 except Exception as photo_err:
-                    logger.warning(f"send_photo failed to {chat_id}: {photo_err}. Falling back to send_message.")
+                    logger.warning(f"send_photo failed ({photo_err}). Falling back to send_message.")
             await bot.send_message(
                 chat_id=chat_id,
                 text=text,
@@ -961,6 +1164,23 @@ async def send_with_retry(bot: Bot, chat_id: int, text: str, max_retries: int = 
             logger.warning(f"Network error sending to {chat_id}: {net_err}. Retry {attempt}/{max_retries}...")
             await asyncio.sleep(3.0)
         except Exception as e:
+            err_str = str(e).lower()
+            if "custom_emoji" in err_str or "entity_custom_emoji_invalid" in err_str:
+                logger.warning(f"Custom emoji rejected. Retrying with fallback.")
+                clean_text = re.sub(r'<tg-emoji[^>]*>(.*?)</tg-emoji>', r'\1', text)
+                try:
+                    await bot.send_message(chat_id=chat_id, text=clean_text,
+                                           parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+                    return True
+                except Exception as e2:
+                    logger.error(f"Fallback send failed: {e2}")
+            elif "can't parse entities" in err_str or "parse" in err_str:
+                try:
+                    plain = re.sub(r"<[^>]+>", "", text)
+                    await bot.send_message(chat_id=chat_id, text=plain, reply_markup=reply_markup)
+                    return True
+                except Exception:
+                    pass
             logger.error(f"❌ Cannot send to {chat_id}: {e}")
             return False
     return False
@@ -975,15 +1195,17 @@ def _get_otp_dest_ids() -> Set[int]:
 
 async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> bool:
     """Formats and sends one OTP item to the Telegram Group. Returns True if sent successfully."""
-    mid                           = str(item.get("id") or "").strip()
+    mid                         = str(item.get("id") or "").strip()
     formatted_text, otp, icon_url = format_otp_notification(item)
-    sent_to_any                   = False
+    sent_to_any                 = False
 
-    # Build 📋 Copy Code inline button if OTP code was extracted
+    # Build 💬 <OTP> inline copy button
     markup = None
     if otp:
         try:
-            markup = InlineKeyboardMarkup([[InlineKeyboardButton(f"📋 Copy Code: {otp}", copy_text=CopyTextButton(text=otp))]])
+            markup = InlineKeyboardMarkup([[
+                InlineKeyboardButton(f"💬 {otp}", copy_text=CopyTextButton(text=otp))
+            ]])
         except Exception:
             markup = None
 
@@ -1441,6 +1663,9 @@ async def main():
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("status", start_command))
     application.add_handler(CommandHandler("seturl", seturl_command))
+    application.add_handler(CommandHandler("set_icon", cmd_set_icon))
+    application.add_handler(CommandHandler("list_icons", cmd_list_icons))
+    application.add_handler(CommandHandler("remove_icon", cmd_remove_icon))
 
     def start_health_server():
         port_str = os.getenv("PORT")
@@ -1480,9 +1705,12 @@ async def main():
         asyncio.create_task(periodic_gist_sync_loop())
         try:
             await application.bot.set_my_commands([
-                ("start",  "📊 Bot status & admin dashboard"),
-                ("status", "⚡ Live zero-restart engine status"),
-                ("seturl", "🌐 View or update the Thirdwave API base URL"),
+                ("start",       "📊 Bot status & admin dashboard"),
+                ("status",      "⚡ Live zero-restart engine status"),
+                ("seturl",      "🌐 View or update the Thirdwave API base URL"),
+                ("set_icon",    "🎨 Set real app custom emoji for a service"),
+                ("list_icons",  "📋 View configured real app icons"),
+                ("remove_icon", "🗑️ Remove a configured custom icon"),
             ])
         except Exception:
             pass
