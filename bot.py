@@ -835,78 +835,61 @@ def parse_message_timestamp(time_str: str) -> float:
     except Exception:
         return 0.0
 
-def get_service_badge(source: str) -> str:
-    """Returns an emoji/logo and clean service name for known services."""
+SERVICE_ICONS: Dict[str, Tuple[str, str]] = {
+    "whatsapp": ("WhatsApp", "https://img.icons8.com/color/512/whatsapp--v1.png"),
+    "telegram": ("Telegram", "https://img.icons8.com/color/512/telegram-app--v1.png"),
+    "google": ("Google", "https://img.icons8.com/color/512/google-logo.png"),
+    "gmail": ("Gmail", "https://img.icons8.com/color/512/gmail-new.png"),
+    "facebook": ("Facebook", "https://img.icons8.com/color/512/facebook-new.png"),
+    "fb": ("Facebook", "https://img.icons8.com/color/512/facebook-new.png"),
+    "instagram": ("Instagram", "https://img.icons8.com/color/512/instagram-new--v1.png"),
+    "insta": ("Instagram", "https://img.icons8.com/color/512/instagram-new--v1.png"),
+    "tiktok": ("TikTok", "https://img.icons8.com/color/512/tiktok--v1.png"),
+    "twitter": ("Twitter", "https://img.icons8.com/color/512/twitterx--v1.png"),
+    "x": ("X", "https://img.icons8.com/color/512/twitterx--v1.png"),
+    "discord": ("Discord", "https://img.icons8.com/color/512/discord-logo--v1.png"),
+    "apple": ("Apple", "https://img.icons8.com/color/512/mac-os--v1.png"),
+    "icloud": ("Apple iCloud", "https://img.icons8.com/color/512/mac-os--v1.png"),
+    "microsoft": ("Microsoft", "https://img.icons8.com/color/512/microsoft.png"),
+    "outlook": ("Outlook", "https://img.icons8.com/color/512/microsoft-outlook-2019.png"),
+    "amazon": ("Amazon", "https://img.icons8.com/color/512/amazon.png"),
+    "netflix": ("Netflix", "https://img.icons8.com/color/512/netflix.png"),
+    "uber": ("Uber", "https://img.icons8.com/color/512/uber-app.png"),
+    "snapchat": ("Snapchat", "https://img.icons8.com/color/512/snapchat.png"),
+    "viber": ("Viber", "https://img.icons8.com/color/512/viber.png"),
+    "paypal": ("PayPal", "https://img.icons8.com/color/512/paypal.png"),
+    "wechat": ("WeChat", "https://img.icons8.com/color/512/weixing.png"),
+    "line": ("LINE", "https://img.icons8.com/color/512/line-me.png"),
+    "steam": ("Steam", "https://img.icons8.com/color/512/steam-circled.png"),
+    "yahoo": ("Yahoo", "https://img.icons8.com/color/512/yahoo.png"),
+    "linkedin": ("LinkedIn", "https://img.icons8.com/color/512/linkedin.png"),
+}
+DEFAULT_ICON_URL = "https://img.icons8.com/color/512/sms.png"
+
+def get_service_info(source: str) -> Tuple[str, str]:
+    """Returns (clean_service_name, icon_url) for the given sender/service string."""
     s = (source or "").strip()
     if not s:
-        return "💬 SMS"
+        return "SMS", DEFAULT_ICON_URL
     low = s.lower()
-    if "whatsapp" in low:
-        return "💬 WhatsApp"
-    elif "telegram" in low:
-        return "✈️ Telegram"
-    elif "google" in low or "gmail" in low:
-        return "🔍 Google"
-    elif "facebook" in low or low == "fb":
-        return "🔵 Facebook"
-    elif "instagram" in low or "insta" in low:
-        return "📸 Instagram"
-    elif "tiktok" in low:
-        return "🎵 TikTok"
-    elif "twitter" in low or low == "x":
-        return "✖️ Twitter"
-    elif "discord" in low:
-        return "👾 Discord"
-    elif "apple" in low or "icloud" in low:
-        return "🍎 Apple"
-    elif "microsoft" in low or "outlook" in low or "hotmail" in low:
-        return "🪟 Microsoft"
-    elif "amazon" in low:
-        return "📦 Amazon"
-    elif "netflix" in low:
-        return "🎬 Netflix"
-    elif "uber" in low:
-        return "🚗 Uber"
-    elif "snapchat" in low:
-        return "👻 Snapchat"
-    elif "viber" in low:
-        return "🟣 Viber"
-    elif "line" in low:
-        return "🟢 LINE"
-    elif "wechat" in low:
-        return "🟢 WeChat"
-    elif "imo" in low:
-        return "🟡 IMO"
-    elif "binance" in low:
-        return "🪙 Binance"
-    elif "paypal" in low:
-        return "💳 PayPal"
-    elif "tinder" in low:
-        return "🔥 Tinder"
-    elif "steam" in low:
-        return "🎮 Steam"
-    elif "yahoo" in low:
-        return "🟣 Yahoo"
-    elif "linkedin" in low:
-        return "💼 LinkedIn"
-    elif "vk" in low or "vkontakte" in low:
-        return "🔵 VK"
-    else:
-        return f"📡 {html.escape(s)}"
+    for key, (name, url) in SERVICE_ICONS.items():
+        if key in low:
+            return name, url
+    return html.escape(s), DEFAULT_ICON_URL
 
 def format_otp_notification(item: Dict[str, Any]) -> tuple:
-    """Returns (text, otp_code) for the OTP message."""
-    raw_source    = str(item.get("sourceAddress") or item.get("source") or item.get("caller") or item.get("sender") or "").strip()
-    service_badge = get_service_badge(raw_source)
-    raw_number    = str(item.get("destinationNumber") or item.get("number") or item.get("rangeTemplate") or item.get("template") or item.get("dst") or "")
-    masked_number = html.escape(mask_phone_number(raw_number)) if raw_number else ""
-    raw_message   = str(item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "")
-    otp_code      = extract_otp_code(raw_message)
+    """Returns (text, otp_code, icon_url) for the OTP message."""
+    raw_source             = str(item.get("sourceAddress") or item.get("source") or item.get("caller") or item.get("sender") or "").strip()
+    service_name, icon_url = get_service_info(raw_source)
+    raw_number             = str(item.get("destinationNumber") or item.get("number") or item.get("rangeTemplate") or item.get("template") or item.get("dst") or "")
+    masked_number          = html.escape(mask_phone_number(raw_number)) if raw_number else ""
+    raw_message            = str(item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "")
+    otp_code               = extract_otp_code(raw_message)
 
     if masked_number:
-        num_line = f"📱 <b>Number:</b> <code>{masked_number}</code> | {service_badge}"
+        num_line = f"📱 <b>Number:</b> <code>{masked_number}</code> | <b>{service_name}</b>"
     else:
-        num_line = f"📱 <b>Service:</b> {service_badge}"
+        num_line = f"📱 <b>Service:</b> <b>{service_name}</b>"
 
     text = (
         f"⚡ <b>NEW OTP / SMS RECEIVED</b>\n"
@@ -916,7 +899,7 @@ def format_otp_notification(item: Dict[str, Any]) -> tuple:
     if not otp_code and raw_message:
         text += f"\n💬 <b>SMS:</b> <code>{html.escape(raw_message[:150])}</code>"
 
-    return text, otp_code
+    return text, otp_code, icon_url
 
 # ==========================================
 # 9. Telegram Bot Engine
@@ -942,9 +925,24 @@ client = ThirdwaveClient(
 )
 
 async def send_with_retry(bot: Bot, chat_id: int, text: str, max_retries: int = 3,
-                          reply_markup=None) -> bool:
+                          reply_markup=None, photo_url: Optional[str] = None) -> bool:
     for attempt in range(1, max_retries + 1):
         try:
+            if photo_url:
+                try:
+                    await bot.send_photo(
+                        chat_id=chat_id,
+                        photo=photo_url,
+                        caption=text,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=reply_markup,
+                        read_timeout=30.0,
+                        write_timeout=30.0,
+                        connect_timeout=30.0,
+                    )
+                    return True
+                except Exception as photo_err:
+                    logger.warning(f"send_photo failed to {chat_id}: {photo_err}. Falling back to send_message.")
             await bot.send_message(
                 chat_id=chat_id,
                 text=text,
@@ -977,9 +975,9 @@ def _get_otp_dest_ids() -> Set[int]:
 
 async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> bool:
     """Formats and sends one OTP item to the Telegram Group. Returns True if sent successfully."""
-    mid                  = str(item.get("id") or "").strip()
-    formatted_text, otp  = format_otp_notification(item)
-    sent_to_any          = False
+    mid                           = str(item.get("id") or "").strip()
+    formatted_text, otp, icon_url = format_otp_notification(item)
+    sent_to_any                   = False
 
     # Build 📋 Copy Code inline button if OTP code was extracted
     markup = None
@@ -991,7 +989,7 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
 
     for cid in dest_ids:
         try:
-            ok = await send_with_retry(bot, cid, formatted_text, reply_markup=markup)
+            ok = await send_with_retry(bot, cid, formatted_text, reply_markup=markup, photo_url=icon_url)
             if ok:
                 sent_to_any = True
         except Exception as e:
