@@ -54,7 +54,7 @@ from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup, Co
 from telegram.constants import ParseMode
 from telegram.error import RetryAfter, TimedOut, NetworkError, Conflict
 from telegram.request import HTTPXRequest
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 if sys.platform == "win32":
     try:
@@ -311,6 +311,7 @@ class GistStorage:
                                 "total_forwarded": int(parsed.get("total_forwarded", 0)),
                                 "country_counts": parsed.get("country_counts", {}),
                                 "base_url": parsed.get("base_url", ""),
+                                "bot_data": parsed.get("bot_data", {}),
                             }
                 else:
                     logger.warning(f"Gist load status {res.status_code}: {res.text[:100]}")
@@ -342,6 +343,7 @@ class GistStorage:
                 "total_forwarded": total_forwarded,
                 "country_counts": country_counts or {},
                 "base_url": base_url or "",
+                "bot_data": load_stored_data(),
             }
             payload = {
                 "description": self.description,
@@ -835,7 +837,112 @@ def parse_message_timestamp(time_str: str) -> float:
     except Exception:
         return 0.0
 
-def format_otp_notification(item: Dict[str, Any]) -> tuple:
+ISO_TO_COUNTRY_NAME: Dict[str, str] = {
+    "AD": "Andorra", "AE": "United Arab Emirates", "AF": "Afghanistan", "AL": "Albania",
+    "AM": "Armenia", "AO": "Angola", "AR": "Argentina", "AT": "Austria", "AU": "Australia",
+    "AZ": "Azerbaijan", "BA": "Bosnia and Herzegovina", "BD": "Bangladesh", "BE": "Belgium",
+    "BF": "Burkina Faso", "BG": "Bulgaria", "BH": "Bahrain", "BI": "Burundi", "BJ": "Benin",
+    "BO": "Bolivia", "BR": "Brazil", "BT": "Bhutan", "BW": "Botswana", "BY": "Belarus",
+    "BZ": "Belize", "CA": "Canada", "CD": "DR Congo", "CF": "Central African Republic",
+    "CG": "Congo", "CH": "Switzerland", "CI": "Ivory Coast", "CL": "Chile", "CM": "Cameroon",
+    "CN": "China", "CO": "Colombia", "CR": "Costa Rica", "CU": "Cuba", "CV": "Cape Verde",
+    "CY": "Cyprus", "CZ": "Czech Republic", "DE": "Germany", "DJ": "Djibouti", "DK": "Denmark",
+    "DO": "Dominican Republic", "DZ": "Algeria", "EC": "Ecuador", "EE": "Estonia", "EG": "Egypt",
+    "ES": "Spain", "ET": "Ethiopia", "FI": "Finland", "FJ": "Fiji", "FR": "France",
+    "GA": "Gabon", "GB": "United Kingdom", "GE": "Georgia", "GH": "Ghana", "GI": "Gibraltar",
+    "GM": "Gambia", "GN": "Guinea", "GQ": "Equatorial Guinea", "GR": "Greece", "GT": "Guatemala",
+    "GW": "Guinea-Bissau", "GY": "Guyana", "HK": "Hong Kong", "HN": "Honduras", "HR": "Croatia",
+    "HT": "Haiti", "HU": "Hungary", "ID": "Indonesia", "IE": "Ireland", "IL": "Israel",
+    "IN": "India", "IQ": "Iraq", "IR": "Iran", "IS": "Iceland", "IT": "Italy",
+    "JM": "Jamaica", "JO": "Jordan", "JP": "Japan", "KE": "Kenya", "KG": "Kyrgyzstan",
+    "KH": "Cambodia", "KR": "South Korea", "KW": "Kuwait", "KZ": "Kazakhstan", "LA": "Laos",
+    "LB": "Lebanon", "LK": "Sri Lanka", "LR": "Liberia", "LS": "Lesotho", "LT": "Lithuania",
+    "LU": "Luxembourg", "LV": "Latvia", "LY": "Libya", "MA": "Morocco", "MC": "Monaco",
+    "MD": "Moldova", "ME": "Montenegro", "MG": "Madagascar", "MK": "North Macedonia", "ML": "Mali",
+    "MM": "Myanmar", "MN": "Mongolia", "MO": "Macau", "MR": "Mauritania", "MT": "Malta",
+    "MU": "Mauritius", "MV": "Maldives", "MW": "Malawi", "MX": "Mexico", "MY": "Malaysia",
+    "MZ": "Mozambique", "NA": "Namibia", "NE": "Niger", "NG": "Nigeria", "NI": "Nicaragua",
+    "NL": "Netherlands", "NO": "Norway", "NP": "Nepal", "NZ": "New Zealand", "OM": "Oman",
+    "PA": "Panama", "PE": "Peru", "PG": "Papua New Guinea", "PH": "Philippines", "PK": "Pakistan",
+    "PL": "Poland", "PS": "Palestine", "PT": "Portugal", "PY": "Paraguay", "QA": "Qatar",
+    "RO": "Romania", "RS": "Serbia", "RU": "Russia", "RW": "Rwanda", "SA": "Saudi Arabia",
+    "SC": "Seychelles", "SD": "Sudan", "SE": "Sweden", "SG": "Singapore", "SI": "Slovenia",
+    "SK": "Slovakia", "SL": "Sierra Leone", "SN": "Senegal", "SO": "Somalia", "SR": "Suriname",
+    "ST": "Sao Tome and Principe", "SV": "El Salvador", "SY": "Syria", "SZ": "Eswatini", "TD": "Chad",
+    "TG": "Togo", "TH": "Thailand", "TJ": "Tajikistan", "TM": "Turkmenistan", "TN": "Tunisia",
+    "TR": "Turkey", "TT": "Trinidad and Tobago", "TW": "Taiwan", "TZ": "Tanzania", "UA": "Ukraine",
+    "UG": "Uganda", "US": "United States", "UY": "Uruguay", "UZ": "Uzbekistan", "VA": "Vatican City",
+    "VE": "Venezuela", "VN": "Vietnam", "XK": "Kosovo", "YE": "Yemen", "ZA": "South Africa",
+    "ZM": "Zambia", "ZW": "Zimbabwe"
+}
+
+def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) -> str:
+    iso = (iso_code or "").strip().upper()
+    if iso in ISO_TO_COUNTRY_NAME:
+        return ISO_TO_COUNTRY_NAME[iso]
+    if item:
+        raw_range = str(item.get("rangeName") or item.get("destinationName") or item.get("country") or "").strip()
+        if raw_range:
+            parts = re.split(r"[-–—,:/]", raw_range)
+            cand = parts[0].strip().title()
+            if cand and len(cand) > 2:
+                return cand
+    return "Global"
+
+def detect_sms_language(text: str) -> Tuple[str, str]:
+    if not text:
+        return ("English", "EN")
+    t = text.strip()
+    if re.search(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]", t):
+        if any(c in t for c in ["گ", "چ", "پ", "ژ"]):
+            return ("Persian", "FA")
+        if any(c in t for c in ["ے", "ٹ", "ڈ", "ڑ"]):
+            return ("Urdu", "UR")
+        return ("Arabic", "AR")
+    if re.search(r"[\u0400-\u04FF]", t):
+        if any(c in t for c in ["є", "ї", "і", "ґ"]):
+            return ("Ukrainian", "UK")
+        return ("Russian", "RU")
+    if re.search(r"[\u3040-\u30FF]", t):
+        return ("Japanese", "JA")
+    if re.search(r"[\uAC00-\uD7AF]", t):
+        return ("Korean", "KO")
+    if re.search(r"[\u4E00-\u9FFF]", t):
+        return ("Chinese", "ZH")
+    if re.search(r"[\u0900-\u097F]", t):
+        return ("Hindi", "HI")
+    if re.search(r"[\u0980-\u09FF]", t):
+        return ("Bengali", "BN")
+    if re.search(r"[\u0590-\u05FF]", t):
+        return ("Hebrew", "HE")
+    if re.search(r"[\u0E00-\u0E7F]", t):
+        return ("Thai", "TH")
+    if re.search(r"[\u0370-\u03FF]", t):
+        return ("Greek", "EL")
+
+    low = t.lower()
+    if any(w in low for w in ["kodunuz", "doğrulama", "şifre", "giriş", "paylaşmayın", "onay"]):
+        return ("Turkish", "TR")
+    if any(w in low for w in ["mã", "xác minh", "mật khẩu", "không chia sẻ", "đăng nhập"]):
+        return ("Vietnamese", "VI")
+    if any(w in low for w in ["código", "codigo", "tu código", "no compartas", "iniciar sesión", "verificación", "clave"]):
+        return ("Spanish", "ES")
+    if any(w in low for w in ["seu código", "não compartilhe", "senha", "segurança", "verificação"]):
+        return ("Portuguese", "PT")
+    if any(w in low for w in ["votre code", "ne partagez", "mot de passe", "vérification", "connexion"]):
+        return ("French", "FR")
+    if any(w in low for w in ["dein code", "ihr code", "bestätigungscode", "verifizierung", "passwort", "nicht weitergeben"]):
+        return ("German", "DE")
+    if any(w in low for w in ["il tuo codice", "non condividere", "verifica", "accesso"]):
+        return ("Italian", "IT")
+    if any(w in low for w in ["kode verifikasi", "jangan berikan", "jangan bagikan", "rahasia", "masuk"]):
+        return ("Indonesian", "ID")
+    if any(w in low for w in ["twój kod", "hasło", "weryfikacyjny", "nie udostępniaj"]):
+        return ("Polish", "PL")
+
+    return ("English", "EN")
+
+def format_otp_notification(item: Dict[str, Any], sms_format: str = "short") -> tuple:
     """Returns (text, otp_code, raw_message) with professional header/divider layout."""
     source        = html.escape(str(item.get("sourceAddress") or item.get("source") or item.get("caller") or item.get("sender") or "SMS Service").strip())
     raw_number    = str(item.get("destinationNumber") or item.get("number") or item.get("rangeTemplate") or item.get("template") or item.get("dst") or "")
@@ -847,6 +954,9 @@ def format_otp_notification(item: Dict[str, Any]) -> tuple:
     parts = country_iso.split(maxsplit=1)
     flag = parts[0] if parts else "🌐"
     iso  = parts[1] if len(parts) > 1 else "XX"
+
+    country_name = get_country_full_name(iso, item)
+    lang_name, lang_code = detect_sms_language(raw_message)
 
     DIVIDER = "━━━━━━━━━━━━━━━━━━━━"
     INDENT_NUM = "        "  # 8 spaces for perfect visual centering of flag + number + ISO
@@ -865,8 +975,14 @@ def format_otp_notification(item: Dict[str, Any]) -> tuple:
         lines.append(f"{INDENT}{flag} <b>{iso}</b>")
 
     lines.append(f"{INDENT}<b>Service:</b> <code>{source}</code>")
+    lines.append(f"{INDENT}<b>Country:</b> <code>{country_name} ({iso})</code>")
+    lines.append(f"{INDENT}<b>Language:</b> <code>{lang_name} ({lang_code})</code>")
 
+    # If no OTP: always display full raw message
+    # If OTP present: only display message body if admin enabled 'long' format
     if not otp_code and raw_message:
+        lines.append(f"{INDENT}<i>{html.escape(raw_message.strip())}</i>")
+    elif otp_code and raw_message and sms_format == "long":
         lines.append(f"{INDENT}<i>{html.escape(raw_message.strip())}</i>")
 
     lines.append(DIVIDER)
@@ -932,15 +1048,28 @@ def _get_otp_dest_ids() -> Set[int]:
 
 async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> bool:
     """Formats and sends one OTP item to the Telegram Group. Returns True if sent successfully."""
-    mid                          = str(item.get("id") or "").strip()
-    formatted_text, otp, raw_msg = format_otp_notification(item)
-    sent_to_any                  = False
+    mid        = str(item.get("id") or "").strip()
+    data       = load_stored_data()
+    sms_format = data.get("sms_format", "short")
+    formatted_text, otp, raw_msg = format_otp_notification(item, sms_format=sms_format)
+    sent_to_any = False
 
-    # Build inline button: only when OTP code is found (no button for plain SMS)
+    # Build inline buttons: OTP code button + optional Admin Custom Link button
     markup = None
     try:
+        buttons = []
         if otp:
-            markup = InlineKeyboardMarkup([[InlineKeyboardButton(otp, copy_text=CopyTextButton(text=otp))]])
+            buttons.append([InlineKeyboardButton(otp, copy_text=CopyTextButton(text=otp))])
+
+        link_cfg = data.get("custom_link_button")
+        if isinstance(link_cfg, dict) and link_cfg.get("text") and link_cfg.get("url"):
+            b_text = str(link_cfg["text"]).strip()
+            b_url  = str(link_cfg["url"]).strip()
+            if b_url.startswith(("http://", "https://", "tg://")):
+                buttons.append([InlineKeyboardButton(b_text, url=b_url)])
+
+        if buttons:
+            markup = InlineKeyboardMarkup(buttons)
     except Exception:
         markup = None
 
@@ -997,10 +1126,25 @@ async def poll_incoming_messages(application: Application):
             saved_base = gist_state.get("base_url")
             if saved_base and saved_base != client.base_url:
                 client.update_base_url(saved_base)
+
             logger.info(
                 f"🔄 Zero-Restart Handover Active: {len(gist_seen)} messages restored, "
                 f"{total_forwarded_count} forwarded previously, last epoch {_handover_epoch:.0f}."
             )
+
+        # Restore bot configuration settings secretly from cloud database
+        saved_bot_data = gist_state.get("bot_data")
+        if isinstance(saved_bot_data, dict) and saved_bot_data:
+            local_data = load_stored_data()
+            local_data.update(saved_bot_data)
+            save_stored_data(local_data)
+            custom_name = local_data.get("bot_name")
+            if custom_name:
+                try:
+                    await application.bot.set_my_name(name=custom_name)
+                    logger.info(f"🤖 Applied custom bot name from secret database: {custom_name}")
+                except Exception:
+                    pass
 
         # Populate local SQLite DB from cloud memory so database is never empty on restarts
         try:
@@ -1123,16 +1267,7 @@ async def poll_incoming_messages(application: Application):
 # ==========================================
 # 10. Bot Commands
 # ==========================================
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat    = update.effective_chat
-    user    = update.effective_user
-    msg_obj = update.effective_message
-    if not chat or not msg_obj:
-        return
-    user_id = user.id if user else 0
-    if not is_user_authorized(user_id):
-        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
-        return
+def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     group_ids = get_target_group_chat_ids()
     db_count  = get_total_processed_count()
     group_text = f"{len(group_ids)} Linked Groups ✅" if len(group_ids) > 1 else ("Linked ✅" if group_ids else "Not Linked ⚠️")
@@ -1153,6 +1288,18 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         handover_info = "<code>Always-Online (Continuous)</code>"
 
+    # Format & Link button status
+    data = load_stored_data()
+    active_bot_name = data.get("bot_name", "OTP Wave Bot")
+    active_format = data.get("sms_format", "short")
+    fmt_label = "Short (Modern ⚡)" if active_format == "short" else "Long (Detailed 📜)"
+
+    link_cfg = data.get("custom_link_button")
+    if isinstance(link_cfg, dict) and link_cfg.get("text"):
+        link_str = f"<code>{html.escape(str(link_cfg['text']))}</code> ({html.escape(str(link_cfg.get('url','')))})"
+    else:
+        link_str = "<i>None configured</i>"
+
     # Build per-country breakdown (sorted by count desc, top 15)
     country_lines = ""
     if country_forwarded_counts:
@@ -1162,26 +1309,303 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             country_lines += f"  {idx}. {iso_display} — <code>{cnt}</code>\n"
         country_lines += "━━━━━━━━━━━━━━━━━━━━\n"
 
-    gist_status = f"28h Persistent Memory ({GIST_ID[:8]}...) ☁️" if gist_storage.enabled else "Local Storage"
+    gist_status = f"Encrypted Cloud DB ({GIST_ID[:8]}...) 🔒" if gist_storage.enabled else "Local Storage"
     msg = (
-        f"⚡ <b>OTP WAVE 24/7 (Zero-Restart Engine)</b>\n"
+        f"⚡ <b>{active_bot_name} 24/7 (Zero-Restart Engine)</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"• <b>Engine Status:</b> <code>100% Online & Forwarding ✅</code>\n"
+        f"• <b>Bot Name:</b> <code>{active_bot_name}</code> (/setname)\n"
         f"• <b>Handover Mode:</b> <code>Zero-Restart Handover Active 🔄</code>\n"
         f"• <b>Session Uptime:</b> <code>{uptime_str}</code>\n"
         f"• <b>Next Handover:</b> {handover_info}\n"
         f"• <b>Platform:</b> <code>Thirdwave IPRN</code>\n"
         f"• <b>API Base:</b> <code>{client.base_url}</code>\n"
-        f"• <b>Storage:</b> <code>{gist_status}</code>\n"
+        f"• <b>Database:</b> <code>{gist_status}</code>\n"
         f"• <b>Target Groups:</b> <code>{group_text}</code>\n"
         f"• <b>OTPs Forwarded:</b> <code>{total_forwarded_count}</code> <i>(accumulated)</i>\n"
         f"• <b>Lifetime DB:</b> <code>{db_count} total records</code>\n"
         f"• <b>Poll Speed:</b> <code>{POLL_INTERVAL_SECONDS}s</code>\n"
+        f"• <b>SMS Format:</b> <code>{fmt_label}</code> (/toggleformat)\n"
+        f"• <b>Link Button:</b> {link_str} (/setlink)\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"{country_lines}"
         f"🔔 <i>Real-time seamless forwarding active. Zero restart alerts.</i>"
     )
-    await msg_obj.reply_text(msg, parse_mode=ParseMode.HTML)
+
+    next_fmt_label = "Long (Detailed 📜)" if active_format == "short" else "Short (Modern ⚡)"
+    keyboard = [
+        [InlineKeyboardButton(f"📋 Toggle Format ({active_format.upper()})", callback_data="toggle_format")],
+        [InlineKeyboardButton("✏️ Change Bot Name", callback_data="bot_name_help"),
+         InlineKeyboardButton("🔗 Link Button", callback_data="link_help")],
+        [InlineKeyboardButton("🔄 Refresh Dashboard", callback_data="refresh_dash")]
+    ]
+    return msg, InlineKeyboardMarkup(keyboard)
+
+async def sync_data_to_secret_db():
+    """Immediately sync all persistent state and settings secretly to the cloud database."""
+    if "gist_storage" in globals() and gist_storage.enabled:
+        try:
+            await gist_storage.save_state(
+                seen_dict=seen_timestamps,
+                is_handover=_is_handover,
+                total_forwarded=total_forwarded_count,
+                country_counts=country_forwarded_counts,
+                base_url=client.base_url if "client" in globals() else "",
+            )
+            logger.info("🔒 Bot state and settings securely synced to cloud database.")
+        except Exception as e:
+            logger.debug(f"Cloud DB sync notice: {e}")
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat    = update.effective_chat
+    user    = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj:
+        return
+    user_id = user.id if user else 0
+    if not is_user_authorized(user_id):
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        return
+    msg, markup = build_status_dashboard()
+    await msg_obj.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat    = update.effective_chat
+    user    = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj:
+        return
+    user_id = user.id if user else 0
+    if not is_user_authorized(user_id):
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        return
+
+    data = load_stored_data()
+    curr = data.get("sms_format", "short")
+    new_fmt = "long" if curr == "short" else "short"
+    data["sms_format"] = new_fmt
+    save_stored_data(data)
+    asyncio.create_task(sync_data_to_secret_db())
+
+    mode_label = "Long (Detailed with Full SMS 📜)" if new_fmt == "long" else "Short (Modern & Clean ⚡)"
+    await msg_obj.reply_text(
+        f"✅ <b>SMS Notification Format Updated!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Active Mode:</b> <code>{mode_label}</code>\n"
+        f"• <b>Database:</b> <code>Saved Secretly to Cloud Store 🔒</code>\n\n"
+        f"All future SMS notifications will use this format.",
+        parse_mode=ParseMode.HTML
+    )
+
+async def setname_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat    = update.effective_chat
+    user    = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj:
+        return
+    user_id = user.id if user else 0
+    if not is_user_authorized(user_id):
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        return
+
+    new_name = " ".join(context.args).strip() if context.args else ""
+    if not new_name:
+        await msg_obj.reply_text(
+            "✏️ <b>Change Bot Name:</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Usage: <code>/setname Your New Bot Name</code>\n\n"
+            "<b>Example:</b>\n"
+            "<code>/setname OTP Wave VIP</code>\n"
+            "<code>/setname Thirdwave OTP Hub</code>\n\n"
+            "• Changes the bot's official Telegram name\n"
+            "• Persists secretly in the cloud database\n"
+            "• To reset to default, use <code>/resetname</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    if len(new_name) > 64:
+        await msg_obj.reply_text("❌ Bot name must be 64 characters or fewer.", parse_mode=ParseMode.HTML)
+        return
+
+    try:
+        await context.bot.set_my_name(name=new_name)
+    except Exception as e:
+        logger.warning(f"Failed to set Telegram bot name: {e}")
+
+    data = load_stored_data()
+    data["bot_name"] = new_name
+    save_stored_data(data)
+    asyncio.create_task(sync_data_to_secret_db())
+
+    await msg_obj.reply_text(
+        f"✅ <b>Bot Name Successfully Updated!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>New Name:</b> <code>{html.escape(new_name)}</code>\n"
+        f"• <b>Telegram API:</b> <code>Applied Officially ✅</code>\n"
+        f"• <b>Database:</b> <code>Saved Secretly to Cloud Store 🔒</code>",
+        parse_mode=ParseMode.HTML
+    )
+
+async def resetname_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat    = update.effective_chat
+    user    = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj:
+        return
+    user_id = user.id if user else 0
+    if not is_user_authorized(user_id):
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        return
+
+    DEFAULT_NAME = "OTP Wave Bot"
+    try:
+        await context.bot.set_my_name(name=DEFAULT_NAME)
+    except Exception as e:
+        logger.warning(f"Reset bot name warning: {e}")
+
+    data = load_stored_data()
+    if "bot_name" in data:
+        del data["bot_name"]
+        save_stored_data(data)
+        asyncio.create_task(sync_data_to_secret_db())
+
+    await msg_obj.reply_text(
+        f"✅ <b>Bot Name Reset to Default!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Active Name:</b> <code>{DEFAULT_NAME}</code>\n"
+        f"• <b>Database:</b> <code>Secret Cloud Store Synced 🔒</code>",
+        parse_mode=ParseMode.HTML
+    )
+
+async def setlink_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat    = update.effective_chat
+    user    = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj:
+        return
+    user_id = user.id if user else 0
+    if not is_user_authorized(user_id):
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        return
+
+    raw_args = " ".join(context.args).strip() if context.args else ""
+    if not raw_args or "|" not in raw_args:
+        await msg_obj.reply_text(
+            "🔗 <b>How to set a Custom Link Button:</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Use the command with <code>Button Name | URL</code>:\n\n"
+            "<b>Example:</b>\n"
+            "<code>/setlink 📢 Join Our Channel | https://t.me/mychannel</code>\n"
+            "<code>/setlink 👥 Support Group | https://t.me/mysupport</code>\n"
+            "<code>/setlink 🤖 Official Bot | https://t.me/mybot</code>\n\n"
+            "To remove the button at any time, run <code>/removelink</code>.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    parts = raw_args.split("|", 1)
+    btn_text = parts[0].strip()
+    btn_url  = parts[1].strip()
+
+    if not btn_text:
+        await msg_obj.reply_text("❌ Button text cannot be empty.", parse_mode=ParseMode.HTML)
+        return
+    if not btn_url.startswith(("http://", "https://", "tg://")):
+        await msg_obj.reply_text("❌ URL must start with <code>https://</code>, <code>http://</code>, or <code>tg://</code>.", parse_mode=ParseMode.HTML)
+        return
+
+    data = load_stored_data()
+    data["custom_link_button"] = {"text": btn_text, "url": btn_url}
+    save_stored_data(data)
+    asyncio.create_task(sync_data_to_secret_db())
+
+    await msg_obj.reply_text(
+        f"✅ <b>Custom Link Button Configured!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Button Label:</b> <code>{html.escape(btn_text)}</code>\n"
+        f"• <b>Target URL:</b> <code>{html.escape(btn_url)}</code>\n"
+        f"• <b>Database:</b> <code>Saved Secretly to Cloud Store 🔒</code>\n\n"
+        f"Every forwarded SMS will now include this button.",
+        parse_mode=ParseMode.HTML
+    )
+
+async def removelink_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat    = update.effective_chat
+    user    = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj:
+        return
+    user_id = user.id if user else 0
+    if not is_user_authorized(user_id):
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        return
+
+    data = load_stored_data()
+    if "custom_link_button" in data:
+        del data["custom_link_button"]
+        save_stored_data(data)
+        asyncio.create_task(sync_data_to_secret_db())
+        await msg_obj.reply_text("✅ <b>Custom link button removed.</b> SMS messages will no longer show the extra button.", parse_mode=ParseMode.HTML)
+    else:
+        await msg_obj.reply_text("ℹ️ No custom link button is currently set.", parse_mode=ParseMode.HTML)
+
+async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query:
+        return
+    user_id = query.from_user.id if query.from_user else 0
+    if not is_user_authorized(user_id):
+        await query.answer("⛔ Access Restricted: Admins only.", show_alert=True)
+        return
+
+    if query.data == "toggle_format":
+        data = load_stored_data()
+        curr = data.get("sms_format", "short")
+        new_fmt = "long" if curr == "short" else "short"
+        data["sms_format"] = new_fmt
+        save_stored_data(data)
+        asyncio.create_task(sync_data_to_secret_db())
+
+        mode_label = "Long (Detailed 📜)" if new_fmt == "long" else "Short (Modern ⚡)"
+        await query.answer(f"Format switched to: {mode_label}", show_alert=True)
+
+        try:
+            msg_text, reply_markup = build_status_dashboard()
+            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+        except Exception:
+            pass
+    elif query.data == "bot_name_help":
+        await query.answer()
+        await query.message.reply_text(
+            "✏️ <b>Change Bot Name:</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "To change the bot display name, send:\n"
+            "<code>/setname Your New Bot Name</code>\n\n"
+            "<b>Example:</b>\n"
+            "<code>/setname OTP Wave VIP</code>\n\n"
+            "To reset to default, send <code>/resetname</code>.",
+            parse_mode=ParseMode.HTML
+        )
+    elif query.data == "link_help":
+        await query.answer()
+        await query.message.reply_text(
+            "🔗 <b>Custom Link Button Guide:</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "• <b>To add/change button:</b>\n"
+            "  <code>/setlink Button Name | https://yourlink.com</code>\n\n"
+            "• <b>To delete button:</b>\n"
+            "  <code>/removelink</code>\n\n"
+            "The button will appear automatically on every forwarded SMS.",
+            parse_mode=ParseMode.HTML
+        )
+    elif query.data == "refresh_dash":
+        try:
+            msg_text, reply_markup = build_status_dashboard()
+            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+            await query.answer("Dashboard Refreshed 🔄")
+        except Exception:
+            await query.answer("Already up to date ✅")
 
 async def seturl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat    = update.effective_chat
@@ -1398,6 +1822,12 @@ async def main():
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("status", start_command))
     application.add_handler(CommandHandler("seturl", seturl_command))
+    application.add_handler(CommandHandler("toggleformat", toggleformat_command))
+    application.add_handler(CommandHandler("setname", setname_command))
+    application.add_handler(CommandHandler("resetname", resetname_command))
+    application.add_handler(CommandHandler("setlink", setlink_command))
+    application.add_handler(CommandHandler("removelink", removelink_command))
+    application.add_handler(CallbackQueryHandler(admin_callback_handler))
 
     def start_health_server():
         port_str = os.getenv("PORT")
@@ -1437,9 +1867,14 @@ async def main():
         asyncio.create_task(periodic_gist_sync_loop())
         try:
             await application.bot.set_my_commands([
-                ("start",  "📊 Bot status & admin dashboard"),
-                ("status", "⚡ Live zero-restart engine status"),
-                ("seturl", "🌐 View or update the Thirdwave API base URL"),
+                ("start",        "📊 Bot status & admin dashboard"),
+                ("status",       "⚡ Live zero-restart engine status"),
+                ("setname",      "✏️ Change bot display name"),
+                ("resetname",    "🔄 Reset bot name to default"),
+                ("toggleformat", "🔄 Toggle SMS format (Short / Long)"),
+                ("setlink",      "🔗 Add custom link button on SMS"),
+                ("removelink",   "🗑️ Remove custom link button"),
+                ("seturl",       "🌐 View or update the Thirdwave API base URL"),
             ])
         except Exception:
             pass
