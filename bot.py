@@ -942,8 +942,15 @@ def detect_sms_language(text: str) -> Tuple[str, str]:
 
     return ("English", "EN")
 
-def format_otp_notification(item: Dict[str, Any], sms_format: str = "short") -> tuple:
+def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = None) -> tuple:
     """Returns (text, otp_code, raw_message) with professional header/divider layout."""
+    if not sms_format:
+        try:
+            sms_format = load_stored_data().get("sms_format", "short")
+        except Exception:
+            sms_format = "short"
+    sms_format = str(sms_format).lower().strip()
+
     source        = html.escape(str(item.get("sourceAddress") or item.get("source") or item.get("caller") or item.get("sender") or "SMS Service").strip())
     raw_number    = str(item.get("destinationNumber") or item.get("number") or item.get("rangeTemplate") or item.get("template") or item.get("dst") or "")
     masked_number = html.escape(mask_phone_number(raw_number)) if raw_number else ""
@@ -959,7 +966,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: str = "short") -> 
     lang_name, lang_code = detect_sms_language(raw_message)
 
     DIVIDER = "━━━━━━━━━━━━━━━━━━━━"
-    INDENT_NUM = "        "  # 8 spaces for perfect visual centering of flag + number + ISO
+    INDENT_NUM = "        "  # 8 spaces for perfect visual centering of flag + number
     INDENT  = "          "  # 10 spaces
 
     if otp_code:
@@ -970,20 +977,61 @@ def format_otp_notification(item: Dict[str, Any], sms_format: str = "short") -> 
     lines = [header, DIVIDER]
 
     if masked_number:
-        lines.append(f"{INDENT_NUM}{flag} <code>{masked_number}</code> • <b>{iso}</b>")
+        lines.append(f"{INDENT_NUM}{flag} <code>{masked_number}</code>")
     else:
-        lines.append(f"{INDENT}{flag} <b>{iso}</b>")
+        lines.append(f"{INDENT}{flag}")
 
-    lines.append(f"{INDENT}<b>Service:</b> <code>{source}</code>")
+    # Check if WhatsApp service - either by source OR message text content
+    low_source = source.lower()
+    low_msg = raw_message.lower()
+    wa_keywords = ["whatsapp", "‏واتساب‏", "واتساب", "ватсап", "wa code", "wa.me"]
+    is_wa = "whatsapp" in low_source or any(k in low_msg for k in wa_keywords)
+    wa_tag = ""
+    if is_wa:
+        if "whatsapp" not in low_source:
+            source = "WhatsApp"
+
+        old_indicators = [
+            "new device",
+            "being registered",
+            "dispositivo nuevo",
+            "nuevo dispositivo",
+            "novo aparelho",
+            "novo dispositivo",
+            "новом устройстве",
+            "нового устройства",
+            "perangkat baru",
+            "neuem gerät",
+            "neuen gerat",
+            "nouvel appareil",
+            "nuovo dispositivo",
+            "yeni bir cihaz",
+            "nowym urządzeniu",
+            "nowe urządzenie",
+            "nowym urzadzeniu",
+            "جهاز جديد",
+            "دستگاه جدید",
+            "dispositif nouveau",
+        ]
+        is_old = any(ind in low_msg for ind in old_indicators)
+        wa_tag = "OLD" if is_old else "NEW"
+
+    if is_wa and wa_tag:
+        lines.append(f"{INDENT}<b>Service:</b> <code>{source}</code> <b>[{wa_tag}]</b>")
+    else:
+        lines.append(f"{INDENT}<b>Service:</b> <code>{source}</code>")
+
     lines.append(f"{INDENT}<b>Country:</b> <code>{country_name} ({iso})</code>")
-    lines.append(f"{INDENT}<b>Language:</b> <code>{lang_name} ({lang_code})</code>")
+    lines.append(f"{INDENT}<b>Language:</b> <code>{lang_name}</code>")
 
-    # If no OTP: always display full raw message
-    # If OTP present: only display message body if admin enabled 'long' format
-    if not otp_code and raw_message:
-        lines.append(f"{INDENT}<i>{html.escape(raw_message.strip())}</i>")
-    elif otp_code and raw_message and sms_format == "long":
-        lines.append(f"{INDENT}<i>{html.escape(raw_message.strip())}</i>")
+    # Message Content block:
+    # In 'long' format (or when no OTP code): display full raw real SMS formatted cleanly in monospace
+    # In 'short' format with OTP: hide message content block completely
+    clean_msg = raw_message.strip()
+    if clean_msg and (not otp_code or sms_format == "long"):
+        lines.append("")
+        lines.append("💬 <b>Message Content:</b>")
+        lines.append(f"<code>{html.escape(clean_msg, quote=False)}</code>")
 
     lines.append(DIVIDER)
 
@@ -1382,7 +1430,13 @@ async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
     data = load_stored_data()
     curr = data.get("sms_format", "short")
-    new_fmt = "long" if curr == "short" else "short"
+
+    arg = context.args[0].strip().lower() if (context and context.args) else ""
+    if arg in ("short", "long"):
+        new_fmt = arg
+    else:
+        new_fmt = "long" if curr == "short" else "short"
+
     data["sms_format"] = new_fmt
     save_stored_data(data)
     asyncio.create_task(sync_data_to_secret_db())
@@ -1392,8 +1446,9 @@ async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYP
         f"✅ <b>SMS Notification Format Updated!</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"• <b>Active Mode:</b> <code>{mode_label}</code>\n"
+        f"• <b>Format Setting:</b> <code>{new_fmt}</code>\n"
         f"• <b>Database:</b> <code>Saved Secretly to Cloud Store 🔒</code>\n\n"
-        f"All future SMS notifications will use this format.",
+        f"<i>Tip: Send <code>/format short</code> or <code>/format long</code> or <code>/toggleformat</code> anytime.</i>",
         parse_mode=ParseMode.HTML
     )
 
@@ -1823,6 +1878,8 @@ async def main():
     application.add_handler(CommandHandler("status", start_command))
     application.add_handler(CommandHandler("seturl", seturl_command))
     application.add_handler(CommandHandler("toggleformat", toggleformat_command))
+    application.add_handler(CommandHandler("format", toggleformat_command))
+    application.add_handler(CommandHandler("setformat", toggleformat_command))
     application.add_handler(CommandHandler("setname", setname_command))
     application.add_handler(CommandHandler("resetname", resetname_command))
     application.add_handler(CommandHandler("setlink", setlink_command))
