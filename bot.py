@@ -120,21 +120,28 @@ logger = logging.getLogger("OTPWAVE")
 # ==========================================
 # 5. Persistent Storage (bot_data.json)
 # ==========================================
+_STORED_DATA_CACHE: Dict[str, Any] = {}
+
 def load_stored_data() -> dict:
-    if os.path.exists(DATA_FILE):
+    global _STORED_DATA_CACHE
+    if not _STORED_DATA_CACHE and os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    _STORED_DATA_CACHE = loaded
         except Exception:
-            return {}
-    return {}
+            pass
+    return dict(_STORED_DATA_CACHE)
 
 def save_stored_data(data: dict):
+    global _STORED_DATA_CACHE
     try:
+        _STORED_DATA_CACHE = dict(data)
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Error saving stored data to {DATA_FILE}: {e}")
 
 def get_target_group_chat_ids() -> List[int]:
     """Returns a list of all configured target group chat IDs (Primary + Secondary)."""
@@ -288,7 +295,11 @@ class GistStorage:
 
     async def load_state(self) -> Dict[str, Any]:
         """Fetch 28h history and continuous handover state from GitHub Gist."""
-        if not self.enabled or not self.api_url:
+        if not self.enabled:
+            return {}
+        if not self.api_url:
+            await self.ensure_gist()
+        if not self.api_url:
             return {}
         try:
             async with httpx.AsyncClient(timeout=15.0) as http:
@@ -326,9 +337,13 @@ class GistStorage:
 
     async def save_state(self, seen_dict: Dict[str, float], is_handover: bool = False,
                          total_forwarded: int = 0, country_counts: Optional[Dict[str, int]] = None,
-                         base_url: str = "") -> bool:
+                         base_url: str = "", **kwargs) -> bool:
         """Prune older than 28h and sync state & handover markers to GitHub Gist."""
-        if not self.enabled or not self.api_url:
+        if not self.enabled:
+            return False
+        if not self.api_url:
+            await self.ensure_gist()
+        if not self.api_url:
             return False
         try:
             cutoff = datetime.now(timezone.utc).timestamp() - (28 * 3600)
@@ -1616,20 +1631,23 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     if query.data == "toggle_format":
         data = load_stored_data()
-        curr = data.get("sms_format", "short")
+        curr = str(data.get("sms_format", "short")).lower().strip()
         new_fmt = "long" if curr == "short" else "short"
         data["sms_format"] = new_fmt
         save_stored_data(data)
         asyncio.create_task(sync_data_to_secret_db())
 
         mode_label = "Long (Detailed 📜)" if new_fmt == "long" else "Short (Modern ⚡)"
-        await query.answer(f"Format switched to: {mode_label}", show_alert=True)
+        try:
+            await query.answer(f"Format switched to: {mode_label}", show_alert=False)
+        except Exception:
+            pass
 
         try:
             msg_text, reply_markup = build_status_dashboard()
             await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Could not edit dashboard message on toggle: {e}")
     elif query.data == "bot_name_help":
         await query.answer()
         await query.message.reply_text(
