@@ -1637,6 +1637,13 @@ def build_languages_menu(page: int = 0) -> Tuple[str, InlineKeyboardMarkup]:
         nav_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"lang_mgr_p_{page + 1}"))
     buttons.append(nav_row)
 
+    data = load_stored_data()
+    show_lang = data.get("show_sms_language", True)
+    lang_btn_text = "🔔 Language on SMS: ON ✅" if show_lang else "🔕 Language on SMS: OFF ❌"
+
+    buttons.append([
+        InlineKeyboardButton(lang_btn_text, callback_data=f"lang_toggle_sms_{page}")
+    ])
     buttons.append([
         InlineKeyboardButton("➕ Add New Language", callback_data="lang_add_new"),
         InlineKeyboardButton("🔙 Back to Dashboard", callback_data="refresh_dash")
@@ -1881,7 +1888,8 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
 
     if masked_number:
         lines.append(f"• <b>Country:</b> <code>{country_name} ({iso})</code>")
-    lines.append(f"• <b>Language:</b> <code>{lang_name}</code>")
+    if load_stored_data().get("show_sms_language", True):
+        lines.append(f"• <b>Language:</b> <code>{lang_name}</code>")
 
     # Message Content block:
     # In 'long' format (or when no OTP code): display full raw real SMS formatted cleanly in monospace
@@ -2233,6 +2241,7 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
         f"• <b>Lifetime DB:</b> <code>{db_count} total records</code>\n"
         f"• <b>Poll Speed:</b> <code>{POLL_INTERVAL_SECONDS}s</code>\n"
         f"• <b>SMS Format:</b> <code>{fmt_label}</code> (/toggleformat)\n"
+        f"• <b>SMS Language:</b> <code>{lang_status_str}</code> (/togglelang)\n"
         f"• <b>Link Button:</b> {link_str} (/setlink)\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"{country_lines}"
@@ -2240,8 +2249,12 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     )
 
     next_fmt_label = "Long (Detailed 📜)" if active_format == "short" else "Short (Modern ⚡)"
+    show_lang = data.get("show_sms_language", True)
+    lang_status_str = "ON ✅" if show_lang else "OFF ❌"
+
     keyboard = [
-        [InlineKeyboardButton(f"📋 Toggle Format ({active_format.upper()})", callback_data="toggle_format")],
+        [InlineKeyboardButton(f"📋 Toggle Format ({active_format.upper()})", callback_data="toggle_format"),
+         InlineKeyboardButton(f"🌐 SMS Lang: {lang_status_str}", callback_data="toggle_sms_lang")],
         [InlineKeyboardButton("✏️ Change Bot Name", callback_data="bot_name_help"),
          InlineKeyboardButton("🔗 Link Button", callback_data="link_help")],
         [InlineKeyboardButton("🌐 Language Settings", callback_data="lang_mgr_p_0"), InlineKeyboardButton("🔄 Refresh", callback_data="refresh_dash")]
@@ -2525,6 +2538,22 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             except Exception:
                 pass
             await query.answer("All custom phrases cleared ✅", show_alert=True)
+        elif cdata.startswith("lang_toggle_sms_"):
+            page_str = cdata.replace("lang_toggle_sms_", "")
+            page = int(page_str) if page_str.isdigit() else 0
+            data = load_stored_data()
+            curr_val = data.get("show_sms_language", True)
+            new_val = not curr_val
+            data["show_sms_language"] = new_val
+            save_stored_data(data)
+            asyncio.create_task(sync_data_to_secret_db())
+            status_txt = "ON ✅ (Language will show on SMS)" if new_val else "OFF ❌ (Language hidden from SMS)"
+            await query.answer(f"SMS Language is now {status_txt}")
+            text, markup = build_languages_menu(page)
+            try:
+                await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            except Exception:
+                pass
         elif cdata.startswith("lang_del_"):
             lid = cdata[9:]
             db_delete_language(lid)
@@ -2560,6 +2589,22 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                 reply_markup=cancel_markup
             )
             await query.answer()
+        return
+
+    if query.data == "toggle_sms_lang":
+        data = load_stored_data()
+        curr_val = data.get("show_sms_language", True)
+        new_val = not curr_val
+        data["show_sms_language"] = new_val
+        save_stored_data(data)
+        asyncio.create_task(sync_data_to_secret_db())
+        status_txt = "ON ✅" if new_val else "OFF ❌"
+        await query.answer(f"SMS Language: {status_txt}")
+        try:
+            msg_text, reply_markup = build_status_dashboard()
+            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+        except Exception:
+            pass
         return
 
     if query.data == "toggle_format":
@@ -2613,6 +2658,31 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         except Exception:
             await query.answer("Already up to date ✅")
 
+
+async def togglelanguage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    msg_obj = update.effective_message
+    if not user or not msg_obj:
+        return
+    if not is_user_authorized(user.id):
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        return
+    data = load_stored_data()
+    curr_val = data.get("show_sms_language", True)
+    new_val = not curr_val
+    data["show_sms_language"] = new_val
+    save_stored_data(data)
+    asyncio.create_task(sync_data_to_secret_db())
+    status_str = "🟢 <b>ON</b> (Language will be displayed on SMS)" if new_val else "🔴 <b>OFF</b> (Language hidden from SMS)"
+    await msg_obj.reply_text(
+        f"🌐 <b>SMS Language Display Setting</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Status:</b> {status_str}\n"
+        f"• <b>SMS Card:</b> {'• Language: &lt;Detected Language&gt;' if new_val else '(Hidden)'}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💡 <i>Tap /togglelang again to switch anytime, or use the Admin Panel.</i>",
+        parse_mode=ParseMode.HTML
+    )
 
 async def languages_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -2907,6 +2977,8 @@ async def main():
     application.add_handler(CommandHandler("removelink", removelink_command))
     application.add_handler(CallbackQueryHandler(admin_callback_handler))
 
+    application.add_handler(CommandHandler("togglelang", togglelanguage_command))
+    application.add_handler(CommandHandler("togglelanguage", togglelanguage_command))
     application.add_handler(CommandHandler("languages", languages_command))
     application.add_handler(CommandHandler("lang", languages_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_text_input))
