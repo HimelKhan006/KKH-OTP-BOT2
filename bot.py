@@ -55,7 +55,7 @@ from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup, Co
 from telegram.constants import ParseMode
 from telegram.error import RetryAfter, TimedOut, NetworkError, Conflict
 from telegram.request import HTTPXRequest
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 if sys.platform == "win32":
     try:
