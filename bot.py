@@ -970,7 +970,7 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
         "keywords": {
             "kodyt vi": 5, "kodat vi": 5, "kodyt": 4, "kodat": 4,
             "spodelyayte": 5, "ne spodelyayte": 6, "s nikogo": 4,
-            "potvyrzhdenie": 5, "potvarzhdenie": 5, "za sigur nost": 4, "za sigurnost": 4,
+            "potvyrzhdenie": 5, "potvarzhdenie": 5, "za sigurnost": 4,
             "vashiyat kod": 4, "koda si": 4, "za potvyrzhdenie": 5
         }
     },
@@ -1151,8 +1151,8 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
     "Azerbaijani": {
         "code": "AZ",
         "keywords": {
-            "kodunuz": 3, "bu kodu hec kimle": 4, "paylasmayin": 3, "hec kimle": 4,
-            "tesdiq kodu": 4, "tehlukesizlik kodu": 4
+            "tesdiq kodu": 5, "hec kimle paylasmayin": 6, "hec kimle": 5,
+            "tehlukesizlik kodu": 5, "kodunuz": 3, "paylasmayin": 4
         }
     },
     "Uzbek": {
@@ -1167,6 +1167,32 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
         "keywords": {
             "jou": 3, "kode is": 3, "moenie": 3, "deel nie": 4, "met enigiemand": 4,
             "sekuriteitskode": 4, "bevestigingskode": 4
+        }
+    },
+    "Basque": {
+        "code": "EU",
+        "keywords": {
+            "zure kodea": 4, "baieztapen-kodea": 5, "segurtasun-kodea": 5,
+            "ez partekatu": 5, "inorekin": 4
+        }
+    },
+    "Galician": {
+        "code": "GL",
+        "keywords": {
+            "o teu codigo": 4, "codigo de verificacion": 5, "non compartas": 5,
+            "con ninguen": 4
+        }
+    },
+    "Irish": {
+        "code": "GA",
+        "keywords": {
+            "do chod": 4, "cod fioraithe": 5, "na roinn": 5, "le haon duine": 4
+        }
+    },
+    "Hausa": {
+        "code": "HA",
+        "keywords": {
+            "lambarka": 3, "karka raba": 5, "kada ka raba": 5, "tabbatarwa": 4
         }
     },
     "Vietnamese": {
@@ -1188,9 +1214,12 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
     }
 }
 
+
 def normalize_text_for_lang(text: str) -> str:
-    nfkd = unicodedata.normalize('NFD', text.lower())
+    low = text.lower().replace('ə', 'e').replace('ı', 'i')
+    nfkd = unicodedata.normalize('NFD', low)
     return ''.join([c for c in nfkd if not unicodedata.combining(c)])
+
 
 def detect_sms_language(text: str) -> Tuple[str, str]:
     if not text:
@@ -1198,23 +1227,18 @@ def detect_sms_language(text: str) -> Tuple[str, str]:
     t = text.strip()
 
     # 1. Non-Latin Native Scripts (Deterministic)
-    # Ethiopic / Amharic
     if re.search(r"[\u1200-\u137F]", t):
         return ("Amharic", "AM")
 
-    # Georgian
     if re.search(r"[\u10A0-\u10FF\u2D00-\u2D2F]", t):
         return ("Georgian", "KA")
 
-    # Armenian
     if re.search(r"[\u0530-\u058F]", t):
         return ("Armenian", "HY")
 
-    # Hebrew
     if re.search(r"[\u0590-\u05FF]", t):
         return ("Hebrew", "HE")
 
-    # Arabic script (Arabic, Persian, Urdu)
     if re.search(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]", t):
         if any(c in t for c in ["ے", "ٹ", "ڈ", "ڑ", "ں"]) or "آپ" in t:
             return ("Urdu", "UR")
@@ -1222,19 +1246,15 @@ def detect_sms_language(text: str) -> Tuple[str, str]:
             return ("Persian", "FA")
         return ("Arabic", "AR")
 
-    # Bengali / Assamese (check before Devanagari because Indic danda \u0964 is in Devanagari range)
     if re.search(r"[\u0981-\u09BC\u09BE-\u09CD\u09D7\u09DC-\u09E3\u09F0-\u09FD]", t):
         return ("Bengali", "BN")
 
-    # Gurmukhi / Punjabi
     if re.search(r"[\u0A01-\u0A75]", t):
         return ("Punjabi", "PA")
 
-    # Gujarati
     if re.search(r"[\u0A81-\u0AF9]", t):
         return ("Gujarati", "GU")
 
-    # Devanagari (Hindi, Marathi, Nepali) - letters only (exclude punctuation \u0964-\u0965)
     if re.search(r"[\u0904-\u0939\u093D-\u094F\u0958-\u0963]", t):
         low_d = t.lower()
         if "आहे" in low_d or "तुमचा" in low_d:
@@ -1243,47 +1263,39 @@ def detect_sms_language(text: str) -> Tuple[str, str]:
             return ("Nepali", "NE")
         return ("Hindi", "HI")
 
-    # Tamil
+    if re.search(r"[\u0B00-\u0B7F]", t):
+        return ("Odia", "OR")
+
     if re.search(r"[\u0B80-\u0BFF]", t):
         return ("Tamil", "TA")
 
-    # Telugu
     if re.search(r"[\u0C00-\u0C7F]", t):
         return ("Telugu", "TE")
 
-    # Kannada
     if re.search(r"[\u0C80-\u0CFF]", t):
         return ("Kannada", "KN")
 
-    # Malayalam
     if re.search(r"[\u0D00-\u0D7F]", t):
         return ("Malayalam", "ML")
 
-    # Sinhala
     if re.search(r"[\u0D80-\u0DFF]", t):
         return ("Sinhala", "SI")
 
-    # Thai
     if re.search(r"[\u0E00-\u0E7F]", t):
         return ("Thai", "TH")
 
-    # Lao
     if re.search(r"[\u0EA0-\u0EFF]", t):
         return ("Lao", "LO")
 
-    # Khmer
     if re.search(r"[\u1780-\u17FF]", t):
         return ("Khmer", "KM")
 
-    # Burmese / Myanmar
     if re.search(r"[\u1000-\u109F]", t):
         return ("Burmese", "MY")
 
-    # Greek
     if re.search(r"[\u0370-\u03FF]", t):
         return ("Greek", "EL")
 
-    # Cyrillic scripts (Russian, Ukrainian, Bulgarian, Kazakh)
     if re.search(r"[\u0400-\u04FF]", t):
         low_raw = t.lower()
         ukr_chars = ["є", "ї", "ґ", "\u0454", "\u0457", "\u0491"]
@@ -1296,7 +1308,6 @@ def detect_sms_language(text: str) -> Tuple[str, str]:
             return ("Kazakh", "KK")
         return ("Russian", "RU")
 
-    # CJK Scripts
     if re.search(r"[\u3040-\u30FF]", t):
         return ("Japanese", "JA")
     if re.search(r"[\uAC00-\uD7AF\u1100-\u11FF]", t):
@@ -1325,7 +1336,7 @@ def detect_sms_language(text: str) -> Tuple[str, str]:
         elif any(w in norm_words for w in ("tu", "nadie")) or "no compartas" in norm:
             if "Spanish" in scores:
                 best_lang = "Spanish"
-        elif any(w in norm_words for w in ("votre", "vos", "veuillez", "ton")) or "ne partagez" in norm:
+        elif any(w in norm_words for w in ("votre", "vos", "veuillez")) or "ne partagez" in norm:
             if "French" in scores:
                 best_lang = "French"
 
