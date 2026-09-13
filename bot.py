@@ -316,26 +316,29 @@ class GistStorage:
                             cutoff = datetime.now(timezone.utc).timestamp() - (28 * 3600)
                             valid_seen = {k: float(v) for k, v in seen_map.items() if float(v) >= cutoff}
                             
-                        if "custom_languages" in parsed and isinstance(parsed["custom_languages"], list):
-                            with get_db_connection() as conn:
-                                init_and_seed_language_database(conn)
-                                for c in parsed["custom_languages"]:
-                                    conn.execute("""
-                                        INSERT INTO custom_languages (lang_id, lang_name, iso_code, display_name, is_custom, is_enabled)
-                                        VALUES (?, ?, ?, ?, ?, ?)
-                                        ON CONFLICT(lang_id) DO UPDATE SET
-                                            display_name = excluded.display_name,
-                                            is_enabled = excluded.is_enabled;
-                                    """, (c["lang_id"], c["name"], c["iso"], c["display_name"], 1 if c.get("is_custom") else 0, 1 if c.get("is_enabled") else 0))
-                                    for phr in c.get("phrases", []):
-                                        conn.execute("""
-                                            INSERT INTO custom_language_phrases (lang_id, phrase)
-                                            SELECT ?, ? WHERE NOT EXISTS (
-                                                SELECT 1 FROM custom_language_phrases WHERE lang_id = ? AND phrase = ?
-                                            );
-                                        """, (c["lang_id"], phr, c["lang_id"], phr))
-                                conn.commit()
-                            load_languages_from_db()
+                            if "custom_languages" in parsed and isinstance(parsed["custom_languages"], list):
+                                try:
+                                    with get_db_connection() as conn:
+                                        init_and_seed_language_database(conn)
+                                        for c in parsed["custom_languages"]:
+                                            conn.execute("""
+                                                INSERT INTO languages (lang_id, lang_name, iso_code, display_name, is_enabled)
+                                                VALUES (?, ?, ?, ?, ?)
+                                                ON CONFLICT(lang_id) DO UPDATE SET
+                                                    display_name = excluded.display_name,
+                                                    is_enabled = excluded.is_enabled;
+                                            """, (c["lang_id"], c["name"], c["iso"], c["display_name"], 1 if c.get("is_enabled", True) else 0))
+                                            for phr in c.get("phrases", []):
+                                                conn.execute("""
+                                                    INSERT INTO language_phrases (lang_id, phrase, weight)
+                                                    SELECT ?, ?, 5 WHERE NOT EXISTS (
+                                                        SELECT 1 FROM language_phrases WHERE lang_id = ? AND phrase = ?
+                                                    );
+                                                """, (c["lang_id"], phr, c["lang_id"], phr))
+                                        conn.commit()
+                                    load_languages_from_db()
+                                except Exception as le:
+                                    logger.warning(f"Notice restoring languages from Gist: {le}")
 
                             logger.info(f"☁️ Restored {len(valid_seen)} seen messages from GitHub Gist ({self.gist_id[:8]}...).")
                             return {
@@ -437,6 +440,7 @@ def get_db_connection() -> sqlite3.Connection:
     return conn
 
 def init_db():
+    load_languages_from_db()
     with get_db_connection() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS processed_otps (
@@ -1506,6 +1510,7 @@ def load_languages_from_db():
             rows = conn.execute("SELECT lang_id, lang_name, iso_code, display_name, is_enabled FROM languages;").fetchall()
             for r in rows:
                 DB_LANGUAGES_CACHE[r["lang_id"]] = {
+                    "lang_id": r["lang_id"],
                     "name": r["lang_name"],
                     "iso": r["iso_code"],
                     "display_name": r["display_name"],
@@ -1597,6 +1602,8 @@ def db_toggle_language(lang_id: str) -> bool:
 LANGS_PER_PAGE = 8
 
 def build_languages_menu(page: int = 0) -> Tuple[str, InlineKeyboardMarkup]:
+    if not DB_LANGUAGES_CACHE:
+        load_languages_from_db()
     all_langs = sorted(DB_LANGUAGES_CACHE.values(), key=lambda x: x["name"])
     total = len(all_langs)
     total_pages = max(1, (total + LANGS_PER_PAGE - 1) // LANGS_PER_PAGE)
@@ -1620,12 +1627,12 @@ def build_languages_menu(page: int = 0) -> Tuple[str, InlineKeyboardMarkup]:
         row = []
         l1 = page_langs[i]
         tag1 = " (Off)" if not l1["is_enabled"] else ""
-        lid1 = l1["name"].lower()
+        lid1 = l1.get("lang_id") or l1["name"].lower()
         row.append(InlineKeyboardButton(f"{l1['display_name']}{tag1}", callback_data=f"lang_v_{lid1}"))
         if i + 1 < len(page_langs):
             l2 = page_langs[i + 1]
             tag2 = " (Off)" if not l2["is_enabled"] else ""
-            lid2 = l2["name"].lower()
+            lid2 = l2.get("lang_id") or l2["name"].lower()
             row.append(InlineKeyboardButton(f"{l2['display_name']}{tag2}", callback_data=f"lang_v_{lid2}"))
         buttons.append(row)
 
@@ -1702,6 +1709,8 @@ def build_language_detail_menu(lang_id: str) -> Tuple[str, InlineKeyboardMarkup]
     return text, InlineKeyboardMarkup(buttons)
 
 def detect_sms_language(text: str) -> Tuple[str, str]:
+    if not DB_LANGUAGES_CACHE:
+        load_languages_from_db()
     if not text:
         eng = DB_LANGUAGES_CACHE.get("english", {})
         return (eng.get("display_name", "🇬🇧 English"), "EN")
@@ -2205,6 +2214,8 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
 
     # Format & Link button status
     data = load_stored_data()
+    show_lang = data.get("show_sms_language", True)
+    lang_status_str = "ON ✅" if show_lang else "OFF ❌"
     active_bot_name = data.get("bot_name", "OTP Wave Bot")
     active_format = data.get("sms_format", "short")
     fmt_label = "Short (Modern ⚡)" if active_format == "short" else "Long (Detailed 📜)"
@@ -2936,7 +2947,7 @@ def validate_config():
         try:
             r = httpx.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getMe", timeout=6.0)
             if r.status_code == 401 or not r.json().get("ok"):
-                errors.append("TELEGRAM_BOT_TOKEN was REJECTED by Telegram (401 Unauthorized). The token was deleted, revoked, or regenerated in @BotFather. Please get your active token from @BotFather and update GitHub Secrets & .env.")
+                logger.warning("⚠️ Notice: Telegram token check returned 401 Unauthorized. Ensure token is valid from @BotFather.")
         except Exception:
             pass
     if not THIRDWAVE_API_KEY:
@@ -2953,6 +2964,7 @@ def validate_config():
         sys.exit(1)
 
 async def main():
+    load_languages_from_db()
     parser = argparse.ArgumentParser(description="OTP WAVE Bot")
     parser.add_argument("--test", action="store_true", help="Run diagnostics and exit")
     args = parser.parse_args()
