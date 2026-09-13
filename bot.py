@@ -46,6 +46,7 @@ import logging
 import asyncio
 import time
 import argparse
+import unicodedata
 from typing import Set, Dict, Any, List, Optional, Tuple
 from datetime import datetime, timezone
 
@@ -906,20 +907,132 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
                 return cand
     return "Global"
 
+LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
+    "French": {
+        "code": "FR",
+        "keywords": {
+            "votre": 3, "vos": 2, "est": 1, "ne": 1, "pas": 1, "partagez": 3,
+            "verification": 2, "confirmation": 2, "mot de passe": 3, "connexion": 3,
+            "pour": 1, "securite": 2, "aucun": 3, "personne": 2, "veuillez": 3,
+            "entrez": 3, "utiliser": 2, "identifiant": 3, "compte": 2, "reinitialisation": 3,
+            "nouveau": 2, "appareil": 2, "ce code": 2
+        }
+    },
+    "Spanish": {
+        "code": "ES",
+        "keywords": {
+            "tu": 2, "su": 1, "codigo": 2, "verificacion": 2, "para": 1,
+            "no compartas": 4, "compartas": 3, "con nadie": 3, "nadie": 2,
+            "iniciar sesion": 3, "seguridad": 2, "cuenta": 2, "ingresa": 3,
+            "clave": 2, "utiliza": 2, "mensaje": 2, "solicitado": 2,
+            "confirmacion": 2, "dispositivo": 2, "nuevo": 1, "este codigo": 2
+        }
+    },
+    "Portuguese": {
+        "code": "PT",
+        "keywords": {
+            "seu": 3, "sua": 3, "codigo": 2, "verificacao": 3, "nao": 2,
+            "nao compartilhe": 4, "compartilhe": 3, "com ninguem": 4, "ninguem": 3,
+            "seguranca": 3, "para entrar": 3, "entrar": 2, "conta": 2, "senha": 3,
+            "utilize": 3, "mensagem": 2, "aparelho": 3, "novo aparelho": 4,
+            "este codigo": 2, "confirmar": 2, "cadastrado": 3
+        }
+    },
+    "German": {
+        "code": "DE",
+        "keywords": {
+            "dein": 3, "ihr": 2, "ihre": 2, "lautet": 3, "ist dein": 3,
+            "bestatigungscode": 4, "sicherheitscode": 4, "verifizierungscode": 4,
+            "passwort": 2, "nicht": 2, "weitergeben": 4, "teilen sie": 4,
+            "mit niemandem": 4, "niemandem": 3, "konto": 2, "anmeldung": 3,
+            "geben sie": 3, "sicherheit": 2, "gerat": 2
+        }
+    },
+    "Italian": {
+        "code": "IT",
+        "keywords": {
+            "il tuo": 3, "tuo": 2, "suo": 2, "codice": 2, "di verifica": 3,
+            "non condividere": 4, "condividere": 3, "con nessuno": 4, "nessuno": 3,
+            "sicurezza": 2, "accesso": 2, "per accedere": 3, "conferma": 2,
+            "dispositivo": 2, "questo codice": 3, "password": 1, "segreto": 2
+        }
+    },
+    "Turkish": {
+        "code": "TR",
+        "keywords": {
+            "kodunuz": 4, "dogrulama": 3, "kodu": 2, "sifre": 3, "giris": 2,
+            "paylasmayin": 4, "kimseyle": 3, "onay": 2, "hesabiniz": 3,
+            "guvenlik": 3, "icin": 2, "cihaz": 2, "adimi": 2, "tek kullanimlik": 4
+        }
+    },
+    "Indonesian": {
+        "code": "ID",
+        "keywords": {
+            "kode": 2, "verifikasi": 2, "anda": 2, "adalah": 2, "jangan": 3,
+            "jangan bagikan": 4, "bagikan": 3, "jangan berikan": 4, "berikan": 2,
+            "rahasia": 3, "masuk": 2, "untuk": 2, "keamanan": 3, "akun": 2,
+            "perangkat": 2, "tautan": 2
+        }
+    },
+    "Polish": {
+        "code": "PL",
+        "keywords": {
+            "twoj": 3, "kod": 2, "weryfikacyjny": 4, "haslo": 3,
+            "nie udostepniaj": 4, "udostepniaj": 3, "bezpieczenstwa": 3,
+            "konto": 2, "zaloguj": 3, "nikomu": 3, "potwierdzenia": 3
+        }
+    },
+    "Dutch": {
+        "code": "NL",
+        "keywords": {
+            "uw": 3, "je": 2, "verificatiecode": 4, "beveiligingscode": 4,
+            "deel": 2, "deel niet": 4, "niet met": 3, "niemand": 3,
+            "wachtwoord": 3, "bevestig": 3, "inloggen": 3, "toestel": 3
+        }
+    },
+    "Vietnamese": {
+        "code": "VI",
+        "keywords": {
+            "ma": 2, "xac minh": 4, "mat khau": 4, "khong chia se": 4,
+            "chia se": 2, "dang nhap": 3, "tai khoan": 3, "bao mat": 3
+        }
+    },
+    "English": {
+        "code": "EN",
+        "keywords": {
+            "your": 2, "code": 1, "is": 1, "verification": 2, "security": 2,
+            "do not share": 4, "do not give": 4, "account": 2, "login": 2,
+            "password": 2, "confirm": 2, "sign in": 3, "device": 2,
+            "registered": 2, "use": 1, "to verify": 3, "one time": 3
+        }
+    }
+}
+
+def normalize_text_for_lang(text: str) -> str:
+    nfkd = unicodedata.normalize('NFD', text.lower())
+    return ''.join([c for c in nfkd if not unicodedata.combining(c)])
+
 def detect_sms_language(text: str) -> Tuple[str, str]:
     if not text:
         return ("English", "EN")
     t = text.strip()
+
+    # 1. Non-Latin Native Scripts (Deterministic)
     if re.search(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]", t):
         if any(c in t for c in ["گ", "چ", "پ", "ژ"]):
             return ("Persian", "FA")
         if any(c in t for c in ["ے", "ٹ", "ڈ", "ڑ"]):
             return ("Urdu", "UR")
         return ("Arabic", "AR")
+
     if re.search(r"[\u0400-\u04FF]", t):
-        if any(c in t for c in ["є", "ї", "і", "ґ"]):
+        low_raw = t.lower()
+        ukr_chars = ["є", "ї", "ґ", "\u0454", "\u0457", "\u0491"]
+        ukr_words = ["підтвердження", "безпеки", "не діліться", "пароль", "входу", "коду"]
+        if any(c in t for c in ukr_chars) or any(w in low_raw for w in ukr_words):
             return ("Ukrainian", "UK")
         return ("Russian", "RU")
+
     if re.search(r"[\u3040-\u30FF]", t):
         return ("Japanese", "JA")
     if re.search(r"[\uAC00-\uD7AF]", t):
@@ -937,25 +1050,32 @@ def detect_sms_language(text: str) -> Tuple[str, str]:
     if re.search(r"[\u0370-\u03FF]", t):
         return ("Greek", "EL")
 
-    low = t.lower()
-    if any(w in low for w in ["kodunuz", "doğrulama", "şifre", "giriş", "paylaşmayın", "onay"]):
-        return ("Turkish", "TR")
-    if any(w in low for w in ["mã", "xác minh", "mật khẩu", "không chia sẻ", "đăng nhập"]):
-        return ("Vietnamese", "VI")
-    if any(w in low for w in ["código", "codigo", "tu código", "no compartas", "iniciar sesión", "verificación", "clave"]):
-        return ("Spanish", "ES")
-    if any(w in low for w in ["seu código", "não compartilhe", "senha", "segurança", "verificação"]):
-        return ("Portuguese", "PT")
-    if any(w in low for w in ["votre code", "ne partagez", "mot de passe", "vérification", "connexion"]):
-        return ("French", "FR")
-    if any(w in low for w in ["dein code", "ihr code", "bestätigungscode", "verifizierung", "passwort", "nicht weitergeben"]):
-        return ("German", "DE")
-    if any(w in low for w in ["il tuo codice", "non condividere", "verifica", "accesso"]):
-        return ("Italian", "IT")
-    if any(w in low for w in ["kode verifikasi", "jangan berikan", "jangan bagikan", "rahasia", "masuk"]):
-        return ("Indonesian", "ID")
-    if any(w in low for w in ["twój kod", "hasło", "weryfikacyjny", "nie udostępniaj"]):
-        return ("Polish", "PL")
+    # 2. Latin Scripts: Normalized Keyword Scoring with Token Boundaries
+    norm = normalize_text_for_lang(t)
+    scores: Dict[str, int] = {}
+    for lang_name, info in LANGUAGE_RULES.items():
+        score = 0
+        for kw, weight in info["keywords"].items():
+            pattern = r"(?:\b|^)" + re.escape(kw) + r"(?:\b|$)"
+            matches = len(re.findall(pattern, norm))
+            score += matches * weight
+        if score > 0:
+            scores[lang_name] = score
+
+    if scores:
+        best_lang = max(scores.items(), key=lambda x: x[1])[0]
+        norm_words = norm.split()
+        if any(w in norm_words for w in ("seu", "sua", "voce")) or "nao compartilhe" in norm:
+            if "Portuguese" in scores:
+                best_lang = "Portuguese"
+        elif any(w in norm_words for w in ("tu", "nadie")) or "no compartas" in norm:
+            if "Spanish" in scores:
+                best_lang = "Spanish"
+        elif any(w in norm_words for w in ("votre", "vos", "veuillez")) or "ne partagez" in norm:
+            if "French" in scores:
+                best_lang = "French"
+
+        return (best_lang, LANGUAGE_RULES[best_lang]["code"])
 
     return ("English", "EN")
 
