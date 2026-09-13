@@ -318,7 +318,7 @@ class GistStorage:
                             
                         if "custom_languages" in parsed and isinstance(parsed["custom_languages"], list):
                             with get_db_connection() as conn:
-                                init_custom_language_tables(conn)
+                                init_and_seed_language_database(conn)
                                 for c in parsed["custom_languages"]:
                                     conn.execute("""
                                         INSERT INTO custom_languages (lang_id, lang_name, iso_code, display_name, is_custom, is_enabled)
@@ -335,7 +335,7 @@ class GistStorage:
                                             );
                                         """, (c["lang_id"], phr, c["lang_id"], phr))
                                 conn.commit()
-                            load_custom_languages_cache()
+                            load_languages_from_db()
 
                             logger.info(f"☁️ Restored {len(valid_seen)} seen messages from GitHub Gist ({self.gist_id[:8]}...).")
                             return {
@@ -376,16 +376,15 @@ class GistStorage:
             for lid, cinfo in DB_LANGUAGES_CACHE.items():
                 cust_langs_data.append({
                     "lang_id": lid,
-                    "name": cinfo["name"],
-                    "iso": cinfo["iso"],
-                    "display_name": cinfo["display_name"],
-                    "is_custom": cinfo["is_custom"],
-                    "is_enabled": cinfo["is_enabled"],
-                    "phrases": cinfo["phrases"]
+                    "name": cinfo.get("name", lid.title()),
+                    "iso": cinfo.get("iso", "XX"),
+                    "display_name": cinfo.get("display_name", lid.title()),
+                    "is_enabled": cinfo.get("is_enabled", True),
+                    "phrases": list(cinfo.get("phrases", {}).keys()) if isinstance(cinfo.get("phrases"), dict) else list(cinfo.get("phrases", []))
                 })
-            payload_data["custom_languages"] = cust_langs_data
 
             payload_data = {
+                "custom_languages": cust_langs_data,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "bot": self.bot_name,
                 "count": len(cleaned),
@@ -454,9 +453,9 @@ def init_db():
             );
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_forwarded_at ON processed_otps(forwarded_at);")
-        init_custom_language_tables(conn)
+        init_and_seed_language_database(conn)
         conn.commit()
-    load_custom_languages_cache()
+    load_languages_from_db()
     logger.info("📦 SQLite database initialized at %s", DB_FILE)
 
 def is_message_seen(message_id: str) -> bool:
@@ -3040,8 +3039,13 @@ async def main():
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Bot stopped by user or system.")
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user.")
+    except SystemExit as se:
+        if se.code is not None and se.code != 0:
+            logger.error(f"Bot exited with error code {se.code}")
+            sys.exit(se.code)
+        logger.info("Bot stopped cleanly.")
     except Exception as fatal_err:
         logger.error(f"Fatal error in bot main: {fatal_err}")
         sys.exit(2)
