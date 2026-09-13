@@ -2867,7 +2867,7 @@ def validate_config():
     if not TELEGRAM_GROUP_CHAT_ID and not ADMIN_USER_IDS:
         errors.append("Either TELEGRAM_GROUP_CHAT_ID or ADMIN_USER_IDS must be set")
     if not GIST_TOKEN:
-        errors.append("GIST_TOKEN is missing — required for 28h persistent storage (GitHub token with 'gist' scope)")
+        logger.info("ℹ️ GIST_TOKEN not set — bot running with local SQLite persistence & GitHub Actions cache.")
     if errors:
         print("\n❌ Configuration errors:")
         for err in errors:
