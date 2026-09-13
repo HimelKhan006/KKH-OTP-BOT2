@@ -911,49 +911,49 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
     "French": {
         "code": "FR",
         "keywords": {
-            "votre": 3, "vos": 2, "ton": 3, "est": 1, "ne": 1, "pas": 1, "partagez": 3,
-            "verification": 2, "confirmation": 2, "mot de passe": 3, "connexion": 3,
-            "pour": 1, "securite": 3, "aucun": 3, "personne": 2, "veuillez": 3,
-            "entrez": 3, "utiliser": 2, "identifiant": 3, "compte": 2, "ce code": 2,
+            "votre code": 4, "ton code": 4, "partagez": 3, "ne partagez": 4,
+            "ne le partagez": 4, "verification": 2, "confirmation": 2, "mot de passe": 4,
+            "connexion": 3, "de securite": 3, "aucun": 3, "personne": 2, "veuillez": 3,
+            "entrez": 3, "utiliser": 2, "identifiant": 3, "votre compte": 3, "ce code": 3,
             "reinitialisation": 3, "reinitialiser": 3
         }
     },
     "Spanish": {
         "code": "ES",
         "keywords": {
-            "tu": 2, "su": 1, "codigo": 2, "verificacion": 2, "para": 1,
+            "tu codigo": 4, "su codigo": 4, "codigo de": 3, "verificacion": 2,
             "no compartas": 4, "compartas": 3, "con nadie": 4, "nadie": 2,
-            "iniciar sesion": 3, "seguridad": 3, "cuenta": 2, "ingresa": 3,
-            "clave": 2, "utiliza": 2, "este codigo": 2, "dispositivo": 2,
+            "iniciar sesion": 3, "de seguridad": 3, "tu cuenta": 3, "ingresa": 3,
+            "clave": 2, "utiliza": 2, "este codigo": 3, "dispositivo": 2,
             "restablecer": 3, "confirmacion": 2
         }
     },
     "Portuguese": {
         "code": "PT",
         "keywords": {
-            "seu": 3, "sua": 3, "codigo": 2, "verificacao": 3, "nao": 2,
+            "seu codigo": 4, "sua senha": 4, "verificacao": 3,
             "nao compartilhe": 4, "compartilhe": 3, "com ninguem": 4, "ninguem": 3,
-            "seguranca": 3, "para entrar": 3, "entrar": 2, "conta": 2, "senha": 3,
-            "utilize": 3, "aparelho": 3, "este codigo": 2, "cadastrado": 3,
+            "de seguranca": 3, "para entrar": 3, "entrar na": 3, "sua conta": 3, "senha": 3,
+            "utilize": 3, "aparelho": 3, "este codigo": 3, "cadastrado": 3,
             "redefinir": 3, "confirmacao": 2
         }
     },
     "German": {
         "code": "DE",
         "keywords": {
-            "dein": 3, "ihr": 2, "ihre": 2, "lautet": 3, "ist dein": 3,
+            "dein code": 4, "ihr code": 4, "ihre": 2, "lautet": 3, "ist dein": 3,
             "bestatigungscode": 4, "sicherheitscode": 4, "verifizierungscode": 4,
-            "passwort": 2, "nicht": 2, "weitergeben": 4, "teilen sie": 4,
-            "mit niemandem": 4, "niemandem": 3, "konto": 2, "anmeldung": 3,
+            "passwort": 2, "nicht weitergeben": 4, "weitergeben": 4, "teilen sie": 4,
+            "mit niemandem": 4, "niemandem": 3, "ihr konto": 3, "anmeldung": 3,
             "zurucksetzen": 3, "einmalpasswort": 4
         }
     },
     "Italian": {
         "code": "IT",
         "keywords": {
-            "il tuo": 3, "tuo": 2, "suo": 2, "codice": 2, "di verifica": 3,
+            "il tuo codice": 4, "tuo codice": 4, "suo codice": 4, "di verifica": 3,
             "non condividere": 4, "condividere": 3, "con nessuno": 4, "nessuno": 3,
-            "sicurezza": 3, "accesso": 2, "questo codice": 3, "per accedere": 3,
+            "di sicurezza": 3, "accesso": 2, "questo codice": 3, "per accedere": 3,
             "reimpostare": 3, "conferma": 2
         }
     },
@@ -962,58 +962,90 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
         "keywords": {
             "kodunuz": 4, "dogrulama": 3, "kodu": 2, "sifre": 3, "giris": 2,
             "paylasmayin": 4, "kimseyle": 3, "onay": 2, "hesabiniz": 3,
-            "guvenlik": 3, "icin": 2, "tek kullanimlik": 4, "sifirlama": 3
+            "guvenlik": 3, "tek kullanimlik": 4, "sifirlama": 3
+        }
+    },
+    "Bulgarian": {
+        "code": "BG",
+        "keywords": {
+            "kodyt vi": 5, "kodat vi": 5, "kodyt": 4, "kodat": 4,
+            "spodelyayte": 5, "ne spodelyayte": 6, "s nikogo": 4,
+            "potvyrzhdenie": 5, "potvarzhdenie": 5, "za sigur nost": 4, "za sigurnost": 4,
+            "vashiyat kod": 4, "koda si": 4, "za potvyrzhdenie": 5
+        }
+    },
+    "Russian": {
+        "code": "RU",
+        "keywords": {
+            "kod podtverzhdeniya": 5, "kod bezopasnosti": 5, "vash kod": 3,
+            "ne soobshchayte": 5, "nikomu ne": 4, "odnozoravyj": 4, "dlya vkhoda": 4
+        }
+    },
+    "Ukrainian": {
+        "code": "UK",
+        "keywords": {
+            "kod pidtverdzhennya": 5, "kod bezpeky": 5, "ne dilitsya": 5,
+            "ne dilitisya": 5, "dlya vkhodu": 4
+        }
+    },
+    "Greek": {
+        "code": "EL",
+        "keywords": {
+            "o kodikos sas": 5, "kodikos epivevaiosis": 5, "min moirazeste": 5,
+            "ton kodiko": 4, "asfaleias": 4
         }
     },
     "Indonesian": {
         "code": "ID",
         "keywords": {
-            "kode": 2, "verifikasi": 2, "anda": 2, "adalah": 2, "jangan": 3,
-            "jangan bagikan": 4, "bagikan": 3, "jangan berikan": 4, "berikan": 2,
-            "rahasia": 3, "keamanan": 3, "akun": 2, "masuk ke": 3
+            "kode konfirmasi": 4, "kode verifikasi": 4, "kode keamanan": 4,
+            "adalah kode": 4, "jangan bagikan": 4, "jangan berikan": 4,
+            "kode": 2, "anda": 2, "adalah": 2, "rahasia": 3, "keamanan": 3,
+            "akun anda": 3, "masuk ke": 3
         }
     },
     "Malay": {
         "code": "MS",
         "keywords": {
-            "kod": 2, "anda ialah": 3, "ialah": 2, "jangan kongsi": 4,
-            "kongsi": 3, "keselamatan": 3, "akaun": 2, "pengesahan": 3
+            "kod pengesahan": 4, "kod keselamatan": 4, "ialah kod": 4,
+            "anda ialah": 3, "jangan kongsi": 4, "kongsi": 3,
+            "kod": 2, "ialah": 2, "keselamatan": 3, "akaun anda": 3
         }
     },
     "Dutch": {
         "code": "NL",
         "keywords": {
-            "uw": 3, "je": 2, "verificatiecode": 4, "beveiligingscode": 4,
-            "deel": 2, "deel niet": 4, "niet met": 3, "niemand": 3,
+            "uw code": 3, "je code": 3, "verificatiecode": 4, "beveiligingscode": 4,
+            "deel niet": 4, "niet met": 3, "niemand": 3,
             "wachtwoord": 3, "bevestig": 3, "inloggen": 3, "bevestigingscode": 4
         }
     },
     "Polish": {
         "code": "PL",
         "keywords": {
-            "twoj": 3, "kod": 2, "weryfikacyjny": 4, "haslo": 3,
+            "twoj kod": 4, "kod weryfikacyjny": 4, "haslo": 3,
             "nie udostepniaj": 4, "udostepniaj": 3, "bezpieczenstwa": 3,
-            "konto": 2, "nikomu": 3, "logowania": 3, "resetowania": 3
+            "twoje konto": 3, "nikomu": 3, "logowania": 3, "resetowania": 3
         }
     },
     "Romanian": {
         "code": "RO",
         "keywords": {
-            "codul": 3, "tau": 3, "este": 1, "nu trimite": 4, "nimanui": 4,
-            "de securitate": 3, "verificare": 3, "pentru": 2, "autentificare": 3
+            "codul tau": 4, "este": 1, "nu trimite": 4, "nimanui": 4,
+            "de securitate": 3, "verificare": 3, "autentificare": 3
         }
     },
     "Swedish": {
         "code": "SV",
         "keywords": {
-            "din": 3, "kod ar": 3, "dela inte": 4, "med nagon": 4, "nagon": 2,
+            "din kod": 3, "kod ar": 3, "dela inte": 4, "med nagon": 4, "nagon": 2,
             "verifieringskod": 4, "sakerhetskod": 4, "inte koden": 3, "engangskod": 4
         }
     },
     "Danish": {
         "code": "DA",
         "keywords": {
-            "din": 3, "kode er": 3, "del ikke": 4, "med nogen": 4, "nogen": 2,
+            "din kode": 3, "kode er": 3, "del ikke": 4, "med nogen": 4, "nogen": 2,
             "bekraeftelseskode": 4, "sikkerhedskode": 4, "engangskode": 4
         }
     },
@@ -1027,21 +1059,21 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
     "Norwegian": {
         "code": "NO",
         "keywords": {
-            "din": 3, "kode er": 3, "ikke del": 4, "koden med noen": 4, "noen": 2,
+            "din kode": 3, "kode er": 3, "ikke del": 4, "koden med noen": 4, "noen": 2,
             "bekreftelseskode": 4, "sikkerhetskode": 4, "engangskode": 4
         }
     },
     "Czech": {
         "code": "CS",
         "keywords": {
-            "vas": 3, "kod je": 3, "nesdilejte": 4, "s nikym": 4, "nikym": 3,
+            "vas kod": 3, "kod je": 3, "nesdilejte": 4, "s nikym": 4, "nikym": 3,
             "overovaci kod": 4, "bezpecnostni": 3, "tento kod": 3
         }
     },
     "Slovak": {
         "code": "SK",
         "keywords": {
-            "vas": 3, "kod je": 3, "nezdielajte": 4, "s nikym": 4,
+            "vas kod": 3, "kod je": 3, "nezdielajte": 4, "s nikym": 4,
             "overovaci kod": 4, "bezpecnostny": 3, "tento kod": 3
         }
     },
@@ -1056,7 +1088,7 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
         "code": "TL",
         "keywords": {
             "ang iyong": 4, "huwag ibahagi": 4, "ibahagi": 3, "sa kaninuman": 4,
-            "para sa": 2, "huwag ipamigay": 4
+            "huwag ipamigay": 4
         }
     },
     "Swahili": {
@@ -1069,8 +1101,9 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
     "Croatian": {
         "code": "HR",
         "keywords": {
-            "vas": 3, "kod je": 3, "ne dijelite": 4, "ni sa kim": 4, "nikome": 3,
-            "kod za provjeru": 4, "sigurnosni kod": 4, "potvrdni kod": 4
+            "vas kod": 3, "kod je": 3, "ne dijelite": 4, "ne delite": 4,
+            "ni sa kim": 4, "nikome": 3, "kod za provjeru": 4, "kod za potvrdu": 4,
+            "sigurnosni kod": 4, "potvrdni kod": 4
         }
     },
     "Catalan": {
@@ -1084,7 +1117,7 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
         "code": "SQ",
         "keywords": {
             "kodi juaj": 4, "eshte": 2, "mos e ndani": 4, "me askend": 4,
-            "verifikimit": 4, "sigurise": 3
+            "verifikimit": 4, "sigurise": 3, "per te hyre": 3
         }
     },
     "Lithuanian": {
@@ -1139,7 +1172,7 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
     "Vietnamese": {
         "code": "VI",
         "keywords": {
-            "ma": 2, "xac minh": 4, "mat khau": 4, "khong chia se": 4,
+            "ma xac minh": 4, "mat khau": 4, "khong chia se": 4,
             "chia se": 2, "dang nhap": 3, "tai khoan": 3, "bao mat": 3,
             "ma otp": 3
         }
@@ -1147,11 +1180,10 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
     "English": {
         "code": "EN",
         "keywords": {
-            "your": 2, "code": 1, "is": 1, "verification": 2, "security": 2,
-            "do not share": 4, "do not give": 4, "account": 2, "login": 2,
-            "password": 2, "confirm": 2, "sign in": 3, "device": 2,
-            "registered": 2, "use": 1, "to verify": 3, "one time": 3,
-            "reset": 2
+            "your code": 3, "is your": 3, "verification code": 3, "security code": 3,
+            "do not share": 4, "do not give": 4, "login code": 3, "password": 2,
+            "confirm": 2, "sign in": 3, "device": 2, "registered": 2, "to verify": 3,
+            "one time": 3, "reset": 2
         }
     }
 }
@@ -1258,7 +1290,7 @@ def detect_sms_language(text: str) -> Tuple[str, str]:
         ukr_words = ["підтвердження", "безпеки", "не діліться", "входу"]
         if any(c in t for c in ukr_chars) or any(w in low_raw for w in ukr_words):
             return ("Ukrainian", "UK")
-        if "за потвърждение" in low_raw or "вашият" in low_raw or "сигурност" in low_raw:
+        if any(w in low_raw for w in ["за потвърждение", "вашият", "сигурност", "кодът", "споделяйте", "с никого"]):
             return ("Bulgarian", "BG")
         if "кодыңыз" in low_raw or "үшін" in low_raw or "растау" in low_raw:
             return ("Kazakh", "KK")
