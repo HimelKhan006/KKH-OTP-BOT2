@@ -315,6 +315,28 @@ class GistStorage:
                             seen_map = parsed.get("seen", {})
                             cutoff = datetime.now(timezone.utc).timestamp() - (28 * 3600)
                             valid_seen = {k: float(v) for k, v in seen_map.items() if float(v) >= cutoff}
+                            
+                        if "custom_languages" in parsed and isinstance(parsed["custom_languages"], list):
+                            with get_db_connection() as conn:
+                                init_custom_language_tables(conn)
+                                for c in parsed["custom_languages"]:
+                                    conn.execute("""
+                                        INSERT INTO custom_languages (lang_id, lang_name, iso_code, display_name, is_custom, is_enabled)
+                                        VALUES (?, ?, ?, ?, ?, ?)
+                                        ON CONFLICT(lang_id) DO UPDATE SET
+                                            display_name = excluded.display_name,
+                                            is_enabled = excluded.is_enabled;
+                                    """, (c["lang_id"], c["name"], c["iso"], c["display_name"], 1 if c.get("is_custom") else 0, 1 if c.get("is_enabled") else 0))
+                                    for phr in c.get("phrases", []):
+                                        conn.execute("""
+                                            INSERT INTO custom_language_phrases (lang_id, phrase)
+                                            SELECT ?, ? WHERE NOT EXISTS (
+                                                SELECT 1 FROM custom_language_phrases WHERE lang_id = ? AND phrase = ?
+                                            );
+                                        """, (c["lang_id"], phr, c["lang_id"], phr))
+                                conn.commit()
+                            load_custom_languages_cache()
+
                             logger.info(f"☁️ Restored {len(valid_seen)} seen messages from GitHub Gist ({self.gist_id[:8]}...).")
                             return {
                                 "seen": valid_seen,
@@ -349,6 +371,20 @@ class GistStorage:
         try:
             cutoff = datetime.now(timezone.utc).timestamp() - (28 * 3600)
             cleaned = {k: v for k, v in seen_dict.items() if v >= cutoff}
+            
+            cust_langs_data = []
+            for lid, cinfo in DB_LANGUAGES_CACHE.items():
+                cust_langs_data.append({
+                    "lang_id": lid,
+                    "name": cinfo["name"],
+                    "iso": cinfo["iso"],
+                    "display_name": cinfo["display_name"],
+                    "is_custom": cinfo["is_custom"],
+                    "is_enabled": cinfo["is_enabled"],
+                    "phrases": cinfo["phrases"]
+                })
+            payload_data["custom_languages"] = cust_langs_data
+
             payload_data = {
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "bot": self.bot_name,
@@ -418,7 +454,9 @@ def init_db():
             );
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_forwarded_at ON processed_otps(forwarded_at);")
+        init_custom_language_tables(conn)
         conn.commit()
+    load_custom_languages_cache()
     logger.info("📦 SQLite database initialized at %s", DB_FILE)
 
 def is_message_seen(message_id: str) -> bool:
@@ -907,442 +945,896 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
                 return cand
     return "Global"
 
-LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
-    "French": {
-        "code": "FR",
-        "keywords": {
-            "votre code": 4, "ton code": 4, "partagez": 3, "ne partagez": 4,
-            "ne le partagez": 4, "verification": 2, "confirmation": 2, "mot de passe": 4,
-            "connexion": 3, "de securite": 3, "aucun": 3, "personne": 2, "veuillez": 3,
-            "entrez": 3, "utiliser": 2, "identifiant": 3, "votre compte": 3, "ce code": 3,
-            "reinitialisation": 3, "reinitialiser": 3
-        }
-    },
-    "Spanish": {
-        "code": "ES",
-        "keywords": {
-            "tu codigo": 4, "su codigo": 4, "codigo de": 3, "verificacion": 2,
-            "no compartas": 4, "compartas": 3, "con nadie": 4, "nadie": 2,
-            "iniciar sesion": 3, "de seguridad": 3, "tu cuenta": 3, "ingresa": 3,
-            "clave": 2, "utiliza": 2, "este codigo": 3, "dispositivo": 2,
-            "restablecer": 3, "confirmacion": 2
-        }
-    },
-    "Portuguese": {
-        "code": "PT",
-        "keywords": {
-            "seu codigo": 4, "sua senha": 4, "verificacao": 3,
-            "nao compartilhe": 4, "compartilhe": 3, "com ninguem": 4, "ninguem": 3,
-            "de seguranca": 3, "para entrar": 3, "entrar na": 3, "sua conta": 3, "senha": 3,
-            "utilize": 3, "aparelho": 3, "este codigo": 3, "cadastrado": 3,
-            "redefinir": 3, "confirmacao": 2
-        }
-    },
-    "German": {
-        "code": "DE",
-        "keywords": {
-            "dein code": 4, "ihr code": 4, "ihre": 2, "lautet": 3, "ist dein": 3,
-            "bestatigungscode": 4, "sicherheitscode": 4, "verifizierungscode": 4,
-            "passwort": 2, "nicht weitergeben": 4, "weitergeben": 4, "teilen sie": 4,
-            "mit niemandem": 4, "niemandem": 3, "ihr konto": 3, "anmeldung": 3,
-            "zurucksetzen": 3, "einmalpasswort": 4
-        }
-    },
-    "Italian": {
-        "code": "IT",
-        "keywords": {
-            "il tuo codice": 4, "tuo codice": 4, "suo codice": 4, "di verifica": 3,
-            "non condividere": 4, "condividere": 3, "con nessuno": 4, "nessuno": 3,
-            "di sicurezza": 3, "accesso": 2, "questo codice": 3, "per accedere": 3,
-            "reimpostare": 3, "conferma": 2
-        }
-    },
-    "Turkish": {
-        "code": "TR",
-        "keywords": {
-            "kodunuz": 4, "dogrulama": 3, "kodu": 2, "sifre": 3, "giris": 2,
-            "paylasmayin": 4, "kimseyle": 3, "onay": 2, "hesabiniz": 3,
-            "guvenlik": 3, "tek kullanimlik": 4, "sifirlama": 3
-        }
-    },
-    "Bulgarian": {
-        "code": "BG",
-        "keywords": {
-            "kodyt vi": 5, "kodat vi": 5, "kodyt": 4, "kodat": 4,
-            "spodelyayte": 5, "ne spodelyayte": 6, "s nikogo": 4,
-            "potvyrzhdenie": 5, "potvarzhdenie": 5, "za sigurnost": 4,
-            "vashiyat kod": 4, "koda si": 4, "za potvyrzhdenie": 5
-        }
-    },
-    "Russian": {
-        "code": "RU",
-        "keywords": {
-            "kod podtverzhdeniya": 5, "kod bezopasnosti": 5, "vash kod": 3,
-            "ne soobshchayte": 5, "nikomu ne": 4, "odnozoravyj": 4, "dlya vkhoda": 4
-        }
-    },
-    "Ukrainian": {
-        "code": "UK",
-        "keywords": {
-            "kod pidtverdzhennya": 5, "kod bezpeky": 5, "ne dilitsya": 5,
-            "ne dilitisya": 5, "dlya vkhodu": 4
-        }
-    },
-    "Greek": {
-        "code": "EL",
-        "keywords": {
-            "o kodikos sas": 5, "kodikos epivevaiosis": 5, "min moirazeste": 5,
-            "ton kodiko": 4, "asfaleias": 4
-        }
-    },
-    "Indonesian": {
-        "code": "ID",
-        "keywords": {
-            "kode konfirmasi": 4, "kode verifikasi": 4, "kode keamanan": 4,
-            "adalah kode": 4, "jangan bagikan": 4, "jangan berikan": 4,
-            "kode": 2, "anda": 2, "adalah": 2, "rahasia": 3, "keamanan": 3,
-            "akun anda": 3, "masuk ke": 3
-        }
-    },
-    "Malay": {
-        "code": "MS",
-        "keywords": {
-            "kod pengesahan": 4, "kod keselamatan": 4, "ialah kod": 4,
-            "anda ialah": 3, "jangan kongsi": 4, "kongsi": 3,
-            "kod": 2, "ialah": 2, "keselamatan": 3, "akaun anda": 3
-        }
-    },
-    "Dutch": {
-        "code": "NL",
-        "keywords": {
-            "uw code": 3, "je code": 3, "verificatiecode": 4, "beveiligingscode": 4,
-            "deel niet": 4, "niet met": 3, "niemand": 3,
-            "wachtwoord": 3, "bevestig": 3, "inloggen": 3, "bevestigingscode": 4
-        }
-    },
-    "Polish": {
-        "code": "PL",
-        "keywords": {
-            "twoj kod": 4, "kod weryfikacyjny": 4, "haslo": 3,
-            "nie udostepniaj": 4, "udostepniaj": 3, "bezpieczenstwa": 3,
-            "twoje konto": 3, "nikomu": 3, "logowania": 3, "resetowania": 3
-        }
-    },
-    "Romanian": {
-        "code": "RO",
-        "keywords": {
-            "codul tau": 4, "este": 1, "nu trimite": 4, "nimanui": 4,
-            "de securitate": 3, "verificare": 3, "autentificare": 3
-        }
-    },
-    "Swedish": {
-        "code": "SV",
-        "keywords": {
-            "din kod": 3, "kod ar": 3, "dela inte": 4, "med nagon": 4, "nagon": 2,
-            "verifieringskod": 4, "sakerhetskod": 4, "inte koden": 3, "engangskod": 4
-        }
-    },
-    "Danish": {
-        "code": "DA",
-        "keywords": {
-            "din kode": 3, "kode er": 3, "del ikke": 4, "med nogen": 4, "nogen": 2,
-            "bekraeftelseskode": 4, "sikkerhedskode": 4, "engangskode": 4
-        }
-    },
-    "Finnish": {
-        "code": "FI",
-        "keywords": {
-            "koodisi on": 4, "koodisi": 3, "ala jaa": 4, "kenellekaan": 4,
-            "vahvistuskoodi": 4, "tata koodia": 3, "turvakoodi": 4
-        }
-    },
-    "Norwegian": {
-        "code": "NO",
-        "keywords": {
-            "din kode": 3, "kode er": 3, "ikke del": 4, "koden med noen": 4, "noen": 2,
-            "bekreftelseskode": 4, "sikkerhetskode": 4, "engangskode": 4
-        }
-    },
-    "Czech": {
-        "code": "CS",
-        "keywords": {
-            "vas kod": 3, "kod je": 3, "nesdilejte": 4, "s nikym": 4, "nikym": 3,
-            "overovaci kod": 4, "bezpecnostni": 3, "tento kod": 3
-        }
-    },
-    "Slovak": {
-        "code": "SK",
-        "keywords": {
-            "vas kod": 3, "kod je": 3, "nezdielajte": 4, "s nikym": 4,
-            "overovaci kod": 4, "bezpecnostny": 3, "tento kod": 3
-        }
-    },
-    "Hungarian": {
-        "code": "HU",
-        "keywords": {
-            "kodod": 4, "ne oszd meg": 4, "senkivel": 4, "biztonsagi kod": 4,
-            "ellenorzo kod": 4, "megerosito kod": 4
-        }
-    },
-    "Tagalog": {
-        "code": "TL",
-        "keywords": {
-            "ang iyong": 4, "huwag ibahagi": 4, "ibahagi": 3, "sa kaninuman": 4,
-            "huwag ipamigay": 4
-        }
-    },
-    "Swahili": {
-        "code": "SW",
-        "keywords": {
-            "nambari yako": 4, "msimbo": 3, "usishiriki": 4, "na mtu": 3,
-            "wa uthibitishaji": 4, "wa usalama": 4
-        }
-    },
-    "Croatian": {
-        "code": "HR",
-        "keywords": {
-            "vas kod": 3, "kod je": 3, "ne dijelite": 4, "ne delite": 4,
-            "ni sa kim": 4, "nikome": 3, "kod za provjeru": 4, "kod za potvrdu": 4,
-            "sigurnosni kod": 4, "potvrdni kod": 4
-        }
-    },
-    "Catalan": {
-        "code": "CA",
-        "keywords": {
-            "el teu": 3, "codi de": 3, "no comparteixis": 4, "amb ningu": 4,
-            "verificacio": 3, "de seguretat": 3
-        }
-    },
-    "Albanian": {
-        "code": "SQ",
-        "keywords": {
-            "kodi juaj": 4, "eshte": 2, "mos e ndani": 4, "me askend": 4,
-            "verifikimit": 4, "sigurise": 3, "per te hyre": 3
-        }
-    },
-    "Lithuanian": {
-        "code": "LT",
-        "keywords": {
-            "jusu": 3, "kodas yra": 3, "nesidalinkite": 4, "su niekuo": 4,
-            "patvirtinimo kodas": 4, "saugos kodas": 4
-        }
-    },
-    "Latvian": {
-        "code": "LV",
-        "keywords": {
-            "jusu": 3, "kods ir": 3, "nedalieties": 4, "ar nevienu": 4,
-            "apstiprinajuma kods": 4, "drosibas kods": 4
-        }
-    },
-    "Estonian": {
-        "code": "ET",
-        "keywords": {
-            "teie": 3, "kood on": 3, "arge jagage": 4, "mitte kellegagi": 4,
-            "kinnituskood": 4, "turvakood": 4
-        }
-    },
-    "Slovenian": {
-        "code": "SL",
-        "keywords": {
-            "vasa": 3, "koda je": 3, "ne delite": 4, "z nikomer": 4,
-            "potrditvena koda": 4, "varnostna koda": 4
-        }
-    },
-    "Azerbaijani": {
-        "code": "AZ",
-        "keywords": {
-            "tesdiq kodu": 5, "hec kimle paylasmayin": 6, "hec kimle": 5,
-            "tehlukesizlik kodu": 5, "kodunuz": 3, "paylasmayin": 4
-        }
-    },
-    "Uzbek": {
-        "code": "UZ",
-        "keywords": {
-            "kodingiz": 4, "hech kimga": 4, "bermang": 4, "tasdiqlash kodi": 4,
-            "xavfsizlik kodi": 4
-        }
-    },
-    "Afrikaans": {
-        "code": "AF",
-        "keywords": {
-            "jou": 3, "kode is": 3, "moenie": 3, "deel nie": 4, "met enigiemand": 4,
-            "sekuriteitskode": 4, "bevestigingskode": 4
-        }
-    },
-    "Basque": {
-        "code": "EU",
-        "keywords": {
-            "zure kodea": 4, "baieztapen-kodea": 5, "segurtasun-kodea": 5,
-            "ez partekatu": 5, "inorekin": 4
-        }
-    },
-    "Galician": {
-        "code": "GL",
-        "keywords": {
-            "o teu codigo": 4, "codigo de verificacion": 5, "non compartas": 5,
-            "con ninguen": 4
-        }
-    },
-    "Irish": {
-        "code": "GA",
-        "keywords": {
-            "do chod": 4, "cod fioraithe": 5, "na roinn": 5, "le haon duine": 4
-        }
-    },
-    "Hausa": {
-        "code": "HA",
-        "keywords": {
-            "lambarka": 3, "karka raba": 5, "kada ka raba": 5, "tabbatarwa": 4
-        }
-    },
-    "Vietnamese": {
-        "code": "VI",
-        "keywords": {
-            "ma xac minh": 4, "mat khau": 4, "khong chia se": 4,
-            "chia se": 2, "dang nhap": 3, "tai khoan": 3, "bao mat": 3,
-            "ma otp": 3
-        }
-    },
-    "English": {
-        "code": "EN",
-        "keywords": {
-            "your code": 3, "is your": 3, "verification code": 3, "security code": 3,
-            "do not share": 4, "do not give": 4, "login code": 3, "password": 2,
-            "confirm": 2, "sign in": 3, "device": 2, "registered": 2, "to verify": 3,
-            "one time": 3, "reset": 2
-        }
-    }
+# ==========================================
+# 7. Database-Driven Language Detection Engine & Admin Manager
+# ==========================================
+SEED_LANGUAGES_DATA = {   'afrikaans': {   'display': '🇿🇦 Afrikaans',
+                     'iso': 'AF',
+                     'name': 'Afrikaans',
+                     'phrases': {   'bevestigingskode': 4,
+                                    'deel nie': 4,
+                                    'jou': 3,
+                                    'kode is': 3,
+                                    'met enigiemand': 4,
+                                    'moenie': 3,
+                                    'sekuriteitskode': 4}},
+    'albanian': {   'display': '🇦🇱 Albanian',
+                    'iso': 'SQ',
+                    'name': 'Albanian',
+                    'phrases': {   'eshte': 2,
+                                   'kodi juaj': 4,
+                                   'me askend': 4,
+                                   'mos e ndani': 4,
+                                   'per te hyre': 3,
+                                   'sigurise': 3,
+                                   'verifikimit': 4}},
+    'amharic': {'display': '🇪🇹 Amharic', 'iso': 'AM', 'name': 'Amharic', 'phrases': {}},
+    'arabic': {'display': '🇸🇦 Arabic', 'iso': 'AR', 'name': 'Arabic', 'phrases': {}},
+    'armenian': {'display': '🇦🇲 Armenian', 'iso': 'HY', 'name': 'Armenian', 'phrases': {}},
+    'azerbaijani': {   'display': '🇦🇿 Azerbaijani',
+                       'iso': 'AZ',
+                       'name': 'Azerbaijani',
+                       'phrases': {   'hec kimle': 5,
+                                      'hec kimle paylasmayin': 6,
+                                      'kodunuz': 3,
+                                      'paylasmayin': 4,
+                                      'tehlukesizlik kodu': 5,
+                                      'tesdiq kodu': 5}},
+    'basque': {   'display': '🇪🇸 Basque',
+                  'iso': 'EU',
+                  'name': 'Basque',
+                  'phrases': {   'baieztapen-kodea': 5,
+                                 'ez partekatu': 5,
+                                 'inorekin': 4,
+                                 'segurtasun-kodea': 5,
+                                 'zure kodea': 4}},
+    'bengali': {'display': '🇧🇩 Bengali', 'iso': 'BN', 'name': 'Bengali', 'phrases': {}},
+    'bulgarian': {   'display': '🇧🇬 Bulgarian',
+                     'iso': 'BG',
+                     'name': 'Bulgarian',
+                     'phrases': {   'koda si': 4,
+                                    'kodat': 4,
+                                    'kodat vi': 5,
+                                    'kodyt': 4,
+                                    'kodyt vi': 5,
+                                    'ne spodelyayte': 6,
+                                    'potvarzhdenie': 5,
+                                    'potvyrzhdenie': 5,
+                                    's nikogo': 4,
+                                    'spodelyayte': 5,
+                                    'vashiyat kod': 4,
+                                    'za potvyrzhdenie': 5,
+                                    'za sigurnost': 4}},
+    'burmese': {'display': '🇲🇲 Burmese', 'iso': 'MY', 'name': 'Burmese', 'phrases': {}},
+    'catalan': {   'display': '🇪🇸 Catalan',
+                   'iso': 'CA',
+                   'name': 'Catalan',
+                   'phrases': {   'amb ningu': 4,
+                                  'codi de': 3,
+                                  'de seguretat': 3,
+                                  'el teu': 3,
+                                  'no comparteixis': 4,
+                                  'verificacio': 3}},
+    'chinese': {'display': '🇨🇳 Chinese', 'iso': 'ZH', 'name': 'Chinese', 'phrases': {}},
+    'croatian': {   'display': '🇭🇷 Croatian',
+                    'iso': 'HR',
+                    'name': 'Croatian',
+                    'phrases': {   'kod je': 3,
+                                   'kod za potvrdu': 4,
+                                   'kod za provjeru': 4,
+                                   'ne delite': 4,
+                                   'ne dijelite': 4,
+                                   'ni sa kim': 4,
+                                   'nikome': 3,
+                                   'potvrdni kod': 4,
+                                   'sigurnosni kod': 4,
+                                   'vas kod': 3}},
+    'czech': {   'display': '🇨🇿 Czech',
+                 'iso': 'CS',
+                 'name': 'Czech',
+                 'phrases': {   'bezpecnostni': 3,
+                                'kod je': 3,
+                                'nesdilejte': 4,
+                                'nikym': 3,
+                                'overovaci kod': 4,
+                                's nikym': 4,
+                                'tento kod': 3,
+                                'vas kod': 3}},
+    'danish': {   'display': '🇩🇰 Danish',
+                  'iso': 'DA',
+                  'name': 'Danish',
+                  'phrases': {   'bekraeftelseskode': 4,
+                                 'del ikke': 4,
+                                 'din kode': 3,
+                                 'engangskode': 4,
+                                 'kode er': 3,
+                                 'med nogen': 4,
+                                 'nogen': 2,
+                                 'sikkerhedskode': 4}},
+    'dutch': {   'display': '🇳🇱 Dutch',
+                 'iso': 'NL',
+                 'name': 'Dutch',
+                 'phrases': {   'beveiligingscode': 4,
+                                'bevestig': 3,
+                                'bevestigingscode': 4,
+                                'deel niet': 4,
+                                'inloggen': 3,
+                                'je code': 3,
+                                'niemand': 3,
+                                'niet met': 3,
+                                'uw code': 3,
+                                'verificatiecode': 4,
+                                'wachtwoord': 3}},
+    'english': {   'display': '🇬🇧 English',
+                   'iso': 'EN',
+                   'name': 'English',
+                   'phrases': {   'confirm': 2,
+                                  'device': 2,
+                                  'do not give': 4,
+                                  'do not share': 4,
+                                  'is your': 3,
+                                  'login code': 3,
+                                  'one time': 3,
+                                  'password': 2,
+                                  'registered': 2,
+                                  'reset': 2,
+                                  'security code': 3,
+                                  'sign in': 3,
+                                  'to verify': 3,
+                                  'verification code': 3,
+                                  'your code': 3}},
+    'estonian': {   'display': '🇪🇪 Estonian',
+                    'iso': 'ET',
+                    'name': 'Estonian',
+                    'phrases': {   'arge jagage': 4,
+                                   'kinnituskood': 4,
+                                   'kood on': 3,
+                                   'mitte kellegagi': 4,
+                                   'teie': 3,
+                                   'turvakood': 4}},
+    'finnish': {   'display': '🇫🇮 Finnish',
+                   'iso': 'FI',
+                   'name': 'Finnish',
+                   'phrases': {   'ala jaa': 4,
+                                  'kenellekaan': 4,
+                                  'koodisi': 3,
+                                  'koodisi on': 4,
+                                  'tata koodia': 3,
+                                  'turvakoodi': 4,
+                                  'vahvistuskoodi': 4}},
+    'french': {   'display': '🇫🇷 French',
+                  'iso': 'FR',
+                  'name': 'French',
+                  'phrases': {   'aucun': 3,
+                                 'ce code': 3,
+                                 'confirmation': 2,
+                                 'connexion': 3,
+                                 'de securite': 3,
+                                 'entrez': 3,
+                                 'identifiant': 3,
+                                 'mot de passe': 4,
+                                 'ne le partagez': 4,
+                                 'ne partagez': 4,
+                                 'partagez': 3,
+                                 'personne': 2,
+                                 'reinitialisation': 3,
+                                 'reinitialiser': 3,
+                                 'ton code': 4,
+                                 'utiliser': 2,
+                                 'verification': 2,
+                                 'veuillez': 3,
+                                 'votre code': 4,
+                                 'votre compte': 3}},
+    'galician': {   'display': '🇪🇸 Galician',
+                    'iso': 'GL',
+                    'name': 'Galician',
+                    'phrases': {'codigo de verificacion': 5, 'con ninguen': 4, 'non compartas': 5, 'o teu codigo': 4}},
+    'georgian': {'display': '🇬🇪 Georgian', 'iso': 'KA', 'name': 'Georgian', 'phrases': {}},
+    'german': {   'display': '🇩🇪 German',
+                  'iso': 'DE',
+                  'name': 'German',
+                  'phrases': {   'anmeldung': 3,
+                                 'bestatigungscode': 4,
+                                 'dein code': 4,
+                                 'einmalpasswort': 4,
+                                 'ihr code': 4,
+                                 'ihr konto': 3,
+                                 'ihre': 2,
+                                 'ist dein': 3,
+                                 'lautet': 3,
+                                 'mit niemandem': 4,
+                                 'nicht weitergeben': 4,
+                                 'niemandem': 3,
+                                 'passwort': 2,
+                                 'sicherheitscode': 4,
+                                 'teilen sie': 4,
+                                 'verifizierungscode': 4,
+                                 'weitergeben': 4,
+                                 'zurucksetzen': 3}},
+    'greek': {   'display': '🇬🇷 Greek',
+                 'iso': 'EL',
+                 'name': 'Greek',
+                 'phrases': {   'asfaleias': 4,
+                                'kodikos epivevaiosis': 5,
+                                'min moirazeste': 5,
+                                'o kodikos sas': 5,
+                                'ton kodiko': 4}},
+    'gujarati': {'display': '🇮🇳 Gujarati', 'iso': 'GU', 'name': 'Gujarati', 'phrases': {}},
+    'hausa': {   'display': '🇳🇬 Hausa',
+                 'iso': 'HA',
+                 'name': 'Hausa',
+                 'phrases': {'kada ka raba': 5, 'karka raba': 5, 'lambarka': 3, 'tabbatarwa': 4}},
+    'hebrew': {'display': '🇮🇱 Hebrew', 'iso': 'HE', 'name': 'Hebrew', 'phrases': {}},
+    'hindi': {'display': '🇮🇳 Hindi', 'iso': 'HI', 'name': 'Hindi', 'phrases': {}},
+    'hungarian': {   'display': '🇭🇺 Hungarian',
+                     'iso': 'HU',
+                     'name': 'Hungarian',
+                     'phrases': {   'biztonsagi kod': 4,
+                                    'ellenorzo kod': 4,
+                                    'kodod': 4,
+                                    'megerosito kod': 4,
+                                    'ne oszd meg': 4,
+                                    'senkivel': 4}},
+    'indonesian': {   'display': '🇮🇩 Indonesian',
+                      'iso': 'ID',
+                      'name': 'Indonesian',
+                      'phrases': {   'adalah': 2,
+                                     'adalah kode': 4,
+                                     'akun anda': 3,
+                                     'anda': 2,
+                                     'jangan bagikan': 4,
+                                     'jangan berikan': 4,
+                                     'keamanan': 3,
+                                     'kode': 2,
+                                     'kode keamanan': 4,
+                                     'kode konfirmasi': 4,
+                                     'kode verifikasi': 4,
+                                     'masuk ke': 3,
+                                     'rahasia': 3}},
+    'irish': {   'display': '🇮🇪 Irish',
+                 'iso': 'GA',
+                 'name': 'Irish',
+                 'phrases': {'cod fioraithe': 5, 'do chod': 4, 'le haon duine': 4, 'na roinn': 5}},
+    'italian': {   'display': '🇮🇹 Italian',
+                   'iso': 'IT',
+                   'name': 'Italian',
+                   'phrases': {   'accesso': 2,
+                                  'con nessuno': 4,
+                                  'condividere': 3,
+                                  'conferma': 2,
+                                  'di sicurezza': 3,
+                                  'di verifica': 3,
+                                  'il tuo codice': 4,
+                                  'nessuno': 3,
+                                  'non condividere': 4,
+                                  'per accedere': 3,
+                                  'questo codice': 3,
+                                  'reimpostare': 3,
+                                  'suo codice': 4,
+                                  'tuo codice': 4}},
+    'japanese': {'display': '🇯🇵 Japanese', 'iso': 'JA', 'name': 'Japanese', 'phrases': {}},
+    'kannada': {'display': '🇮🇳 Kannada', 'iso': 'KN', 'name': 'Kannada', 'phrases': {}},
+    'kazakh': {'display': '🇰🇿 Kazakh', 'iso': 'KK', 'name': 'Kazakh', 'phrases': {}},
+    'khmer': {'display': '🇰🇭 Khmer', 'iso': 'KM', 'name': 'Khmer', 'phrases': {}},
+    'korean': {'display': '🇰🇷 Korean', 'iso': 'KO', 'name': 'Korean', 'phrases': {}},
+    'lao': {'display': '🇱🇦 Lao', 'iso': 'LO', 'name': 'Lao', 'phrases': {}},
+    'latvian': {   'display': '🇱🇻 Latvian',
+                   'iso': 'LV',
+                   'name': 'Latvian',
+                   'phrases': {   'apstiprinajuma kods': 4,
+                                  'ar nevienu': 4,
+                                  'drosibas kods': 4,
+                                  'jusu': 3,
+                                  'kods ir': 3,
+                                  'nedalieties': 4}},
+    'lithuanian': {   'display': '🇱🇹 Lithuanian',
+                      'iso': 'LT',
+                      'name': 'Lithuanian',
+                      'phrases': {   'jusu': 3,
+                                     'kodas yra': 3,
+                                     'nesidalinkite': 4,
+                                     'patvirtinimo kodas': 4,
+                                     'saugos kodas': 4,
+                                     'su niekuo': 4}},
+    'malay': {   'display': '🇲🇾 Malay',
+                 'iso': 'MS',
+                 'name': 'Malay',
+                 'phrases': {   'akaun anda': 3,
+                                'anda ialah': 3,
+                                'ialah': 2,
+                                'ialah kod': 4,
+                                'jangan kongsi': 4,
+                                'keselamatan': 3,
+                                'kod': 2,
+                                'kod keselamatan': 4,
+                                'kod pengesahan': 4,
+                                'kongsi': 3}},
+    'malayalam': {'display': '🇮🇳 Malayalam', 'iso': 'ML', 'name': 'Malayalam', 'phrases': {}},
+    'marathi': {'display': '🇮🇳 Marathi', 'iso': 'MR', 'name': 'Marathi', 'phrases': {}},
+    'nepali': {'display': '🇳🇵 Nepali', 'iso': 'NE', 'name': 'Nepali', 'phrases': {}},
+    'norwegian': {   'display': '🇳🇴 Norwegian',
+                     'iso': 'NO',
+                     'name': 'Norwegian',
+                     'phrases': {   'bekreftelseskode': 4,
+                                    'din kode': 3,
+                                    'engangskode': 4,
+                                    'ikke del': 4,
+                                    'kode er': 3,
+                                    'koden med noen': 4,
+                                    'noen': 2,
+                                    'sikkerhetskode': 4}},
+    'odia': {'display': '🇮🇳 Odia', 'iso': 'OR', 'name': 'Odia', 'phrases': {}},
+    'persian': {'display': '🇮🇷 Persian', 'iso': 'FA', 'name': 'Persian', 'phrases': {}},
+    'polish': {   'display': '🇵🇱 Polish',
+                  'iso': 'PL',
+                  'name': 'Polish',
+                  'phrases': {   'bezpieczenstwa': 3,
+                                 'haslo': 3,
+                                 'kod weryfikacyjny': 4,
+                                 'logowania': 3,
+                                 'nie udostepniaj': 4,
+                                 'nikomu': 3,
+                                 'resetowania': 3,
+                                 'twoj kod': 4,
+                                 'twoje konto': 3,
+                                 'udostepniaj': 3}},
+    'portuguese': {   'display': '🇵🇹 Portuguese',
+                      'iso': 'PT',
+                      'name': 'Portuguese',
+                      'phrases': {   'aparelho': 3,
+                                     'cadastrado': 3,
+                                     'com ninguem': 4,
+                                     'compartilhe': 3,
+                                     'confirmacao': 2,
+                                     'de seguranca': 3,
+                                     'entrar na': 3,
+                                     'este codigo': 3,
+                                     'nao compartilhe': 4,
+                                     'ninguem': 3,
+                                     'para entrar': 3,
+                                     'redefinir': 3,
+                                     'senha': 3,
+                                     'seu codigo': 4,
+                                     'sua conta': 3,
+                                     'sua senha': 4,
+                                     'utilize': 3,
+                                     'verificacao': 3}},
+    'punjabi': {'display': '🇮🇳 Punjabi', 'iso': 'PA', 'name': 'Punjabi', 'phrases': {}},
+    'romanian': {   'display': '🇷🇴 Romanian',
+                    'iso': 'RO',
+                    'name': 'Romanian',
+                    'phrases': {   'autentificare': 3,
+                                   'codul tau': 4,
+                                   'de securitate': 3,
+                                   'este': 1,
+                                   'nimanui': 4,
+                                   'nu trimite': 4,
+                                   'verificare': 3}},
+    'russian': {   'display': '🇷🇺 Russian',
+                   'iso': 'RU',
+                   'name': 'Russian',
+                   'phrases': {   'dlya vkhoda': 4,
+                                  'kod bezopasnosti': 5,
+                                  'kod podtverzhdeniya': 5,
+                                  'ne soobshchayte': 5,
+                                  'nikomu ne': 4,
+                                  'odnozoravyj': 4,
+                                  'vash kod': 3}},
+    'sinhala': {'display': '🇱🇰 Sinhala', 'iso': 'SI', 'name': 'Sinhala', 'phrases': {}},
+    'slovak': {   'display': '🇸🇰 Slovak',
+                  'iso': 'SK',
+                  'name': 'Slovak',
+                  'phrases': {   'bezpecnostny': 3,
+                                 'kod je': 3,
+                                 'nezdielajte': 4,
+                                 'overovaci kod': 4,
+                                 's nikym': 4,
+                                 'tento kod': 3,
+                                 'vas kod': 3}},
+    'slovenian': {   'display': '🇸🇮 Slovenian',
+                     'iso': 'SL',
+                     'name': 'Slovenian',
+                     'phrases': {   'koda je': 3,
+                                    'ne delite': 4,
+                                    'potrditvena koda': 4,
+                                    'varnostna koda': 4,
+                                    'vasa': 3,
+                                    'z nikomer': 4}},
+    'spanish': {   'display': '🇪🇸 Spanish',
+                   'iso': 'ES',
+                   'name': 'Spanish',
+                   'phrases': {   'clave': 2,
+                                  'codigo de': 3,
+                                  'compartas': 3,
+                                  'con nadie': 4,
+                                  'confirmacion': 2,
+                                  'de seguridad': 3,
+                                  'dispositivo': 2,
+                                  'este codigo': 3,
+                                  'ingresa': 3,
+                                  'iniciar sesion': 3,
+                                  'nadie': 2,
+                                  'no compartas': 4,
+                                  'restablecer': 3,
+                                  'su codigo': 4,
+                                  'tu codigo': 4,
+                                  'tu cuenta': 3,
+                                  'utiliza': 2,
+                                  'verificacion': 2}},
+    'swahili': {   'display': '🇰🇪 Swahili',
+                   'iso': 'SW',
+                   'name': 'Swahili',
+                   'phrases': {   'msimbo': 3,
+                                  'na mtu': 3,
+                                  'nambari yako': 4,
+                                  'usishiriki': 4,
+                                  'wa usalama': 4,
+                                  'wa uthibitishaji': 4}},
+    'swedish': {   'display': '🇸🇪 Swedish',
+                   'iso': 'SV',
+                   'name': 'Swedish',
+                   'phrases': {   'dela inte': 4,
+                                  'din kod': 3,
+                                  'engangskod': 4,
+                                  'inte koden': 3,
+                                  'kod ar': 3,
+                                  'med nagon': 4,
+                                  'nagon': 2,
+                                  'sakerhetskod': 4,
+                                  'verifieringskod': 4}},
+    'tagalog': {   'display': '🇵🇭 Tagalog',
+                   'iso': 'TL',
+                   'name': 'Tagalog',
+                   'phrases': {   'ang iyong': 4,
+                                  'huwag ibahagi': 4,
+                                  'huwag ipamigay': 4,
+                                  'ibahagi': 3,
+                                  'sa kaninuman': 4}},
+    'tamil': {'display': '🇮🇳 Tamil', 'iso': 'TA', 'name': 'Tamil', 'phrases': {}},
+    'telugu': {'display': '🇮🇳 Telugu', 'iso': 'TE', 'name': 'Telugu', 'phrases': {}},
+    'thai': {'display': '🇹🇭 Thai', 'iso': 'TH', 'name': 'Thai', 'phrases': {}},
+    'turkish': {   'display': '🇹🇷 Turkish',
+                   'iso': 'TR',
+                   'name': 'Turkish',
+                   'phrases': {   'dogrulama': 3,
+                                  'giris': 2,
+                                  'guvenlik': 3,
+                                  'hesabiniz': 3,
+                                  'kimseyle': 3,
+                                  'kodu': 2,
+                                  'kodunuz': 4,
+                                  'onay': 2,
+                                  'paylasmayin': 4,
+                                  'sifirlama': 3,
+                                  'sifre': 3,
+                                  'tek kullanimlik': 4}},
+    'ukrainian': {   'display': '🇺🇦 Ukrainian',
+                     'iso': 'UK',
+                     'name': 'Ukrainian',
+                     'phrases': {   'dlya vkhodu': 4,
+                                    'kod bezpeky': 5,
+                                    'kod pidtverdzhennya': 5,
+                                    'ne dilitisya': 5,
+                                    'ne dilitsya': 5}},
+    'urdu': {'display': '🇵🇰 Urdu', 'iso': 'UR', 'name': 'Urdu', 'phrases': {}},
+    'uzbek': {   'display': '🇺🇿 Uzbek',
+                 'iso': 'UZ',
+                 'name': 'Uzbek',
+                 'phrases': {'bermang': 4, 'hech kimga': 4, 'kodingiz': 4, 'tasdiqlash kodi': 4, 'xavfsizlik kodi': 4}},
+    'vietnamese': {   'display': '🇻🇳 Vietnamese',
+                      'iso': 'VI',
+                      'name': 'Vietnamese',
+                      'phrases': {   'bao mat': 3,
+                                     'chia se': 2,
+                                     'dang nhap': 3,
+                                     'khong chia se': 4,
+                                     'ma otp': 3,
+                                     'ma xac minh': 4,
+                                     'mat khau': 4,
+                                     'tai khoan': 3}}}
+
+DEFAULT_LANG_FLAGS: Dict[str, str] = {
+    "french": "🇫🇷", "spanish": "🇪🇸", "portuguese": "🇵🇹", "german": "🇩🇪", "italian": "🇮🇹",
+    "turkish": "🇹🇷", "bulgarian": "🇧🇬", "russian": "🇷🇺", "ukrainian": "🇺🇦", "greek": "🇬🇷",
+    "indonesian": "🇮🇩", "malay": "🇲🇾", "dutch": "🇳🇱", "polish": "🇵🇱", "romanian": "🇷🇴",
+    "swedish": "🇸🇪", "danish": "🇩🇰", "finnish": "🇫🇮", "norwegian": "🇳🇴", "czech": "🇨🇿",
+    "slovak": "🇸🇰", "hungarian": "🇭🇺", "tagalog": "🇵🇭", "swahili": "🇰🇪", "croatian": "🇭🇷",
+    "catalan": "🇪🇸", "albanian": "🇦🇱", "lithuanian": "🇱🇹", "latvian": "🇱🇻", "estonian": "🇪🇪",
+    "slovenian": "🇸🇮", "azerbaijani": "🇦🇿", "uzbek": "🇺🇿", "afrikaans": "🇿🇦", "basque": "🇪🇸",
+    "galician": "🇪🇸", "irish": "🇮🇪", "hausa": "🇳🇬", "vietnamese": "🇻🇳", "english": "🇬🇧",
+    "amharic": "🇪🇹", "georgian": "🇬🇪", "armenian": "🇦🇲", "hebrew": "🇮🇱", "arabic": "🇸🇦",
+    "urdu": "🇵🇰", "persian": "🇮🇷", "bengali": "🇧🇩", "punjabi": "🇮🇳", "gujarati": "🇮🇳",
+    "marathi": "🇮🇳", "nepali": "🇳🇵", "hindi": "🇮🇳", "tamil": "🇮🇳", "telugu": "🇮🇳",
+    "kannada": "🇮🇳", "malayalam": "🇮🇳", "sinhala": "🇱🇰", "odia": "🇮🇳", "thai": "🇹🇭",
+    "lao": "🇱🇦", "khmer": "🇰🇭", "burmese": "🇲🇲", "kazakh": "🇰🇿", "japanese": "🇯🇵",
+    "korean": "🇰🇷", "chinese": "🇨🇳", "somali": "🇸🇴", "kurdish": "🇮🇶"
 }
 
-
 def normalize_text_for_lang(text: str) -> str:
-    low = text.lower().replace('ə', 'e').replace('ı', 'i')
+    low = text.lower().replace("ə", "e").replace("ı", "i")
     nfkd = unicodedata.normalize('NFD', low)
     return ''.join([c for c in nfkd if not unicodedata.combining(c)])
 
+DB_LANGUAGES_CACHE: Dict[str, Dict[str, Any]] = {}
+ADMIN_LANG_STATES: Dict[int, Dict[str, Any]] = {}
+
+def init_and_seed_language_database(conn: sqlite3.Connection):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS languages (
+            lang_id TEXT PRIMARY KEY,
+            lang_name TEXT NOT NULL,
+            iso_code TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            is_enabled INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS language_phrases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lang_id TEXT NOT NULL,
+            phrase TEXT NOT NULL,
+            weight INTEGER DEFAULT 3,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_lang_phrase ON language_phrases(lang_id);")
+
+    try:
+        count = conn.execute("SELECT COUNT(*) FROM languages;").fetchone()[0]
+        if count == 0:
+            seed_data = SEED_LANGUAGES_DATA
+            for lid, info in seed_data.items():
+                conn.execute("""
+                    INSERT OR IGNORE INTO languages (lang_id, lang_name, iso_code, display_name, is_enabled)
+                    VALUES (?, ?, ?, ?, 1);
+                """, (lid, info["name"], info["iso"], info["display"]))
+                for phrase, weight in info.get("phrases", {}).items():
+                    conn.execute("""
+                        INSERT INTO language_phrases (lang_id, phrase, weight)
+                        VALUES (?, ?, ?);
+                    """, (lid, phrase, weight))
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"Notice seeding language database: {e}")
+
+def load_languages_from_db():
+    global DB_LANGUAGES_CACHE
+    DB_LANGUAGES_CACHE.clear()
+    try:
+        with get_db_connection() as conn:
+            init_and_seed_language_database(conn)
+            rows = conn.execute("SELECT lang_id, lang_name, iso_code, display_name, is_enabled FROM languages;").fetchall()
+            for r in rows:
+                DB_LANGUAGES_CACHE[r["lang_id"]] = {
+                    "name": r["lang_name"],
+                    "iso": r["iso_code"],
+                    "display_name": r["display_name"],
+                    "is_enabled": bool(r["is_enabled"]),
+                    "phrases": {}
+                }
+            prows = conn.execute("SELECT lang_id, phrase, weight FROM language_phrases;").fetchall()
+            for pr in prows:
+                lid = pr["lang_id"]
+                if lid in DB_LANGUAGES_CACHE:
+                    DB_LANGUAGES_CACHE[lid]["phrases"][pr["phrase"]] = pr["weight"]
+    except Exception as e:
+        logger.warning(f"Notice loading language database: {e}")
+
+def db_add_language(lang_name: str, iso_code: str, display_name: str = ""):
+    lid = lang_name.strip().lower()
+    cname = lang_name.strip().title()
+    ciso = iso_code.strip().upper()
+    flag = DEFAULT_LANG_FLAGS.get(lid, "🌐")
+    disp = display_name.strip() or f"{flag} {cname}"
+    with get_db_connection() as conn:
+        init_and_seed_language_database(conn)
+        conn.execute("""
+            INSERT INTO languages (lang_id, lang_name, iso_code, display_name, is_enabled)
+            VALUES (?, ?, ?, ?, 1)
+            ON CONFLICT(lang_id) DO UPDATE SET
+                lang_name = excluded.lang_name,
+                iso_code = excluded.iso_code,
+                display_name = excluded.display_name,
+                is_enabled = 1;
+        """, (lid, cname, ciso, disp))
+        conn.commit()
+    load_languages_from_db()
+
+def db_edit_display_name(lang_id: str, new_display: str):
+    lid = lang_id.strip().lower()
+    disp = new_display.strip()
+    if not disp:
+        return
+    with get_db_connection() as conn:
+        init_and_seed_language_database(conn)
+        conn.execute("UPDATE languages SET display_name = ? WHERE lang_id = ?;", (disp, lid))
+        conn.commit()
+    load_languages_from_db()
+
+def db_add_phrase(lang_id: str, raw_text: str, weight: int = 5):
+    lid = lang_id.strip().lower()
+    norm = normalize_text_for_lang(raw_text).strip()
+    if not norm or len(norm) < 2:
+        return
+    with get_db_connection() as conn:
+        init_and_seed_language_database(conn)
+        exists = conn.execute("SELECT 1 FROM language_phrases WHERE lang_id = ? AND phrase = ? LIMIT 1;", (lid, norm)).fetchone()
+        if not exists:
+            conn.execute("INSERT INTO language_phrases (lang_id, phrase, weight) VALUES (?, ?, ?);", (lid, norm, weight))
+            conn.commit()
+    load_languages_from_db()
+
+def db_clear_phrases(lang_id: str):
+    lid = lang_id.strip().lower()
+    with get_db_connection() as conn:
+        init_and_seed_language_database(conn)
+        conn.execute("DELETE FROM language_phrases WHERE lang_id = ?;", (lid,))
+        conn.commit()
+    load_languages_from_db()
+
+def db_delete_language(lang_id: str):
+    lid = lang_id.strip().lower()
+    with get_db_connection() as conn:
+        init_and_seed_language_database(conn)
+        conn.execute("DELETE FROM languages WHERE lang_id = ?;", (lid,))
+        conn.execute("DELETE FROM language_phrases WHERE lang_id = ?;", (lid,))
+        conn.commit()
+    load_languages_from_db()
+
+def db_toggle_language(lang_id: str) -> bool:
+    lid = lang_id.strip().lower()
+    with get_db_connection() as conn:
+        init_and_seed_language_database(conn)
+        row = conn.execute("SELECT is_enabled FROM languages WHERE lang_id = ? LIMIT 1;", (lid,)).fetchone()
+        if row:
+            new_val = 0 if row[0] == 1 else 1
+            conn.execute("UPDATE languages SET is_enabled = ? WHERE lang_id = ?;", (new_val, lid))
+            conn.commit()
+            load_languages_from_db()
+            return bool(new_val)
+    return False
+
+LANGS_PER_PAGE = 8
+
+def build_languages_menu(page: int = 0) -> Tuple[str, InlineKeyboardMarkup]:
+    all_langs = sorted(DB_LANGUAGES_CACHE.values(), key=lambda x: x["name"])
+    total = len(all_langs)
+    total_pages = max(1, (total + LANGS_PER_PAGE - 1) // LANGS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * LANGS_PER_PAGE
+    page_langs = all_langs[start_idx : start_idx + LANGS_PER_PAGE]
+
+    text = (
+        "🌐 <b>SMS Language Detection Manager (Database-Driven)</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "All language rules, display names, and phrases are stored in the SQLite database.\n"
+        "Tap any language to customize its <b>display label</b>, add <b>SMS phrases</b>, or clear keywords.\n\n"
+        f"• <b>Total Languages in DB:</b> <code>{total}</code>\n"
+        f"• <b>Active Page:</b> <code>{page + 1} / {total_pages}</code>\n"
+        "━━━━━━━━━━━━━━━━━━━━"
+    )
+
+    buttons = []
+    for i in range(0, len(page_langs), 2):
+        row = []
+        l1 = page_langs[i]
+        tag1 = " (Off)" if not l1["is_enabled"] else ""
+        lid1 = l1["name"].lower()
+        row.append(InlineKeyboardButton(f"{l1['display_name']}{tag1}", callback_data=f"lang_v_{lid1}"))
+        if i + 1 < len(page_langs):
+            l2 = page_langs[i + 1]
+            tag2 = " (Off)" if not l2["is_enabled"] else ""
+            lid2 = l2["name"].lower()
+            row.append(InlineKeyboardButton(f"{l2['display_name']}{tag2}", callback_data=f"lang_v_{lid2}"))
+        buttons.append(row)
+
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("◀️ Prev", callback_data=f"lang_mgr_p_{page - 1}"))
+    nav_row.append(InlineKeyboardButton(f"📄 {page + 1}/{total_pages}", callback_data="noop"))
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"lang_mgr_p_{page + 1}"))
+    buttons.append(nav_row)
+
+    buttons.append([
+        InlineKeyboardButton("➕ Add New Language", callback_data="lang_add_new"),
+        InlineKeyboardButton("🔙 Back to Dashboard", callback_data="refresh_dash")
+    ])
+
+    return text, InlineKeyboardMarkup(buttons)
+
+def build_language_detail_menu(lang_id: str) -> Tuple[str, InlineKeyboardMarkup]:
+    lid = lang_id.strip().lower()
+    info = DB_LANGUAGES_CACHE.get(lid)
+    if not info:
+        return "❌ Language not found in database.", InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="lang_mgr_p_0")]])
+
+    phrases = list(info.get("phrases", {}).keys())
+    phrase_lines = ""
+    if phrases:
+        phrase_lines = "\n\n📝 <b>Database Saved Phrases (" + str(len(phrases)) + "):</b>\n"
+        for idx, p in enumerate(phrases[:8], 1):
+            phrase_lines += f"  {idx}. <code>{html.escape(p)}</code>\n"
+        if len(phrases) > 8:
+            phrase_lines += f"  <i>...and {len(phrases) - 8} more in database</i>\n"
+    else:
+        phrase_lines = "\n\n📝 <b>Database Saved Phrases:</b> <i>None (native script detection)</i>"
+
+    status_str = "🟢 Active & Enabled" if info["is_enabled"] else "⏸️ Disabled"
+
+    text = (
+        f"🌐 <b>Database Language: {html.escape(info['name'])}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Canonical Name:</b> <code>{html.escape(info['name'])}</code>\n"
+        f"• <b>ISO Code:</b> <code>{html.escape(info['iso'])}</code>\n"
+        f"• <b>SMS Display Label:</b> <code>{html.escape(info['display_name'])}</code>\n"
+        f"• <b>Status:</b> {status_str}\n"
+        "━━━━━━━━━━━━━━━━━━━━"
+        f"{phrase_lines}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 <i>SMS matching this language will show the exact Display Label above.</i>"
+    )
+
+    buttons = [
+        [
+            InlineKeyboardButton("✏️ Edit Display Name", callback_data=f"lang_edname_{lid}"),
+            InlineKeyboardButton("➕ Add SMS / Phrase", callback_data=f"lang_addphr_{lid}")
+        ]
+    ]
+    if phrases:
+        buttons.append([InlineKeyboardButton("🗑️ Clear Saved Phrases", callback_data=f"lang_clrphr_{lid}")])
+
+    tog_label = "⏸️ Disable" if info["is_enabled"] else "▶️ Enable"
+    buttons.append([
+        InlineKeyboardButton(tog_label, callback_data=f"lang_tog_{lid}"),
+        InlineKeyboardButton("❌ Delete Language", callback_data=f"lang_del_{lid}")
+    ])
+    buttons.append([InlineKeyboardButton("🔙 Back to Languages", callback_data="lang_mgr_p_0")])
+
+    return text, InlineKeyboardMarkup(buttons)
 
 def detect_sms_language(text: str) -> Tuple[str, str]:
     if not text:
-        return ("English", "EN")
+        eng = DB_LANGUAGES_CACHE.get("english", {})
+        return (eng.get("display_name", "🇬🇧 English"), "EN")
+
     t = text.strip()
 
-    # 1. Non-Latin Native Scripts (Deterministic)
+    # 1. Non-Latin Native Scripts
     if re.search(r"[\u1200-\u137F]", t):
-        return ("Amharic", "AM")
-
+        info = DB_LANGUAGES_CACHE.get("amharic", {})
+        return (info.get("display_name", "🇪🇹 Amharic"), "AM")
     if re.search(r"[\u10A0-\u10FF\u2D00-\u2D2F]", t):
-        return ("Georgian", "KA")
-
+        info = DB_LANGUAGES_CACHE.get("georgian", {})
+        return (info.get("display_name", "🇬🇪 Georgian"), "KA")
     if re.search(r"[\u0530-\u058F]", t):
-        return ("Armenian", "HY")
-
+        info = DB_LANGUAGES_CACHE.get("armenian", {})
+        return (info.get("display_name", "🇦🇲 Armenian"), "HY")
     if re.search(r"[\u0590-\u05FF]", t):
-        return ("Hebrew", "HE")
-
+        info = DB_LANGUAGES_CACHE.get("hebrew", {})
+        return (info.get("display_name", "🇮🇱 Hebrew"), "HE")
     if re.search(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]", t):
         if any(c in t for c in ["ے", "ٹ", "ڈ", "ڑ", "ں"]) or "آپ" in t:
-            return ("Urdu", "UR")
+            info = DB_LANGUAGES_CACHE.get("urdu", {})
+            return (info.get("display_name", "🇵🇰 Urdu"), "UR")
         if any(c in t for c in ["گ", "چ", "پ", "ژ"]) or "اینستاگرام" in t:
-            return ("Persian", "FA")
-        return ("Arabic", "AR")
-
+            info = DB_LANGUAGES_CACHE.get("persian", {})
+            return (info.get("display_name", "🇮🇷 Persian"), "FA")
+        info = DB_LANGUAGES_CACHE.get("arabic", {})
+        return (info.get("display_name", "🇸🇦 Arabic"), "AR")
     if re.search(r"[\u0981-\u09BC\u09BE-\u09CD\u09D7\u09DC-\u09E3\u09F0-\u09FD]", t):
-        return ("Bengali", "BN")
-
+        info = DB_LANGUAGES_CACHE.get("bengali", {})
+        return (info.get("display_name", "🇧🇩 Bengali"), "BN")
     if re.search(r"[\u0A01-\u0A75]", t):
-        return ("Punjabi", "PA")
-
+        info = DB_LANGUAGES_CACHE.get("punjabi", {})
+        return (info.get("display_name", "🇮🇳 Punjabi"), "PA")
     if re.search(r"[\u0A81-\u0AF9]", t):
-        return ("Gujarati", "GU")
-
+        info = DB_LANGUAGES_CACHE.get("gujarati", {})
+        return (info.get("display_name", "🇮🇳 Gujarati"), "GU")
     if re.search(r"[\u0904-\u0939\u093D-\u094F\u0958-\u0963]", t):
         low_d = t.lower()
         if "आहे" in low_d or "तुमचा" in low_d:
-            return ("Marathi", "MR")
+            info = DB_LANGUAGES_CACHE.get("marathi", {})
+            return (info.get("display_name", "🇮🇳 Marathi"), "MR")
         if "हो" in low_d or "तपाईंको" in low_d:
-            return ("Nepali", "NE")
-        return ("Hindi", "HI")
-
+            info = DB_LANGUAGES_CACHE.get("nepali", {})
+            return (info.get("display_name", "🇳🇵 Nepali"), "NE")
+        info = DB_LANGUAGES_CACHE.get("hindi", {})
+        return (info.get("display_name", "🇮🇳 Hindi"), "HI")
     if re.search(r"[\u0B00-\u0B7F]", t):
-        return ("Odia", "OR")
-
+        info = DB_LANGUAGES_CACHE.get("odia", {})
+        return (info.get("display_name", "🇮🇳 Odia"), "OR")
     if re.search(r"[\u0B80-\u0BFF]", t):
-        return ("Tamil", "TA")
-
+        info = DB_LANGUAGES_CACHE.get("tamil", {})
+        return (info.get("display_name", "🇮🇳 Tamil"), "TA")
     if re.search(r"[\u0C00-\u0C7F]", t):
-        return ("Telugu", "TE")
-
+        info = DB_LANGUAGES_CACHE.get("telugu", {})
+        return (info.get("display_name", "🇮🇳 Telugu"), "TE")
     if re.search(r"[\u0C80-\u0CFF]", t):
-        return ("Kannada", "KN")
-
+        info = DB_LANGUAGES_CACHE.get("kannada", {})
+        return (info.get("display_name", "🇮🇳 Kannada"), "KN")
     if re.search(r"[\u0D00-\u0D7F]", t):
-        return ("Malayalam", "ML")
-
+        info = DB_LANGUAGES_CACHE.get("malayalam", {})
+        return (info.get("display_name", "🇮🇳 Malayalam"), "ML")
     if re.search(r"[\u0D80-\u0DFF]", t):
-        return ("Sinhala", "SI")
-
+        info = DB_LANGUAGES_CACHE.get("sinhala", {})
+        return (info.get("display_name", "🇱🇰 Sinhala"), "SI")
     if re.search(r"[\u0E00-\u0E7F]", t):
-        return ("Thai", "TH")
-
+        info = DB_LANGUAGES_CACHE.get("thai", {})
+        return (info.get("display_name", "🇹🇭 Thai"), "TH")
     if re.search(r"[\u0EA0-\u0EFF]", t):
-        return ("Lao", "LO")
-
+        info = DB_LANGUAGES_CACHE.get("lao", {})
+        return (info.get("display_name", "🇱🇦 Lao"), "LO")
     if re.search(r"[\u1780-\u17FF]", t):
-        return ("Khmer", "KM")
-
+        info = DB_LANGUAGES_CACHE.get("khmer", {})
+        return (info.get("display_name", "🇰🇭 Khmer"), "KM")
     if re.search(r"[\u1000-\u109F]", t):
-        return ("Burmese", "MY")
-
+        info = DB_LANGUAGES_CACHE.get("burmese", {})
+        return (info.get("display_name", "🇲🇲 Burmese"), "MY")
     if re.search(r"[\u0370-\u03FF]", t):
-        return ("Greek", "EL")
+        info = DB_LANGUAGES_CACHE.get("greek", {})
+        return (info.get("display_name", "🇬🇷 Greek"), "EL")
 
     if re.search(r"[\u0400-\u04FF]", t):
         low_raw = t.lower()
         ukr_chars = ["є", "ї", "ґ", "\u0454", "\u0457", "\u0491"]
         ukr_words = ["підтвердження", "безпеки", "не діліться", "входу"]
         if any(c in t for c in ukr_chars) or any(w in low_raw for w in ukr_words):
-            return ("Ukrainian", "UK")
+            info = DB_LANGUAGES_CACHE.get("ukrainian", {})
+            return (info.get("display_name", "🇺🇦 Ukrainian"), "UK")
         if any(w in low_raw for w in ["за потвърждение", "вашият", "сигурност", "кодът", "споделяйте", "с никого"]):
-            return ("Bulgarian", "BG")
+            info = DB_LANGUAGES_CACHE.get("bulgarian", {})
+            return (info.get("display_name", "🇧🇬 Bulgarian"), "BG")
         if "кодыңыз" in low_raw or "үшін" in low_raw or "растау" in low_raw:
-            return ("Kazakh", "KK")
-        return ("Russian", "RU")
+            info = DB_LANGUAGES_CACHE.get("kazakh", {})
+            return (info.get("display_name", "🇰🇿 Kazakh"), "KK")
+        info = DB_LANGUAGES_CACHE.get("russian", {})
+        return (info.get("display_name", "🇷🇺 Russian"), "RU")
 
     if re.search(r"[\u3040-\u30FF]", t):
-        return ("Japanese", "JA")
+        info = DB_LANGUAGES_CACHE.get("japanese", {})
+        return (info.get("display_name", "🇯🇵 Japanese"), "JA")
     if re.search(r"[\uAC00-\uD7AF\u1100-\u11FF]", t):
-        return ("Korean", "KO")
+        info = DB_LANGUAGES_CACHE.get("korean", {})
+        return (info.get("display_name", "🇰🇷 Korean"), "KO")
     if re.search(r"[\u4E00-\u9FFF]", t):
-        return ("Chinese", "ZH")
+        info = DB_LANGUAGES_CACHE.get("chinese", {})
+        return (info.get("display_name", "🇨🇳 Chinese"), "ZH")
 
-    # 2. Latin Scripts: Normalized Keyword Scoring with Token Boundaries
+    # 2. Database Phrase Scoring
     norm = normalize_text_for_lang(t)
     scores: Dict[str, int] = {}
-    for lang_name, info in LANGUAGE_RULES.items():
+    for lid, info in DB_LANGUAGES_CACHE.items():
+        if not info.get("is_enabled", True):
+            continue
         score = 0
-        for kw, weight in info["keywords"].items():
-            pattern = r"(?:\b|^)" + re.escape(kw) + r"(?:\b|$)"
+        for phrase, weight in info.get("phrases", {}).items():
+            pattern = r"(?:\b|^)" + re.escape(phrase) + r"(?:\b|$)"
             matches = len(re.findall(pattern, norm))
             score += matches * weight
         if score > 0:
-            scores[lang_name] = score
+            scores[lid] = score
 
     if scores:
-        best_lang = max(scores.items(), key=lambda x: x[1])[0]
+        best_lid = max(scores.items(), key=lambda x: x[1])[0]
         norm_words = norm.split()
         if any(w in norm_words for w in ("seu", "sua", "voce")) or "nao compartilhe" in norm:
-            if "Portuguese" in scores:
-                best_lang = "Portuguese"
+            if "portuguese" in scores:
+                best_lid = "portuguese"
         elif any(w in norm_words for w in ("tu", "nadie")) or "no compartas" in norm:
-            if "Spanish" in scores:
-                best_lang = "Spanish"
+            if "spanish" in scores:
+                best_lid = "spanish"
         elif any(w in norm_words for w in ("votre", "vos", "veuillez")) or "ne partagez" in norm:
-            if "French" in scores:
-                best_lang = "French"
+            if "french" in scores:
+                best_lid = "french"
 
-        return (best_lang, LANGUAGE_RULES[best_lang]["code"])
+        info = DB_LANGUAGES_CACHE[best_lid]
+        return (info["display_name"], info["iso"])
 
-    return ("English", "EN")
+    eng_info = DB_LANGUAGES_CACHE.get("english", {})
+    return (eng_info.get("display_name", "🇬🇧 English"), "EN")
 
 def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = None) -> tuple:
     """Returns (text, otp_code, raw_message) with professional header/divider layout."""
@@ -1753,7 +2245,7 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
         [InlineKeyboardButton(f"📋 Toggle Format ({active_format.upper()})", callback_data="toggle_format")],
         [InlineKeyboardButton("✏️ Change Bot Name", callback_data="bot_name_help"),
          InlineKeyboardButton("🔗 Link Button", callback_data="link_help")],
-        [InlineKeyboardButton("🔄 Refresh Dashboard", callback_data="refresh_dash")]
+        [InlineKeyboardButton("🌐 Language Settings", callback_data="lang_mgr_p_0"), InlineKeyboardButton("🔄 Refresh", callback_data="refresh_dash")]
     ]
     return msg, InlineKeyboardMarkup(keyboard)
 
@@ -1982,6 +2474,95 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer("⛔ Access Restricted: Admins only.", show_alert=True)
         return
 
+    if query.data.startswith("lang_"):
+        cdata = query.data
+        if cdata.startswith("lang_mgr_p_"):
+            page = int(cdata.split("_")[-1])
+            text, markup = build_languages_menu(page)
+            try:
+                await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            except Exception:
+                pass
+            await query.answer()
+        elif cdata.startswith("lang_v_"):
+            lid = cdata[7:]
+            text, markup = build_language_detail_menu(lid)
+            try:
+                await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            except Exception:
+                pass
+            await query.answer()
+        elif cdata.startswith("lang_edname_"):
+            lid = cdata[12:]
+            ADMIN_LANG_STATES[user_id] = {"action": "awaiting_edit_display_name", "lang_id": lid}
+            cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"lang_v_{lid}")]])
+            await query.message.reply_text(
+                f"✏️ <b>Enter the new SMS Display Label for <code>{lid.title()}</code>:</b>\n\n"
+                f"<i>Example:</i> <code>🇧🇬 Bulgarian [BG]</code> or <code>Bulgarian</code>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=cancel_markup
+            )
+            await query.answer()
+        elif cdata.startswith("lang_addphr_"):
+            lid = cdata[12:]
+            ADMIN_LANG_STATES[user_id] = {"action": "awaiting_add_phrase", "lang_id": lid}
+            cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"lang_v_{lid}")]])
+            await query.message.reply_text(
+                f"➕ <b>Add SMS Content / Phrase for <code>{lid.title()}</code>:</b>\n\n"
+                f"Paste a full SMS message or specific security phrases received in this language.\n"
+                f"<i>Example:</i>\n"
+                f"<code>&lt;#&gt; Kodyt vi v WhatsApp: 879-885\nNe spodelyayte koda s nikogo</code>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=cancel_markup
+            )
+            await query.answer()
+        elif cdata.startswith("lang_clrphr_"):
+            lid = cdata[12:]
+            db_clear_phrases(lid)
+            asyncio.create_task(sync_data_to_secret_db())
+            text, markup = build_language_detail_menu(lid)
+            try:
+                await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            except Exception:
+                pass
+            await query.answer("All custom phrases cleared ✅", show_alert=True)
+        elif cdata.startswith("lang_del_"):
+            lid = cdata[9:]
+            db_delete_language(lid)
+            asyncio.create_task(sync_data_to_secret_db())
+            text, markup = build_languages_menu(0)
+            try:
+                await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            except Exception:
+                pass
+            await query.answer(f"Language '{lid}' deleted ✅", show_alert=True)
+        elif cdata.startswith("lang_tog_"):
+            lid = cdata[9:]
+            new_st = db_toggle_language(lid)
+            asyncio.create_task(sync_data_to_secret_db())
+            text, markup = build_language_detail_menu(lid)
+            try:
+                await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            except Exception:
+                pass
+            st_msg = "Language Enabled ✅" if new_st else "Language Disabled ⏸️"
+            await query.answer(st_msg)
+        elif cdata == "lang_add_new":
+            ADMIN_LANG_STATES[user_id] = {"action": "awaiting_new_lang"}
+            cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="lang_mgr_p_0")]])
+            await query.message.reply_text(
+                "➕ <b>Add New Language:</b>\n\n"
+                "Send the <b>Language Name | ISO Code</b> in chat.\n\n"
+                "<b>Example:</b>\n"
+                "<code>Somali | SO</code>\n"
+                "or\n"
+                "<code>Kurdish | KU</code>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=cancel_markup
+            )
+            await query.answer()
+        return
+
     if query.data == "toggle_format":
         data = load_stored_data()
         curr = str(data.get("sms_format", "short")).lower().strip()
@@ -2032,6 +2613,76 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             await query.answer("Dashboard Refreshed 🔄")
         except Exception:
             await query.answer("Already up to date ✅")
+
+
+async def languages_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    msg_obj = update.effective_message
+    if not user or not msg_obj:
+        return
+    if not is_user_authorized(user.id):
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        return
+    text, markup = build_languages_menu(0)
+    await msg_obj.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+async def handle_admin_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    msg_obj = update.effective_message
+    if not user or not msg_obj:
+        return
+    if not is_user_authorized(user.id):
+        return
+
+    state = ADMIN_LANG_STATES.get(user.id)
+    if not state:
+        return
+
+    action = state.get("action")
+    raw_text = msg_obj.text.strip() if msg_obj.text else ""
+    if not raw_text:
+        return
+
+    if action == "awaiting_new_lang":
+        del ADMIN_LANG_STATES[user.id]
+        parts = [p.strip() for p in raw_text.split("|") if p.strip()]
+        name = parts[0]
+        iso = parts[1] if len(parts) > 1 else "XX"
+        db_add_language(name, iso)
+        asyncio.create_task(sync_data_to_secret_db())
+        lid = name.lower()
+        detail_text, detail_markup = build_language_detail_menu(lid)
+        await msg_obj.reply_text(
+            f"✅ <b>New Language '{name} ({iso.upper()})' Added!</b>\n\n" + detail_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=detail_markup
+        )
+    elif action == "awaiting_edit_display_name":
+        del ADMIN_LANG_STATES[user.id]
+        lid = state.get("lang_id")
+        if lid:
+            db_edit_display_name(lid, raw_text)
+            asyncio.create_task(sync_data_to_secret_db())
+            detail_text, detail_markup = build_language_detail_menu(lid)
+            await msg_obj.reply_text(
+                f"✅ <b>Display Name Updated to '{raw_text}'!</b>\n\n" + detail_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=detail_markup
+            )
+    elif action == "awaiting_add_phrase":
+        del ADMIN_LANG_STATES[user.id]
+        lid = state.get("lang_id")
+        if lid:
+            lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
+            for line in lines:
+                db_add_phrase(lid, line)
+            asyncio.create_task(sync_data_to_secret_db())
+            detail_text, detail_markup = build_language_detail_menu(lid)
+            await msg_obj.reply_text(
+                f"✅ <b>Custom SMS phrase(s) saved into database!</b>\n\n" + detail_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=detail_markup
+            )
 
 async def seturl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat    = update.effective_chat
@@ -2256,6 +2907,11 @@ async def main():
     application.add_handler(CommandHandler("setlink", setlink_command))
     application.add_handler(CommandHandler("removelink", removelink_command))
     application.add_handler(CallbackQueryHandler(admin_callback_handler))
+
+    application.add_handler(CommandHandler("languages", languages_command))
+    application.add_handler(CommandHandler("lang", languages_command))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_text_input))
+
 
     def start_health_server():
         port_str = os.getenv("PORT")
