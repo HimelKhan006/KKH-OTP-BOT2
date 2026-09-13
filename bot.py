@@ -809,13 +809,15 @@ def extract_country_name(range_str: str) -> str:
 def mask_phone_number(num_str: str) -> str:
     if not num_str:
         return ""
-    clean = str(num_str).strip()
+    clean = str(num_str).strip().lstrip("+")
     length = len(clean)
     if length <= 4:
-        return clean
-    if length <= 6:
-        return clean[:2] + "****" + clean[-2:]
-    return f"{clean[:4]}****{clean[-3:]}"
+        masked = clean
+    elif length <= 6:
+        masked = clean[:2] + "****" + clean[-2:]
+    else:
+        masked = f"{clean[:4]}****{clean[-3:]}"
+    return f"+{masked}"
 
 def extract_otp_code(text: str) -> str:
     if not text:
@@ -981,20 +983,15 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     lang_name, lang_code = detect_sms_language(raw_message)
 
     DIVIDER = "━━━━━━━━━━━━━━━━━━━━"
-    INDENT_NUM = "        "  # 8 spaces for perfect visual centering of flag + number
-    INDENT  = "          "  # 10 spaces
 
-    if otp_code:
-        header = "⚡ <b>NEW OTP SMS RECEIVED</b> ⚡"
-    else:
-        header = "⚡ <b>NEW SMS RECEIVED</b> ⚡"
+    header = "⚡ <b>NEW SMS RECEIVED</b> ⚡"
 
     lines = [header, DIVIDER]
 
     if masked_number:
-        lines.append(f"{INDENT_NUM}{flag} <code>{masked_number}</code>")
+        lines.append(f"• <b>Number:</b> {flag} <code>{masked_number}</code>")
     else:
-        lines.append(f"{INDENT}{flag}")
+        lines.append(f"• <b>Country:</b> {flag} <code>{country_name} ({iso})</code>")
 
     # Check if WhatsApp service - either by source OR message text content
     low_source = source.lower()
@@ -1032,12 +1029,13 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         wa_tag = "OLD" if is_old else "NEW"
 
     if is_wa and wa_tag:
-        lines.append(f"{INDENT}<b>Service:</b> <code>{source}</code> <b>[{wa_tag}]</b>")
+        lines.append(f"• <b>Service:</b> <code>{source}</code> <b>[{wa_tag}]</b>")
     else:
-        lines.append(f"{INDENT}<b>Service:</b> <code>{source}</code>")
+        lines.append(f"• <b>Service:</b> <code>{source}</code>")
 
-    lines.append(f"{INDENT}<b>Country:</b> <code>{country_name} ({iso})</code>")
-    lines.append(f"{INDENT}<b>Language:</b> <code>{lang_name}</code>")
+    if masked_number:
+        lines.append(f"• <b>Country:</b> <code>{country_name} ({iso})</code>")
+    lines.append(f"• <b>Language:</b> <code>{lang_name}</code>")
 
     # Message Content block:
     # In 'long' format (or when no OTP code): display full raw real SMS formatted cleanly in monospace
