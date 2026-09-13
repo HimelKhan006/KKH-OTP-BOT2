@@ -911,21 +911,21 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
     "French": {
         "code": "FR",
         "keywords": {
-            "votre": 3, "vos": 2, "est": 1, "ne": 1, "pas": 1, "partagez": 3,
+            "votre": 3, "vos": 2, "ton": 3, "est": 1, "ne": 1, "pas": 1, "partagez": 3,
             "verification": 2, "confirmation": 2, "mot de passe": 3, "connexion": 3,
-            "pour": 1, "securite": 2, "aucun": 3, "personne": 2, "veuillez": 3,
-            "entrez": 3, "utiliser": 2, "identifiant": 3, "compte": 2, "reinitialisation": 3,
-            "nouveau": 2, "appareil": 2, "ce code": 2
+            "pour": 1, "securite": 3, "aucun": 3, "personne": 2, "veuillez": 3,
+            "entrez": 3, "utiliser": 2, "identifiant": 3, "compte": 2, "ce code": 2,
+            "reinitialisation": 3, "reinitialiser": 3
         }
     },
     "Spanish": {
         "code": "ES",
         "keywords": {
             "tu": 2, "su": 1, "codigo": 2, "verificacion": 2, "para": 1,
-            "no compartas": 4, "compartas": 3, "con nadie": 3, "nadie": 2,
-            "iniciar sesion": 3, "seguridad": 2, "cuenta": 2, "ingresa": 3,
-            "clave": 2, "utiliza": 2, "mensaje": 2, "solicitado": 2,
-            "confirmacion": 2, "dispositivo": 2, "nuevo": 1, "este codigo": 2
+            "no compartas": 4, "compartas": 3, "con nadie": 4, "nadie": 2,
+            "iniciar sesion": 3, "seguridad": 3, "cuenta": 2, "ingresa": 3,
+            "clave": 2, "utiliza": 2, "este codigo": 2, "dispositivo": 2,
+            "restablecer": 3, "confirmacion": 2
         }
     },
     "Portuguese": {
@@ -934,8 +934,8 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
             "seu": 3, "sua": 3, "codigo": 2, "verificacao": 3, "nao": 2,
             "nao compartilhe": 4, "compartilhe": 3, "com ninguem": 4, "ninguem": 3,
             "seguranca": 3, "para entrar": 3, "entrar": 2, "conta": 2, "senha": 3,
-            "utilize": 3, "mensagem": 2, "aparelho": 3, "novo aparelho": 4,
-            "este codigo": 2, "confirmar": 2, "cadastrado": 3
+            "utilize": 3, "aparelho": 3, "este codigo": 2, "cadastrado": 3,
+            "redefinir": 3, "confirmacao": 2
         }
     },
     "German": {
@@ -945,7 +945,7 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
             "bestatigungscode": 4, "sicherheitscode": 4, "verifizierungscode": 4,
             "passwort": 2, "nicht": 2, "weitergeben": 4, "teilen sie": 4,
             "mit niemandem": 4, "niemandem": 3, "konto": 2, "anmeldung": 3,
-            "geben sie": 3, "sicherheit": 2, "gerat": 2
+            "zurucksetzen": 3, "einmalpasswort": 4
         }
     },
     "Italian": {
@@ -953,8 +953,8 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
         "keywords": {
             "il tuo": 3, "tuo": 2, "suo": 2, "codice": 2, "di verifica": 3,
             "non condividere": 4, "condividere": 3, "con nessuno": 4, "nessuno": 3,
-            "sicurezza": 2, "accesso": 2, "per accedere": 3, "conferma": 2,
-            "dispositivo": 2, "questo codice": 3, "password": 1, "segreto": 2
+            "sicurezza": 3, "accesso": 2, "questo codice": 3, "per accedere": 3,
+            "reimpostare": 3, "conferma": 2
         }
     },
     "Turkish": {
@@ -962,7 +962,7 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
         "keywords": {
             "kodunuz": 4, "dogrulama": 3, "kodu": 2, "sifre": 3, "giris": 2,
             "paylasmayin": 4, "kimseyle": 3, "onay": 2, "hesabiniz": 3,
-            "guvenlik": 3, "icin": 2, "cihaz": 2, "adimi": 2, "tek kullanimlik": 4
+            "guvenlik": 3, "icin": 2, "tek kullanimlik": 4, "sifirlama": 3
         }
     },
     "Indonesian": {
@@ -970,16 +970,14 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
         "keywords": {
             "kode": 2, "verifikasi": 2, "anda": 2, "adalah": 2, "jangan": 3,
             "jangan bagikan": 4, "bagikan": 3, "jangan berikan": 4, "berikan": 2,
-            "rahasia": 3, "masuk": 2, "untuk": 2, "keamanan": 3, "akun": 2,
-            "perangkat": 2, "tautan": 2
+            "rahasia": 3, "keamanan": 3, "akun": 2, "masuk ke": 3
         }
     },
-    "Polish": {
-        "code": "PL",
+    "Malay": {
+        "code": "MS",
         "keywords": {
-            "twoj": 3, "kod": 2, "weryfikacyjny": 4, "haslo": 3,
-            "nie udostepniaj": 4, "udostepniaj": 3, "bezpieczenstwa": 3,
-            "konto": 2, "zaloguj": 3, "nikomu": 3, "potwierdzenia": 3
+            "kod": 2, "anda ialah": 3, "ialah": 2, "jangan kongsi": 4,
+            "kongsi": 3, "keselamatan": 3, "akaun": 2, "pengesahan": 3
         }
     },
     "Dutch": {
@@ -987,14 +985,163 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
         "keywords": {
             "uw": 3, "je": 2, "verificatiecode": 4, "beveiligingscode": 4,
             "deel": 2, "deel niet": 4, "niet met": 3, "niemand": 3,
-            "wachtwoord": 3, "bevestig": 3, "inloggen": 3, "toestel": 3
+            "wachtwoord": 3, "bevestig": 3, "inloggen": 3, "bevestigingscode": 4
+        }
+    },
+    "Polish": {
+        "code": "PL",
+        "keywords": {
+            "twoj": 3, "kod": 2, "weryfikacyjny": 4, "haslo": 3,
+            "nie udostepniaj": 4, "udostepniaj": 3, "bezpieczenstwa": 3,
+            "konto": 2, "nikomu": 3, "logowania": 3, "resetowania": 3
+        }
+    },
+    "Romanian": {
+        "code": "RO",
+        "keywords": {
+            "codul": 3, "tau": 3, "este": 1, "nu trimite": 4, "nimanui": 4,
+            "de securitate": 3, "verificare": 3, "pentru": 2, "autentificare": 3
+        }
+    },
+    "Swedish": {
+        "code": "SV",
+        "keywords": {
+            "din": 3, "kod ar": 3, "dela inte": 4, "med nagon": 4, "nagon": 2,
+            "verifieringskod": 4, "sakerhetskod": 4, "inte koden": 3, "engangskod": 4
+        }
+    },
+    "Danish": {
+        "code": "DA",
+        "keywords": {
+            "din": 3, "kode er": 3, "del ikke": 4, "med nogen": 4, "nogen": 2,
+            "bekraeftelseskode": 4, "sikkerhedskode": 4, "engangskode": 4
+        }
+    },
+    "Finnish": {
+        "code": "FI",
+        "keywords": {
+            "koodisi on": 4, "koodisi": 3, "ala jaa": 4, "kenellekaan": 4,
+            "vahvistuskoodi": 4, "tata koodia": 3, "turvakoodi": 4
+        }
+    },
+    "Norwegian": {
+        "code": "NO",
+        "keywords": {
+            "din": 3, "kode er": 3, "ikke del": 4, "koden med noen": 4, "noen": 2,
+            "bekreftelseskode": 4, "sikkerhetskode": 4, "engangskode": 4
+        }
+    },
+    "Czech": {
+        "code": "CS",
+        "keywords": {
+            "vas": 3, "kod je": 3, "nesdilejte": 4, "s nikym": 4, "nikym": 3,
+            "overovaci kod": 4, "bezpecnostni": 3, "tento kod": 3
+        }
+    },
+    "Slovak": {
+        "code": "SK",
+        "keywords": {
+            "vas": 3, "kod je": 3, "nezdielajte": 4, "s nikym": 4,
+            "overovaci kod": 4, "bezpecnostny": 3, "tento kod": 3
+        }
+    },
+    "Hungarian": {
+        "code": "HU",
+        "keywords": {
+            "kodod": 4, "ne oszd meg": 4, "senkivel": 4, "biztonsagi kod": 4,
+            "ellenorzo kod": 4, "megerosito kod": 4
+        }
+    },
+    "Tagalog": {
+        "code": "TL",
+        "keywords": {
+            "ang iyong": 4, "huwag ibahagi": 4, "ibahagi": 3, "sa kaninuman": 4,
+            "para sa": 2, "huwag ipamigay": 4
+        }
+    },
+    "Swahili": {
+        "code": "SW",
+        "keywords": {
+            "nambari yako": 4, "msimbo": 3, "usishiriki": 4, "na mtu": 3,
+            "wa uthibitishaji": 4, "wa usalama": 4
+        }
+    },
+    "Croatian": {
+        "code": "HR",
+        "keywords": {
+            "vas": 3, "kod je": 3, "ne dijelite": 4, "ni sa kim": 4, "nikome": 3,
+            "kod za provjeru": 4, "sigurnosni kod": 4, "potvrdni kod": 4
+        }
+    },
+    "Catalan": {
+        "code": "CA",
+        "keywords": {
+            "el teu": 3, "codi de": 3, "no comparteixis": 4, "amb ningu": 4,
+            "verificacio": 3, "de seguretat": 3
+        }
+    },
+    "Albanian": {
+        "code": "SQ",
+        "keywords": {
+            "kodi juaj": 4, "eshte": 2, "mos e ndani": 4, "me askend": 4,
+            "verifikimit": 4, "sigurise": 3
+        }
+    },
+    "Lithuanian": {
+        "code": "LT",
+        "keywords": {
+            "jusu": 3, "kodas yra": 3, "nesidalinkite": 4, "su niekuo": 4,
+            "patvirtinimo kodas": 4, "saugos kodas": 4
+        }
+    },
+    "Latvian": {
+        "code": "LV",
+        "keywords": {
+            "jusu": 3, "kods ir": 3, "nedalieties": 4, "ar nevienu": 4,
+            "apstiprinajuma kods": 4, "drosibas kods": 4
+        }
+    },
+    "Estonian": {
+        "code": "ET",
+        "keywords": {
+            "teie": 3, "kood on": 3, "arge jagage": 4, "mitte kellegagi": 4,
+            "kinnituskood": 4, "turvakood": 4
+        }
+    },
+    "Slovenian": {
+        "code": "SL",
+        "keywords": {
+            "vasa": 3, "koda je": 3, "ne delite": 4, "z nikomer": 4,
+            "potrditvena koda": 4, "varnostna koda": 4
+        }
+    },
+    "Azerbaijani": {
+        "code": "AZ",
+        "keywords": {
+            "kodunuz": 3, "bu kodu hec kimle": 4, "paylasmayin": 3, "hec kimle": 4,
+            "tesdiq kodu": 4, "tehlukesizlik kodu": 4
+        }
+    },
+    "Uzbek": {
+        "code": "UZ",
+        "keywords": {
+            "kodingiz": 4, "hech kimga": 4, "bermang": 4, "tasdiqlash kodi": 4,
+            "xavfsizlik kodi": 4
+        }
+    },
+    "Afrikaans": {
+        "code": "AF",
+        "keywords": {
+            "jou": 3, "kode is": 3, "moenie": 3, "deel nie": 4, "met enigiemand": 4,
+            "sekuriteitskode": 4, "bevestigingskode": 4
         }
     },
     "Vietnamese": {
         "code": "VI",
         "keywords": {
             "ma": 2, "xac minh": 4, "mat khau": 4, "khong chia se": 4,
-            "chia se": 2, "dang nhap": 3, "tai khoan": 3, "bao mat": 3
+            "chia se": 2, "dang nhap": 3, "tai khoan": 3, "bao mat": 3,
+            "ma otp": 3
         }
     },
     "English": {
@@ -1003,7 +1150,8 @@ LANGUAGE_RULES: Dict[str, Dict[str, Any]] = {
             "your": 2, "code": 1, "is": 1, "verification": 2, "security": 2,
             "do not share": 4, "do not give": 4, "account": 2, "login": 2,
             "password": 2, "confirm": 2, "sign in": 3, "device": 2,
-            "registered": 2, "use": 1, "to verify": 3, "one time": 3
+            "registered": 2, "use": 1, "to verify": 3, "one time": 3,
+            "reset": 2
         }
     }
 }
@@ -1018,37 +1166,111 @@ def detect_sms_language(text: str) -> Tuple[str, str]:
     t = text.strip()
 
     # 1. Non-Latin Native Scripts (Deterministic)
+    # Ethiopic / Amharic
+    if re.search(r"[\u1200-\u137F]", t):
+        return ("Amharic", "AM")
+
+    # Georgian
+    if re.search(r"[\u10A0-\u10FF\u2D00-\u2D2F]", t):
+        return ("Georgian", "KA")
+
+    # Armenian
+    if re.search(r"[\u0530-\u058F]", t):
+        return ("Armenian", "HY")
+
+    # Hebrew
+    if re.search(r"[\u0590-\u05FF]", t):
+        return ("Hebrew", "HE")
+
+    # Arabic script (Arabic, Persian, Urdu)
     if re.search(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]", t):
-        if any(c in t for c in ["گ", "چ", "پ", "ژ"]):
-            return ("Persian", "FA")
-        if any(c in t for c in ["ے", "ٹ", "ڈ", "ڑ"]):
+        if any(c in t for c in ["ے", "ٹ", "ڈ", "ڑ", "ں"]) or "آپ" in t:
             return ("Urdu", "UR")
+        if any(c in t for c in ["گ", "چ", "پ", "ژ"]) or "اینستاگرام" in t:
+            return ("Persian", "FA")
         return ("Arabic", "AR")
 
+    # Bengali / Assamese (check before Devanagari because Indic danda \u0964 is in Devanagari range)
+    if re.search(r"[\u0981-\u09BC\u09BE-\u09CD\u09D7\u09DC-\u09E3\u09F0-\u09FD]", t):
+        return ("Bengali", "BN")
+
+    # Gurmukhi / Punjabi
+    if re.search(r"[\u0A01-\u0A75]", t):
+        return ("Punjabi", "PA")
+
+    # Gujarati
+    if re.search(r"[\u0A81-\u0AF9]", t):
+        return ("Gujarati", "GU")
+
+    # Devanagari (Hindi, Marathi, Nepali) - letters only (exclude punctuation \u0964-\u0965)
+    if re.search(r"[\u0904-\u0939\u093D-\u094F\u0958-\u0963]", t):
+        low_d = t.lower()
+        if "आहे" in low_d or "तुमचा" in low_d:
+            return ("Marathi", "MR")
+        if "हो" in low_d or "तपाईंको" in low_d:
+            return ("Nepali", "NE")
+        return ("Hindi", "HI")
+
+    # Tamil
+    if re.search(r"[\u0B80-\u0BFF]", t):
+        return ("Tamil", "TA")
+
+    # Telugu
+    if re.search(r"[\u0C00-\u0C7F]", t):
+        return ("Telugu", "TE")
+
+    # Kannada
+    if re.search(r"[\u0C80-\u0CFF]", t):
+        return ("Kannada", "KN")
+
+    # Malayalam
+    if re.search(r"[\u0D00-\u0D7F]", t):
+        return ("Malayalam", "ML")
+
+    # Sinhala
+    if re.search(r"[\u0D80-\u0DFF]", t):
+        return ("Sinhala", "SI")
+
+    # Thai
+    if re.search(r"[\u0E00-\u0E7F]", t):
+        return ("Thai", "TH")
+
+    # Lao
+    if re.search(r"[\u0EA0-\u0EFF]", t):
+        return ("Lao", "LO")
+
+    # Khmer
+    if re.search(r"[\u1780-\u17FF]", t):
+        return ("Khmer", "KM")
+
+    # Burmese / Myanmar
+    if re.search(r"[\u1000-\u109F]", t):
+        return ("Burmese", "MY")
+
+    # Greek
+    if re.search(r"[\u0370-\u03FF]", t):
+        return ("Greek", "EL")
+
+    # Cyrillic scripts (Russian, Ukrainian, Bulgarian, Kazakh)
     if re.search(r"[\u0400-\u04FF]", t):
         low_raw = t.lower()
         ukr_chars = ["є", "ї", "ґ", "\u0454", "\u0457", "\u0491"]
-        ukr_words = ["підтвердження", "безпеки", "не діліться", "пароль", "входу", "коду"]
+        ukr_words = ["підтвердження", "безпеки", "не діліться", "входу"]
         if any(c in t for c in ukr_chars) or any(w in low_raw for w in ukr_words):
             return ("Ukrainian", "UK")
+        if "за потвърждение" in low_raw or "вашият" in low_raw or "сигурност" in low_raw:
+            return ("Bulgarian", "BG")
+        if "кодыңыз" in low_raw or "үшін" in low_raw or "растау" in low_raw:
+            return ("Kazakh", "KK")
         return ("Russian", "RU")
 
+    # CJK Scripts
     if re.search(r"[\u3040-\u30FF]", t):
         return ("Japanese", "JA")
-    if re.search(r"[\uAC00-\uD7AF]", t):
+    if re.search(r"[\uAC00-\uD7AF\u1100-\u11FF]", t):
         return ("Korean", "KO")
     if re.search(r"[\u4E00-\u9FFF]", t):
         return ("Chinese", "ZH")
-    if re.search(r"[\u0900-\u097F]", t):
-        return ("Hindi", "HI")
-    if re.search(r"[\u0980-\u09FF]", t):
-        return ("Bengali", "BN")
-    if re.search(r"[\u0590-\u05FF]", t):
-        return ("Hebrew", "HE")
-    if re.search(r"[\u0E00-\u0E7F]", t):
-        return ("Thai", "TH")
-    if re.search(r"[\u0370-\u03FF]", t):
-        return ("Greek", "EL")
 
     # 2. Latin Scripts: Normalized Keyword Scoring with Token Boundaries
     norm = normalize_text_for_lang(t)
@@ -1071,7 +1293,7 @@ def detect_sms_language(text: str) -> Tuple[str, str]:
         elif any(w in norm_words for w in ("tu", "nadie")) or "no compartas" in norm:
             if "Spanish" in scores:
                 best_lang = "Spanish"
-        elif any(w in norm_words for w in ("votre", "vos", "veuillez")) or "ne partagez" in norm:
+        elif any(w in norm_words for w in ("votre", "vos", "veuillez", "ton")) or "ne partagez" in norm:
             if "French" in scores:
                 best_lang = "French"
 
