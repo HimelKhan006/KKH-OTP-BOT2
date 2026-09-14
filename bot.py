@@ -2806,6 +2806,55 @@ async def seturl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
 
+async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to trigger clean zero-restart session handover."""
+    global _is_handover
+    user_id = update.effective_user.id if update.effective_user else 0
+    if not is_user_authorized(user_id):
+        await update.effective_message.reply_text("⛔ Unauthorized access.")
+        return
+
+    msg = await update.effective_message.reply_text(
+        "🔄 <b>Zero-Restart Handover Triggered</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "💾 <i>Flushing SQLite database checkpoint...</i>\n"
+        "☁️ <i>Syncing continuous state to GitHub Gist...</i>\n"
+        "🚀 <i>Triggering clean session handover...</i>",
+        parse_mode=ParseMode.HTML
+    )
+
+    _is_handover = True
+    try:
+        with get_db_connection() as conn:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+    except Exception as e:
+        logger.warning(f"Checkpoint notice: {e}")
+
+    if gist_storage.enabled:
+        try:
+            await gist_storage.save_state(
+                seen_dict=seen_timestamps,
+                is_handover=True,
+                total_forwarded=total_forwarded_count,
+                country_counts=country_forwarded_counts,
+                base_url=client.base_url,
+            )
+        except Exception as e:
+            logger.warning(f"Gist sync notice: {e}")
+
+    try:
+        await msg.edit_text(
+            "✅ <b>Zero-Restart Handover Completed!</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Session saved to Gist. The next runner session will resume silently without downtime.",
+            parse_mode=ParseMode.HTML
+        )
+    except Exception:
+        pass
+
+    logger.info("Admin triggered zero-restart handover. Exiting cleanly (code 0)...")
+    sys.exit(0)
+
 async def send_startup_announcement(application: Application):
     """
     Sends startup notification to Admin private DM only on initial deployment or push.
@@ -2986,6 +3035,8 @@ async def main():
     )
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("status", start_command))
+    application.add_handler(CommandHandler("restart", restart_command))
+    application.add_handler(CommandHandler("reboot", restart_command))
     application.add_handler(CommandHandler("seturl", seturl_command))
     application.add_handler(CommandHandler("toggleformat", toggleformat_command))
     application.add_handler(CommandHandler("format", toggleformat_command))
