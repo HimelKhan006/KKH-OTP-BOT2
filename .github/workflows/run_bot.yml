@@ -113,7 +113,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           THIRDWAVE_API_KEY: ${{ secrets.THIRDWAVE_API_KEY }}
           TELEGRAM_GROUP_CHAT_ID: ${{ secrets.TELEGRAM_GROUP_CHAT_ID }}
-          THIRDWAVE_BASE_URL: ${{ github.event.inputs.custom_base_url || secrets.THIRDWAVE_BASE_URL || 'https://clients.thirdwave.im' }}
+          THIRDWAVE_BASE_URL: ${{ github.event.inputs.custom_base_url || secrets.THIRDWAVE_BASE_URL || 'https://thirdwave.im' }}
         run: |
           echo "🔍 Checking required GitHub Secrets & Config..."
           MISSING=""
@@ -139,10 +139,10 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           THIRDWAVE_API_KEY: ${{ secrets.THIRDWAVE_API_KEY }}
-          THIRDWAVE_BASE_URL: ${{ github.event.inputs.custom_base_url || secrets.THIRDWAVE_BASE_URL || 'https://clients.thirdwave.im' }}
+          THIRDWAVE_BASE_URL: ${{ github.event.inputs.custom_base_url || secrets.THIRDWAVE_BASE_URL || 'https://thirdwave.im' }}
           TELEGRAM_GROUP_CHAT_ID: ${{ secrets.TELEGRAM_GROUP_CHAT_ID }}
           SECONDARY_GROUP_CHAT_ID: ${{ secrets.SECONDARY_GROUP_CHAT_ID }}
-          POLL_INTERVAL_SECONDS: ${{ secrets.POLL_INTERVAL_SECONDS || '2.0' }}
+          POLL_INTERVAL_SECONDS: ${{ secrets.POLL_INTERVAL_SECONDS || '2.5' }}
           ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
           GIST_ID: ${{ secrets.GIST_ID }}
