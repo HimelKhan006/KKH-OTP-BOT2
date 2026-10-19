@@ -96,14 +96,15 @@ load_environment()
 TELEGRAM_BOT_TOKEN    = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 THIRDWAVE_API_KEY     = os.getenv("THIRDWAVE_API_KEY", "").strip()
 
-_raw_base = os.getenv("THIRDWAVE_BASE_URL", "https://thirdwave.im").strip().rstrip("/")
-if "clients.thirdwave.im" in _raw_base:
-    _raw_base = _raw_base.replace("clients.thirdwave.im", "thirdwave.im")
+_raw_base = os.getenv("THIRDWAVE_BASE_URL", "https://clients.thirdwave.im").strip().rstrip("/")
+# Normalise: always use clients.thirdwave.im (the authenticated endpoint)
+if "thirdwave.im" in _raw_base and "clients.thirdwave.im" not in _raw_base:
+    _raw_base = _raw_base.replace("thirdwave.im", "clients.thirdwave.im")
 if _raw_base.endswith("/api/v1/traffic"):
     _raw_base = _raw_base[:-len("/api/v1/traffic")].rstrip("/")
 if _raw_base and not _raw_base.startswith(("http://", "https://")):
     _raw_base = f"https://{_raw_base}"
-THIRDWAVE_BASE_URL    = _raw_base or "https://thirdwave.im"
+THIRDWAVE_BASE_URL    = _raw_base or "https://clients.thirdwave.im"
 
 TELEGRAM_GROUP_CHAT_ID = os.getenv("TELEGRAM_GROUP_CHAT_ID", "").strip()
 SECONDARY_GROUP_CHAT_ID = os.getenv("SECONDARY_GROUP_CHAT_ID", os.getenv("TELEGRAM_SECONDARY_GROUP_CHAT_ID", "")).strip()
@@ -371,6 +372,7 @@ class GistStorage:
                 "seen": cleaned,
                 "handover": is_handover,
                 "handover_epoch": datetime.now(timezone.utc).timestamp() if is_handover else 0.0,
+                "last_active_epoch": datetime.now(timezone.utc).timestamp(),
                 "total_forwarded": total_forwarded,
                 "country_counts": country_counts or {},
                 "base_url": base_url or "",
@@ -506,11 +508,11 @@ def cleanup_old_messages(max_age_days: int = 7):
 # ==========================================
 class ThirdwaveClient:
     """
-    Client for Thirdwave SMS API (GET https://thirdwave.im/api/v1/traffic)
-    - Authentication: Pass key in api_key query param (Headers are NOT accepted)
-    - Limit: 1 to 100 messages (default 20, we use 100)
+    Client for Thirdwave SMS API (GET https://clients.thirdwave.im/api/v1/traffic)
+    - Authentication: Authorization: Bearer <api_key> header (NOT query param)
+    - Pagination: pageSize param (1-100, default 20, we use 100)
     - Rate limit: 30 requests per minute per key (respects Retry-After on HTTP 429)
-    - Response structure: {"items": [{"received_at", "sender_id", "range_name", "range_template", "number", "sms", "rate"}]}
+    - Response structure: {"rows": [{"received_at", "sender_id", "range_name", "range_template", "number", "sms", "rate"}], "total": N, "page": 1, "pageSize": N}
     """
     def __init__(self, base_url: str, api_key: str, timeout: float = 20.0):
         self.base_url = self.clean_base_url(base_url)
@@ -522,13 +524,14 @@ class ThirdwaveClient:
     @staticmethod
     def clean_base_url(url: str) -> str:
         clean = (url or "").strip().rstrip("/")
-        if "clients.thirdwave.im" in clean:
-            clean = clean.replace("clients.thirdwave.im", "thirdwave.im")
+        # Always normalise to clients.thirdwave.im (the authenticated endpoint)
+        if "thirdwave.im" in clean and "clients.thirdwave.im" not in clean:
+            clean = clean.replace("thirdwave.im", "clients.thirdwave.im")
         if clean.endswith("/api/v1/traffic"):
             clean = clean[:-len("/api/v1/traffic")].rstrip("/")
         if clean and not clean.startswith(("http://", "https://")):
             clean = f"https://{clean}"
-        return clean or "https://thirdwave.im"
+        return clean or "https://clients.thirdwave.im"
 
     def _get_http_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -538,6 +541,7 @@ class ThirdwaveClient:
                 headers={
                     "Accept": "application/json",
                     "User-Agent": "ThirdwaveOTP/2.0",
+                    "Authorization": f"Bearer {self.api_key}",
                 },
             )
         return self._client
@@ -549,7 +553,7 @@ class ThirdwaveClient:
 
     def update_api_key(self, new_key: str) -> str:
         self.api_key = new_key.strip()
-        self._client = None
+        self._client = None  # Force recreation with updated Authorization header
         return self.api_key
 
     async def fetch_incoming_messages(self, limit: int = 100) -> List[Dict[str, Any]]:
@@ -565,8 +569,7 @@ class ThirdwaveClient:
 
         endpoint = f"{self.base_url}/api/v1/traffic"
         params = {
-            "api_key": self.api_key,
-            "limit": min(max(1, limit), 100),
+            "pageSize": min(max(1, limit), 100),
         }
 
         try:
@@ -1311,13 +1314,35 @@ async def poll_incoming_messages(application: Application):
     except Exception as e:
         logger.warning(f"Preload error: {e}")
 
-    # 3. Startup pass: baseline history or catch handover transition gap OTPs
+    # 3. Startup pass: forward missed OTPs from the downtime gap, baseline the rest
     try:
         initial_msgs = await client.fetch_incoming_messages()
         dest_ids = _get_otp_dest_ids()
         baselined = 0
-        forwarded_handover_gap = 0
+        forwarded_missed = 0
         now_ts = datetime.now(timezone.utc).timestamp()
+
+        # Determine the epoch of the bot's last known active moment
+        # (used to detect OTPs that arrived while the bot was offline)
+        last_active_epoch: float = 0.0
+        if gist_storage.enabled:
+            _gs = await gist_storage.load_state()
+            last_active_epoch = float(_gs.get("last_active_epoch") or 0.0)
+
+        # Fallback: if no epoch stored, use a 30-minute lookback window
+        MISSED_OTP_LOOKBACK_SECS   = 1800  # 30 minutes  — how far back to look for missed OTPs
+        MISSED_OTP_FORWARD_MAX_AGE = 900   # 15 minutes  — only forward if received within this window
+        if last_active_epoch <= 0:
+            last_active_epoch = now_ts - MISSED_OTP_LOOKBACK_SECS
+
+        downtime_secs = now_ts - last_active_epoch
+        logger.info(
+            f"🔍 Startup pass: bot was offline ~{int(downtime_secs / 60)} min. "
+            f"Missed OTPs within {MISSED_OTP_FORWARD_MAX_AGE // 60} min will be forwarded to group; "
+            f"older ones saved to DB only."
+        )
+
+        db_only_count   = 0  # old missed OTPs saved to DB but NOT forwarded to group
 
         for item in reversed(initial_msgs):  # oldest first
             mid = str(item.get("id") or "").strip()
@@ -1326,21 +1351,64 @@ async def poll_incoming_messages(application: Application):
             if is_message_seen(mid):
                 continue
 
-            # If this is a handover continuation, forward any OTP received during the runner switch gap!
-            if _is_handover and _handover_epoch > 0:
-                msg_ts = parse_message_timestamp(str(item.get("received_at") or item.get("receivedAt") or item.get("messageTime") or item.get("createdAt") or ""))
-                if ((msg_ts > 0 and msg_ts >= (_handover_epoch - 60.0)) or (now_ts - msg_ts < 300.0 and msg_ts > 0)):
-                    if dest_ids:
-                        ok = await _deliver_item(application.bot, item, dest_ids)
-                        if ok:
-                            total_forwarded_count += 1
-                            forwarded_handover_gap += 1
-                            seen_message_ids.add(mid)
-                            seen_timestamps[mid] = now_ts
-                            _gist_dirty = True
-                            continue
+            msg_ts = parse_message_timestamp(
+                str(item.get("received_at") or item.get("receivedAt") or
+                    item.get("messageTime") or item.get("createdAt") or "")
+            )
 
-            # Otherwise, baseline historical message without forwarding
+            # Message arrived while bot was offline (after last_active_epoch)
+            if msg_ts > 0 and msg_ts >= last_active_epoch:
+
+                # ── DUPLICATE GUARD: check DB before any action ────────────────
+                try:
+                    with get_db_connection() as _conn:
+                        _cur = _conn.execute(
+                            "SELECT 1 FROM processed_otps WHERE id = ? LIMIT 1;", (mid,)
+                        )
+                        if _cur.fetchone() is not None:
+                            seen_message_ids.add(mid)
+                            logger.info(f"⏭️ Missed OTP {mid} already in DB — skipping duplicate.")
+                            continue
+                except Exception as _db_err:
+                    logger.warning(f"DB duplicate check error for {mid}: {_db_err}")
+                # ── END DUPLICATE GUARD ────────────────────────────────────────
+
+                otp_age_secs = now_ts - msg_ts  # how old is this missed OTP right now
+
+                if otp_age_secs <= MISSED_OTP_FORWARD_MAX_AGE and dest_ids:
+                    # ✅ RECENT missed OTP → forward to group
+                    ok = await _deliver_item(application.bot, item, dest_ids)
+                    if ok:
+                        total_forwarded_count += 1
+                        forwarded_missed += 1
+                        seen_message_ids.add(mid)
+                        seen_timestamps[mid] = now_ts
+                        _gist_dirty = True
+                        logger.info(
+                            f"📬 Missed OTP forwarded to group "
+                            f"(ID: {mid}, age: {int(otp_age_secs)}s)"
+                        )
+                        continue
+                else:
+                    # ⏳ TOO OLD → save to DB silently, do NOT send to group
+                    country = extract_country_name(str(item.get("range_name") or item.get("rangeName") or item.get("destinationName") or ""))
+                    raw_num = str(item.get("number") or item.get("destinationNumber") or item.get("range_template") or item.get("rangeTemplate") or item.get("dst") or "")
+                    num     = mask_phone_number(raw_num)
+                    raw_msg = str(item.get("sms") or item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "")
+                    otp     = extract_otp_code(raw_msg)
+                    gid     = get_linked_group_chat_id()
+                    save_processed_message(item, gid or 0, country, num, otp)
+                    seen_message_ids.add(mid)
+                    seen_timestamps[mid] = now_ts
+                    _gist_dirty = True
+                    db_only_count += 1
+                    logger.info(
+                        f"🗄️ Old missed OTP saved to DB only — NOT forwarded "
+                        f"(ID: {mid}, age: {int(otp_age_secs // 60)}m {int(otp_age_secs % 60)}s)"
+                    )
+                    continue
+
+            # Historical message (before bot went offline) — baseline without forwarding
             seen_message_ids.add(mid)
             seen_timestamps[mid] = bot_start_time
             country = extract_country_name(str(item.get("range_name") or item.get("rangeName") or item.get("destinationName") or ""))
@@ -1352,9 +1420,13 @@ async def poll_incoming_messages(application: Application):
             save_processed_message(item, gid or 0, country, num, otp)
             baselined += 1
 
-        if forwarded_handover_gap > 0:
-            logger.info(f"⚡ Zero-Downtime Handover: Delivered {forwarded_handover_gap} OTP(s) received during runner switch gap!")
-        if baselined > 0 and gist_storage.enabled:
+        if forwarded_missed > 0:
+            logger.info(f"📬 Startup recovery: {forwarded_missed} recent missed OTP(s) forwarded to group.")
+        if db_only_count > 0:
+            logger.info(f"🗄️ Startup recovery: {db_only_count} old missed OTP(s) saved to DB only (too old to forward).")
+        if baselined > 0:
+            logger.info(f"📋 Startup pass: {baselined} historical message(s) baselined.")
+        if (baselined > 0 or forwarded_missed > 0 or db_only_count > 0) and gist_storage.enabled:
             await gist_storage.save_state(
                 seen_dict=seen_timestamps,
                 is_handover=False,
@@ -1362,7 +1434,10 @@ async def poll_incoming_messages(application: Application):
                 country_counts=country_forwarded_counts,
                 base_url=client.base_url,
             )
-        logger.info(f"✅ Startup pass complete: {baselined} historical messages baselined (0 old messages forwarded).")
+        logger.info(
+            f"✅ Startup complete: {forwarded_missed} forwarded to group, "
+            f"{db_only_count} saved to DB only, {baselined} historical baselined."
+        )
     except Exception as e:
         logger.warning(f"Startup pass error: {e}")
 
