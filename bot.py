@@ -96,15 +96,12 @@ load_environment()
 TELEGRAM_BOT_TOKEN    = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 THIRDWAVE_API_KEY     = os.getenv("THIRDWAVE_API_KEY", "").strip()
 
-_raw_base = os.getenv("THIRDWAVE_BASE_URL", "https://clients.thirdwave.im").strip().rstrip("/")
-# Normalise: always use clients.thirdwave.im (the authenticated endpoint)
-if "thirdwave.im" in _raw_base and "clients.thirdwave.im" not in _raw_base:
-    _raw_base = _raw_base.replace("thirdwave.im", "clients.thirdwave.im")
+_raw_base = os.getenv("THIRDWAVE_BASE_URL", "https://thirdwave.im").strip().rstrip("/")
 if _raw_base.endswith("/api/v1/traffic"):
     _raw_base = _raw_base[:-len("/api/v1/traffic")].rstrip("/")
 if _raw_base and not _raw_base.startswith(("http://", "https://")):
     _raw_base = f"https://{_raw_base}"
-THIRDWAVE_BASE_URL    = _raw_base or "https://clients.thirdwave.im"
+THIRDWAVE_BASE_URL    = _raw_base or "https://thirdwave.im"
 
 TELEGRAM_GROUP_CHAT_ID = os.getenv("TELEGRAM_GROUP_CHAT_ID", "").strip()
 SECONDARY_GROUP_CHAT_ID = os.getenv("SECONDARY_GROUP_CHAT_ID", os.getenv("TELEGRAM_SECONDARY_GROUP_CHAT_ID", "")).strip()
@@ -1159,20 +1156,14 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
 # 11. Telegram Bot Engine & Polling Loop
 # ==========================================
 def get_effective_base_url() -> str:
-    data = load_stored_data()
-    stored = data.get("thirdwave_base_url") or data.get("base_url")
-    if stored and str(stored).strip():
-        raw = str(stored).strip()
-    else:
-        raw = THIRDWAVE_BASE_URL
+    # Always prioritize environment variable / GitHub Secret
+    raw = os.getenv("THIRDWAVE_BASE_URL", "").strip() or THIRDWAVE_BASE_URL or "https://thirdwave.im"
     return ThirdwaveClient.clean_base_url(raw)
 
 def get_effective_api_key() -> str:
-    data = load_stored_data()
-    stored = data.get("thirdwave_api_key")
-    if stored and str(stored).strip():
-        return str(stored).strip()
-    return THIRDWAVE_API_KEY
+    # Always prioritize environment variable / GitHub Secret
+    raw = os.getenv("THIRDWAVE_API_KEY", "").strip() or THIRDWAVE_API_KEY
+    return raw.strip()
 
 total_forwarded_count: int = 0
 country_forwarded_counts: Dict[str, int] = {}  # tracks per-country OTP count (ISO display string -> count)
@@ -1436,19 +1427,22 @@ async def poll_incoming_messages(application: Application):
             if isinstance(saved_countries, dict):
                 for c_iso, c_cnt in saved_countries.items():
                     country_forwarded_counts[c_iso] = max(country_forwarded_counts.get(c_iso, 0), int(c_cnt))
-            saved_base = gist_state.get("base_url")
-            if saved_base and saved_base != client.base_url:
-                client.update_base_url(saved_base)
+            # Note: Base URL & API Key are strictly controlled by environment/secrets
+            # (Do NOT let old Gist state overwrite the user's secret configuration)
 
             logger.info(
                 f"🔄 Zero-Restart Handover Active: {len(gist_seen)} messages restored, "
                 f"{total_forwarded_count} forwarded previously, last epoch {_handover_epoch:.0f}."
             )
 
-        # Restore bot configuration settings secretly from cloud database
+        # Restore bot configuration settings secretly from cloud database (excluding secrets)
         saved_bot_data = gist_state.get("bot_data")
         if isinstance(saved_bot_data, dict) and saved_bot_data:
+            saved_bot_data.pop("thirdwave_base_url", None)
+            saved_bot_data.pop("base_url", None)
             local_data = load_stored_data()
+            local_data.pop("thirdwave_base_url", None)
+            local_data.pop("base_url", None)
             local_data.update(saved_bot_data)
             save_stored_data(local_data)
             custom_name = local_data.get("bot_name")
