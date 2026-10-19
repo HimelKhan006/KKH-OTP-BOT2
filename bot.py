@@ -508,11 +508,12 @@ def cleanup_old_messages(max_age_days: int = 7):
 # ==========================================
 class ThirdwaveClient:
     """
-    Client for Thirdwave SMS API (GET https://clients.thirdwave.im/api/v1/traffic)
-    - Authentication: Authorization: Bearer <api_key> header (NOT query param)
-    - Pagination: pageSize param (1-100, default 20, we use 100)
+    Client for Thirdwave SMS API (GET https://thirdwave.im/api/v1/traffic)
+    - Documentation: https://thirdwave.im/api/v1/traffic
+    - Authentication: api_key parameter in query string (headers are NOT accepted)
+    - Parameters: limit (1 to 100, default 20, safe max 60)
     - Rate limit: 30 requests per minute per key (respects Retry-After on HTTP 429)
-    - Response structure: {"rows": [{"received_at", "sender_id", "range_name", "range_template", "number", "sms", "rate"}], "total": N, "page": 1, "pageSize": N}
+    - Response structure: {"items": [{"received_at", "sender_id", "range_name", "range_template", "number", "sms", "rate"}]}
     """
     def __init__(self, base_url: str, api_key: str, timeout: float = 20.0):
         self.base_url = self.clean_base_url(base_url)
@@ -524,14 +525,11 @@ class ThirdwaveClient:
     @staticmethod
     def clean_base_url(url: str) -> str:
         clean = (url or "").strip().rstrip("/")
-        # Always normalise to clients.thirdwave.im (the authenticated endpoint)
-        if "thirdwave.im" in clean and "clients.thirdwave.im" not in clean:
-            clean = clean.replace("thirdwave.im", "clients.thirdwave.im")
         if clean.endswith("/api/v1/traffic"):
             clean = clean[:-len("/api/v1/traffic")].rstrip("/")
         if clean and not clean.startswith(("http://", "https://")):
             clean = f"https://{clean}"
-        return clean or "https://clients.thirdwave.im"
+        return clean or "https://thirdwave.im"
 
     def _get_http_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -541,7 +539,6 @@ class ThirdwaveClient:
                 headers={
                     "Accept": "application/json",
                     "User-Agent": "ThirdwaveOTP/2.0",
-                    "Authorization": f"Bearer {self.api_key}",
                 },
             )
         return self._client
@@ -553,29 +550,29 @@ class ThirdwaveClient:
 
     def update_api_key(self, new_key: str) -> str:
         self.api_key = new_key.strip()
-        self._client = None  # Force recreation with updated Authorization header
+        self._client = None
         return self.api_key
 
-    async def fetch_traffic_page(self, page: int = 1, page_size: int = 100) -> Tuple[List[Dict[str, Any]], int]:
+    async def fetch_incoming_messages(self, limit: int = 50) -> List[Dict[str, Any]]:
         """
-        Fetch a single page of traffic ledger from Thirdwave API.
-        Returns (items, total_count).
-        Strictly respects 30 req/min rate limit and handles 429 Retry-After.
+        Fetch most recent incoming messages from Thirdwave API.
+        Respects the 30 req/min rate limit and query param api_key authentication.
         """
         now = time.time()
         if now < self.cooldown_until:
             wait_rem = self.cooldown_until - now
             logger.info(f"⏳ Thirdwave API cooldown active ({wait_rem:.1f}s remaining)...")
-            return [], 0
+            return []
 
         if not self.api_key:
             logger.warning("⚠️ Thirdwave API key is not configured.")
-            return [], 0
+            return []
 
         endpoint = f"{self.base_url}/api/v1/traffic"
+        safe_limit = min(max(1, limit), 60)
         params = {
-            "page": max(1, page),
-            "pageSize": min(max(1, page_size), 100),
+            "api_key": self.api_key,
+            "limit": safe_limit,
         }
 
         try:
@@ -585,13 +582,10 @@ class ThirdwaveClient:
             if res.is_success:
                 data = res.json()
                 raw_items = []
-                total_count = 0
                 if isinstance(data, dict):
                     raw_items = data.get("items") or data.get("rows") or []
-                    total_count = int(data.get("total") or len(raw_items))
                 elif isinstance(data, list):
                     raw_items = data
-                    total_count = len(raw_items)
 
                 seen = set()
                 out: List[Dict[str, Any]] = []
@@ -600,7 +594,7 @@ class ThirdwaveClient:
                     if not isinstance(r, dict):
                         continue
 
-                    # Extract fields from system
+                    # Extract fields according to Thirdwave specs
                     item_num = str(r.get("number") or r.get("destinationNumber") or "").strip()
                     item_sender = str(r.get("sender_id") or r.get("sourceAddress") or r.get("source") or r.get("caller") or r.get("sender") or "").strip()
                     item_sms = str(r.get("sms") or r.get("messageBody") or r.get("message") or r.get("text") or r.get("body") or r.get("otp") or "").strip()
@@ -619,7 +613,6 @@ class ThirdwaveClient:
                         continue
                     seen.add(mid)
 
-                    # Normalize all keys in the dictionary for backwards and forwards compatibility
                     item_dict = dict(r)
                     item_dict["id"] = mid
                     item_dict["number"] = item_num
@@ -641,7 +634,7 @@ class ThirdwaveClient:
 
                     out.append(item_dict)
 
-                return out, total_count
+                return out
 
             elif res.status_code == 429:
                 retry_header = res.headers.get("Retry-After", "")
@@ -651,26 +644,26 @@ class ThirdwaveClient:
                     retry_wait = 20.0
                 self.cooldown_until = time.time() + retry_wait
                 logger.warning(f"⚠️ Thirdwave 429 Rate Limit Exceeded. Waiting {retry_wait:.1f}s (Retry-After)...")
-                return [], 0
+                return []
 
             elif res.status_code in (401, 403):
                 err_code, err_msg = self._extract_error(res)
                 logger.warning(f"❌ Thirdwave Auth Error (HTTP {res.status_code} - {err_code}): {err_msg}")
-                return [], 0
+                return []
 
             elif res.status_code == 400:
                 err_code, err_msg = self._extract_error(res)
                 logger.warning(f"⚠️ Thirdwave Parameter Error (HTTP 400 - {err_code}): {err_msg}")
-                return [], 0
+                return []
 
             elif res.status_code == 503:
                 self.cooldown_until = time.time() + 5.0
                 logger.warning("⚠️ Thirdwave API temporarily unavailable (HTTP 503). Retrying in 5s...")
-                return [], 0
+                return []
 
             else:
                 logger.warning(f"⚠️ Thirdwave API returned HTTP {res.status_code}: {res.text[:120]}")
-                return [], 0
+                return []
 
         except httpx.ConnectTimeout:
             logger.warning("⚠️ Thirdwave API connection timed out. Retrying in next polling cycle...")
@@ -679,11 +672,12 @@ class ThirdwaveClient:
         except Exception as e:
             logger.warning(f"⚠️ Thirdwave API fetch error: {e}")
 
-        return [], 0
+        return []
 
-    async def fetch_incoming_messages(self, limit: int = 100, page: int = 1) -> List[Dict[str, Any]]:
-        items, _ = await self.fetch_traffic_page(page=page, page_size=limit)
-        return items
+    async def fetch_traffic_page(self, page: int = 1, page_size: int = 50) -> Tuple[List[Dict[str, Any]], int]:
+        # Backward-compatibility alias
+        items = await self.fetch_incoming_messages(limit=page_size)
+        return items, len(items)
 
     @staticmethod
     def _extract_error(res: httpx.Response) -> Tuple[str, str]:
@@ -1309,60 +1303,10 @@ async def run_startup_reconciliation(
     logger.info("   • Stale Storage Policy:  > 15 minutes (saved to SQLite database ONLY)")
     logger.info("=" * 70)
 
-    all_api_messages: List[Dict[str, Any]] = []
-    seen_mids_in_scan: Set[str] = set()
-    pages_queried = 0
-
-    # ── STEP 1: Fully query API ledger across all available pages ─────────────
-    for page in range(1, MAX_AUDIT_PAGES + 1):
-        pages_queried += 1
-        logger.info(f"📡 [API Scan] Querying page {page}/{MAX_AUDIT_PAGES} (pageSize={PAGE_SIZE})...")
-
-        items, total_count = await client.fetch_traffic_page(page=page, page_size=PAGE_SIZE)
-        if not items:
-            logger.info(f"ℹ️ [API Scan] Page {page} returned no messages or reached end of feed.")
-            break
-
-        new_on_page = 0
-        all_on_page_already_known = True
-
-        for item in items:
-            mid = str(item.get("id") or "").strip()
-            if not mid:
-                continue
-            if mid not in seen_mids_in_scan:
-                seen_mids_in_scan.add(mid)
-                all_api_messages.append(item)
-                new_on_page += 1
-
-            if all_on_page_already_known:
-                if not is_message_seen(mid):
-                    all_on_page_already_known = False
-
-        logger.info(
-            f"📥 [API Scan] Page {page}: {len(items)} messages received "
-            f"(API Total: {total_count}, Cumulative: {len(all_api_messages)})."
-        )
-
-        # Stop if reached total count reported by API
-        if total_count > 0 and len(all_api_messages) >= total_count:
-            logger.info("🏁 [API Scan] Reached total message count reported by API.")
-            break
-
-        # Stop if page has fewer items than PAGE_SIZE (last page)
-        if len(items) < PAGE_SIZE:
-            logger.info("🏁 [API Scan] Last page reached (returned items < pageSize).")
-            break
-
-        # Early stop if entire page is already in DB and we have at least 20 items
-        if all_on_page_already_known and len(items) >= 20:
-            logger.info("🏁 [API Scan] All messages on this page already exist in DB. Stopping further page scans.")
-            break
-
-        # Rate Limit Guard: wait 2.1s before requesting next page (guarantees < 30 req/min)
-        if page < MAX_AUDIT_PAGES:
-            logger.info(f"⏳ Respecting API rate limit (30 req/min): pausing {API_RATE_LIMIT_DELAY}s...")
-            await asyncio.sleep(API_RATE_LIMIT_DELAY)
+    # ── STEP 1: Query recent traffic feed from Thirdwave API ───────────────────
+    logger.info("📡 [API Scan] Fetching recent traffic ledger from Thirdwave API (limit=60)...")
+    all_api_messages = await client.fetch_incoming_messages(limit=60)
+    logger.info(f"📥 [API Scan] Retrieved {len(all_api_messages)} recent messages from Thirdwave API.")
 
     # ── STEP 2: Cross-reference with database & sort chronologically ───────────
     def _extract_ts(m: Dict[str, Any]) -> float:
@@ -1441,7 +1385,6 @@ async def run_startup_reconciliation(
     logger.info("=" * 70)
     logger.info("📊 STARTUP RECONCILIATION AUDIT REPORT")
     logger.info("=" * 70)
-    logger.info(f"  • API Pages Scanned:       {pages_queried} (Rate limit safe)")
     logger.info(f"  • Total SMS on API Feed:   {len(all_api_messages)}")
     logger.info(f"  • Already In Database:     {already_in_db_count} (Skipped, duplicate guard)")
     logger.info(f"  • Fresh Missed Forwarded:  {fresh_forwarded_count} (Delivered to group)")
@@ -1461,7 +1404,6 @@ async def run_startup_reconciliation(
             logger.warning(f"Gist save error after reconciliation: {ge}")
 
     return {
-        "pages": pages_queried,
         "total_api": len(all_api_messages),
         "already_in_db": already_in_db_count,
         "forwarded": fresh_forwarded_count,
