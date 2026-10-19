@@ -556,20 +556,26 @@ class ThirdwaveClient:
         self._client = None  # Force recreation with updated Authorization header
         return self.api_key
 
-    async def fetch_incoming_messages(self, limit: int = 100) -> List[Dict[str, Any]]:
+    async def fetch_traffic_page(self, page: int = 1, page_size: int = 100) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Fetch a single page of traffic ledger from Thirdwave API.
+        Returns (items, total_count).
+        Strictly respects 30 req/min rate limit and handles 429 Retry-After.
+        """
         now = time.time()
         if now < self.cooldown_until:
             wait_rem = self.cooldown_until - now
             logger.info(f"⏳ Thirdwave API cooldown active ({wait_rem:.1f}s remaining)...")
-            return []
+            return [], 0
 
         if not self.api_key:
             logger.warning("⚠️ Thirdwave API key is not configured.")
-            return []
+            return [], 0
 
         endpoint = f"{self.base_url}/api/v1/traffic"
         params = {
-            "pageSize": min(max(1, limit), 100),
+            "page": max(1, page),
+            "pageSize": min(max(1, page_size), 100),
         }
 
         try:
@@ -579,10 +585,13 @@ class ThirdwaveClient:
             if res.is_success:
                 data = res.json()
                 raw_items = []
+                total_count = 0
                 if isinstance(data, dict):
                     raw_items = data.get("items") or data.get("rows") or []
+                    total_count = int(data.get("total") or len(raw_items))
                 elif isinstance(data, list):
                     raw_items = data
+                    total_count = len(raw_items)
 
                 seen = set()
                 out: List[Dict[str, Any]] = []
@@ -591,7 +600,7 @@ class ThirdwaveClient:
                     if not isinstance(r, dict):
                         continue
 
-                    # Extract fields from new system
+                    # Extract fields from system
                     item_num = str(r.get("number") or r.get("destinationNumber") or "").strip()
                     item_sender = str(r.get("sender_id") or r.get("sourceAddress") or r.get("source") or r.get("caller") or r.get("sender") or "").strip()
                     item_sms = str(r.get("sms") or r.get("messageBody") or r.get("message") or r.get("text") or r.get("body") or r.get("otp") or "").strip()
@@ -632,7 +641,7 @@ class ThirdwaveClient:
 
                     out.append(item_dict)
 
-                return out
+                return out, total_count
 
             elif res.status_code == 429:
                 retry_header = res.headers.get("Retry-After", "")
@@ -642,21 +651,26 @@ class ThirdwaveClient:
                     retry_wait = 20.0
                 self.cooldown_until = time.time() + retry_wait
                 logger.warning(f"⚠️ Thirdwave 429 Rate Limit Exceeded. Waiting {retry_wait:.1f}s (Retry-After)...")
+                return [], 0
 
             elif res.status_code in (401, 403):
                 err_code, err_msg = self._extract_error(res)
                 logger.warning(f"❌ Thirdwave Auth Error (HTTP {res.status_code} - {err_code}): {err_msg}")
+                return [], 0
 
             elif res.status_code == 400:
                 err_code, err_msg = self._extract_error(res)
                 logger.warning(f"⚠️ Thirdwave Parameter Error (HTTP 400 - {err_code}): {err_msg}")
+                return [], 0
 
             elif res.status_code == 503:
                 self.cooldown_until = time.time() + 5.0
                 logger.warning("⚠️ Thirdwave API temporarily unavailable (HTTP 503). Retrying in 5s...")
+                return [], 0
 
             else:
                 logger.warning(f"⚠️ Thirdwave API returned HTTP {res.status_code}: {res.text[:120]}")
+                return [], 0
 
         except httpx.ConnectTimeout:
             logger.warning("⚠️ Thirdwave API connection timed out. Retrying in next polling cycle...")
@@ -665,7 +679,11 @@ class ThirdwaveClient:
         except Exception as e:
             logger.warning(f"⚠️ Thirdwave API fetch error: {e}")
 
-        return []
+        return [], 0
+
+    async def fetch_incoming_messages(self, limit: int = 100, page: int = 1) -> List[Dict[str, Any]]:
+        items, _ = await self.fetch_traffic_page(page=page, page_size=limit)
+        return items
 
     @staticmethod
     def _extract_error(res: httpx.Response) -> Tuple[str, str]:
@@ -1009,13 +1027,25 @@ def parse_message_timestamp(time_str: str) -> float:
         return 0.0
     clean = str(time_str).strip()
     try:
+        # Numeric epoch string (seconds or milliseconds)
+        if clean.replace(".", "", 1).isdigit():
+            val = float(clean)
+            return (val / 1000.0) if val > 1e11 else val
         if "T" in clean:
             clean_iso = clean.replace("Z", "+00:00")
             dt = datetime.fromisoformat(clean_iso)
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
             return dt.timestamp()
-        dt = datetime.strptime(clean[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d"):
+            try:
+                dt = datetime.strptime(clean[:19], fmt[:len(clean[:19])]).replace(tzinfo=timezone.utc)
+                return dt.timestamp()
+            except ValueError:
+                continue
+        dt = datetime.fromisoformat(clean)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
         return dt.timestamp()
     except Exception:
         return 0.0
@@ -1243,6 +1273,201 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
 
     return sent_to_any
 
+async def run_startup_reconciliation(
+    client: ThirdwaveClient,
+    application: Application,
+    dest_ids: List[int],
+    gist_storage: Any,
+    seen_message_ids: Set[str],
+    seen_timestamps: Dict[str, float],
+    bot_start_time: float,
+) -> Dict[str, int]:
+    """
+    Professional Startup Reconciliation Engine:
+    - Scans the Thirdwave API traffic ledger across all available pages.
+    - Strictly obeys the Thirdwave API rate limit of 30 req/min (2.1s delay between page fetches).
+    - Checks SQLite database for EVERY message:
+        * If already in DB -> SKIPPED (duplicate guard, never sent again).
+        * If NOT in DB:
+            - Fresh/Recent (<= 15 min): FORWARDED to Telegram group and recorded in DB.
+            - Very Old (> 15 min): STORED in SQLite DB only, NEVER forwarded to group (prevents spam).
+    - Logs a detailed, enterprise-grade audit report on completion.
+    """
+    global total_forwarded_count, _gist_dirty
+    now_ts = datetime.now(timezone.utc).timestamp()
+
+    # Configuration constants
+    MISSED_OTP_FORWARD_MAX_AGE = 900   # 15 minutes window: forward fresh missed OTPs to Telegram group
+    API_RATE_LIMIT_DELAY       = 2.1   # Seconds between API page calls (strictly respects 30 req/min limit)
+    MAX_AUDIT_PAGES            = 10    # Safety cap: scan up to 10 pages (1,000 SMS)
+    PAGE_SIZE                  = 100
+
+    logger.info("=" * 70)
+    logger.info("🔄 INITIATING PROFESSIONAL STARTUP RECONCILIATION")
+    logger.info("   • Rate Limit Protection: 30 req/min (2.1s inter-page throttling)")
+    logger.info("   • Fresh Forward Window:  ≤ 15 minutes (sent to Telegram group)")
+    logger.info("   • Stale Storage Policy:  > 15 minutes (saved to SQLite database ONLY)")
+    logger.info("=" * 70)
+
+    all_api_messages: List[Dict[str, Any]] = []
+    seen_mids_in_scan: Set[str] = set()
+    pages_queried = 0
+
+    # ── STEP 1: Fully query API ledger across all available pages ─────────────
+    for page in range(1, MAX_AUDIT_PAGES + 1):
+        pages_queried += 1
+        logger.info(f"📡 [API Scan] Querying page {page}/{MAX_AUDIT_PAGES} (pageSize={PAGE_SIZE})...")
+
+        items, total_count = await client.fetch_traffic_page(page=page, page_size=PAGE_SIZE)
+        if not items:
+            logger.info(f"ℹ️ [API Scan] Page {page} returned no messages or reached end of feed.")
+            break
+
+        new_on_page = 0
+        all_on_page_already_known = True
+
+        for item in items:
+            mid = str(item.get("id") or "").strip()
+            if not mid:
+                continue
+            if mid not in seen_mids_in_scan:
+                seen_mids_in_scan.add(mid)
+                all_api_messages.append(item)
+                new_on_page += 1
+
+            if all_on_page_already_known:
+                if not is_message_seen(mid):
+                    all_on_page_already_known = False
+
+        logger.info(
+            f"📥 [API Scan] Page {page}: {len(items)} messages received "
+            f"(API Total: {total_count}, Cumulative: {len(all_api_messages)})."
+        )
+
+        # Stop if reached total count reported by API
+        if total_count > 0 and len(all_api_messages) >= total_count:
+            logger.info("🏁 [API Scan] Reached total message count reported by API.")
+            break
+
+        # Stop if page has fewer items than PAGE_SIZE (last page)
+        if len(items) < PAGE_SIZE:
+            logger.info("🏁 [API Scan] Last page reached (returned items < pageSize).")
+            break
+
+        # Early stop if entire page is already in DB and we have at least 20 items
+        if all_on_page_already_known and len(items) >= 20:
+            logger.info("🏁 [API Scan] All messages on this page already exist in DB. Stopping further page scans.")
+            break
+
+        # Rate Limit Guard: wait 2.1s before requesting next page (guarantees < 30 req/min)
+        if page < MAX_AUDIT_PAGES:
+            logger.info(f"⏳ Respecting API rate limit (30 req/min): pausing {API_RATE_LIMIT_DELAY}s...")
+            await asyncio.sleep(API_RATE_LIMIT_DELAY)
+
+    # ── STEP 2: Cross-reference with database & sort chronologically ───────────
+    def _extract_ts(m: Dict[str, Any]) -> float:
+        return parse_message_timestamp(
+            str(m.get("received_at") or m.get("receivedAt") or
+                m.get("messageTime") or m.get("createdAt") or "")
+        )
+
+    # Process oldest messages first so they are stored / delivered in chronological order
+    all_api_messages.sort(key=_extract_ts)
+
+    already_in_db_count   = 0
+    fresh_forwarded_count = 0
+    stale_archived_count  = 0
+
+    gid = get_linked_group_chat_id() or 0
+
+    for item in all_api_messages:
+        mid = str(item.get("id") or "").strip()
+        if not mid:
+            continue
+
+        # Check DB first (direct query for 100% precision)
+        is_duplicate = False
+        try:
+            with get_db_connection() as conn:
+                cur = conn.execute("SELECT 1 FROM processed_otps WHERE id = ? LIMIT 1;", (mid,))
+                if cur.fetchone() is not None:
+                    is_duplicate = True
+        except Exception as dbe:
+            logger.warning(f"Database duplicate check error for {mid}: {dbe}")
+            is_duplicate = is_message_seen(mid)
+
+        if is_duplicate:
+            seen_message_ids.add(mid)
+            already_in_db_count += 1
+            continue
+
+        # Message is NOT in DB -> Evaluate age
+        msg_ts = _extract_ts(item)
+        otp_age_secs = (now_ts - msg_ts) if msg_ts > 0 else 999999.0
+
+        country = extract_country_name(str(item.get("range_name") or item.get("rangeName") or item.get("destinationName") or ""))
+        raw_num = str(item.get("number") or item.get("destinationNumber") or item.get("range_template") or item.get("rangeTemplate") or item.get("dst") or "")
+        num     = mask_phone_number(raw_num)
+        raw_msg = str(item.get("sms") or item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "")
+        otp     = extract_otp_code(raw_msg)
+
+        if otp_age_secs <= MISSED_OTP_FORWARD_MAX_AGE and dest_ids:
+            # ── FRESH MISSED OTP (≤ 15 minutes) -> Forward to Telegram ────────
+            ok = await _deliver_item(application.bot, item, dest_ids)
+            if ok:
+                total_forwarded_count += 1
+                fresh_forwarded_count += 1
+                seen_message_ids.add(mid)
+                seen_timestamps[mid] = now_ts
+                _gist_dirty = True
+                logger.info(
+                    f"📬 [RECOVERY FORWARDED] Missed OTP {mid} ({int(otp_age_secs)}s old) "
+                    f"forwarded to Telegram group."
+                )
+                await asyncio.sleep(0.8)
+        else:
+            # ── VERY OLD MISSED OTP (> 15 minutes) -> Store in DB only ─────────
+            save_processed_message(item, gid, country, num, otp)
+            seen_message_ids.add(mid)
+            seen_timestamps[mid] = now_ts
+            _gist_dirty = True
+            stale_archived_count += 1
+            logger.info(
+                f"🗄️ [STALE ARCHIVED] Very old missed OTP {mid} ({int(otp_age_secs // 60)}m old) "
+                f"stored in DB only — NOT sent to Telegram group."
+            )
+
+    # ── STEP 3: Enterprise-grade Audit Report ─────────────────────────────────
+    logger.info("=" * 70)
+    logger.info("📊 STARTUP RECONCILIATION AUDIT REPORT")
+    logger.info("=" * 70)
+    logger.info(f"  • API Pages Scanned:       {pages_queried} (Rate limit safe)")
+    logger.info(f"  • Total SMS on API Feed:   {len(all_api_messages)}")
+    logger.info(f"  • Already In Database:     {already_in_db_count} (Skipped, duplicate guard)")
+    logger.info(f"  • Fresh Missed Forwarded:  {fresh_forwarded_count} (Delivered to group)")
+    logger.info(f"  • Stale Missed Archived:   {stale_archived_count} (Saved to DB only)")
+    logger.info("=" * 70)
+
+    if (fresh_forwarded_count > 0 or stale_archived_count > 0) and gist_storage.enabled:
+        try:
+            await gist_storage.save_state(
+                seen_dict=seen_timestamps,
+                is_handover=False,
+                total_forwarded=total_forwarded_count,
+                country_counts=country_forwarded_counts,
+                base_url=client.base_url,
+            )
+        except Exception as ge:
+            logger.warning(f"Gist save error after reconciliation: {ge}")
+
+    return {
+        "pages": pages_queried,
+        "total_api": len(all_api_messages),
+        "already_in_db": already_in_db_count,
+        "forwarded": fresh_forwarded_count,
+        "archived": stale_archived_count,
+    }
+
 async def poll_incoming_messages(application: Application):
     global total_forwarded_count, _gist_dirty, _is_handover, _handover_epoch
     init_db()
@@ -1314,132 +1539,20 @@ async def poll_incoming_messages(application: Application):
     except Exception as e:
         logger.warning(f"Preload error: {e}")
 
-    # 3. Startup pass: forward missed OTPs from the downtime gap, baseline the rest
+    # 3. Startup pass: Professional full API reconciliation with rate-limit compliance
     try:
-        initial_msgs = await client.fetch_incoming_messages()
         dest_ids = _get_otp_dest_ids()
-        baselined = 0
-        forwarded_missed = 0
-        now_ts = datetime.now(timezone.utc).timestamp()
-
-        # Determine the epoch of the bot's last known active moment
-        # (used to detect OTPs that arrived while the bot was offline)
-        last_active_epoch: float = 0.0
-        if gist_storage.enabled:
-            _gs = await gist_storage.load_state()
-            last_active_epoch = float(_gs.get("last_active_epoch") or 0.0)
-
-        # Fallback: if no epoch stored, use a 30-minute lookback window
-        MISSED_OTP_LOOKBACK_SECS   = 1800  # 30 minutes  — how far back to look for missed OTPs
-        MISSED_OTP_FORWARD_MAX_AGE = 900   # 15 minutes  — only forward if received within this window
-        if last_active_epoch <= 0:
-            last_active_epoch = now_ts - MISSED_OTP_LOOKBACK_SECS
-
-        downtime_secs = now_ts - last_active_epoch
-        logger.info(
-            f"🔍 Startup pass: bot was offline ~{int(downtime_secs / 60)} min. "
-            f"Missed OTPs within {MISSED_OTP_FORWARD_MAX_AGE // 60} min will be forwarded to group; "
-            f"older ones saved to DB only."
-        )
-
-        db_only_count   = 0  # old missed OTPs saved to DB but NOT forwarded to group
-
-        for item in reversed(initial_msgs):  # oldest first
-            mid = str(item.get("id") or "").strip()
-            if not mid:
-                continue
-            if is_message_seen(mid):
-                continue
-
-            msg_ts = parse_message_timestamp(
-                str(item.get("received_at") or item.get("receivedAt") or
-                    item.get("messageTime") or item.get("createdAt") or "")
-            )
-
-            # Message arrived while bot was offline (after last_active_epoch)
-            if msg_ts > 0 and msg_ts >= last_active_epoch:
-
-                # ── DUPLICATE GUARD: check DB before any action ────────────────
-                try:
-                    with get_db_connection() as _conn:
-                        _cur = _conn.execute(
-                            "SELECT 1 FROM processed_otps WHERE id = ? LIMIT 1;", (mid,)
-                        )
-                        if _cur.fetchone() is not None:
-                            seen_message_ids.add(mid)
-                            logger.info(f"⏭️ Missed OTP {mid} already in DB — skipping duplicate.")
-                            continue
-                except Exception as _db_err:
-                    logger.warning(f"DB duplicate check error for {mid}: {_db_err}")
-                # ── END DUPLICATE GUARD ────────────────────────────────────────
-
-                otp_age_secs = now_ts - msg_ts  # how old is this missed OTP right now
-
-                if otp_age_secs <= MISSED_OTP_FORWARD_MAX_AGE and dest_ids:
-                    # ✅ RECENT missed OTP → forward to group
-                    ok = await _deliver_item(application.bot, item, dest_ids)
-                    if ok:
-                        total_forwarded_count += 1
-                        forwarded_missed += 1
-                        seen_message_ids.add(mid)
-                        seen_timestamps[mid] = now_ts
-                        _gist_dirty = True
-                        logger.info(
-                            f"📬 Missed OTP forwarded to group "
-                            f"(ID: {mid}, age: {int(otp_age_secs)}s)"
-                        )
-                        continue
-                else:
-                    # ⏳ TOO OLD → save to DB silently, do NOT send to group
-                    country = extract_country_name(str(item.get("range_name") or item.get("rangeName") or item.get("destinationName") or ""))
-                    raw_num = str(item.get("number") or item.get("destinationNumber") or item.get("range_template") or item.get("rangeTemplate") or item.get("dst") or "")
-                    num     = mask_phone_number(raw_num)
-                    raw_msg = str(item.get("sms") or item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "")
-                    otp     = extract_otp_code(raw_msg)
-                    gid     = get_linked_group_chat_id()
-                    save_processed_message(item, gid or 0, country, num, otp)
-                    seen_message_ids.add(mid)
-                    seen_timestamps[mid] = now_ts
-                    _gist_dirty = True
-                    db_only_count += 1
-                    logger.info(
-                        f"🗄️ Old missed OTP saved to DB only — NOT forwarded "
-                        f"(ID: {mid}, age: {int(otp_age_secs // 60)}m {int(otp_age_secs % 60)}s)"
-                    )
-                    continue
-
-            # Historical message (before bot went offline) — baseline without forwarding
-            seen_message_ids.add(mid)
-            seen_timestamps[mid] = bot_start_time
-            country = extract_country_name(str(item.get("range_name") or item.get("rangeName") or item.get("destinationName") or ""))
-            raw_num = str(item.get("number") or item.get("destinationNumber") or item.get("range_template") or item.get("rangeTemplate") or item.get("dst") or "")
-            num     = mask_phone_number(raw_num)
-            raw_msg = str(item.get("sms") or item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "")
-            otp     = extract_otp_code(raw_msg)
-            gid     = get_linked_group_chat_id()
-            save_processed_message(item, gid or 0, country, num, otp)
-            baselined += 1
-
-        if forwarded_missed > 0:
-            logger.info(f"📬 Startup recovery: {forwarded_missed} recent missed OTP(s) forwarded to group.")
-        if db_only_count > 0:
-            logger.info(f"🗄️ Startup recovery: {db_only_count} old missed OTP(s) saved to DB only (too old to forward).")
-        if baselined > 0:
-            logger.info(f"📋 Startup pass: {baselined} historical message(s) baselined.")
-        if (baselined > 0 or forwarded_missed > 0 or db_only_count > 0) and gist_storage.enabled:
-            await gist_storage.save_state(
-                seen_dict=seen_timestamps,
-                is_handover=False,
-                total_forwarded=total_forwarded_count,
-                country_counts=country_forwarded_counts,
-                base_url=client.base_url,
-            )
-        logger.info(
-            f"✅ Startup complete: {forwarded_missed} forwarded to group, "
-            f"{db_only_count} saved to DB only, {baselined} historical baselined."
+        await run_startup_reconciliation(
+            client=client,
+            application=application,
+            dest_ids=dest_ids,
+            gist_storage=gist_storage,
+            seen_message_ids=seen_message_ids,
+            seen_timestamps=seen_timestamps,
+            bot_start_time=bot_start_time,
         )
     except Exception as e:
-        logger.warning(f"Startup pass error: {e}")
+        logger.warning(f"Startup reconciliation error: {e}")
 
     # ── LIVE POLLING LOOP ── runs forever, never crashes ──────────────────────
     while True:
