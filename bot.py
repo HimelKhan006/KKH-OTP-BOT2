@@ -53,7 +53,23 @@ from typing import Set, Dict, Any, List, Optional, Tuple
 from datetime import datetime, timezone
 
 import httpx
-from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
+from telegram import (
+    Update,
+    Bot,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    CopyTextButton,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    KeyboardButton,
+    BotCommand,
+    BotCommandScopeDefault,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllChatAdministrators,
+    BotCommandScopeChat,
+    MenuButtonCommands,
+)
 from telegram.constants import ParseMode
 from telegram.error import RetryAfter, TimedOut, NetworkError, Conflict
 from telegram.request import HTTPXRequest
@@ -1582,44 +1598,41 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
         f"⚡ <b>{active_bot_name} 24/7 (Zero-Restart Engine)</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"• <b>Engine Status:</b> <code>100% Online & Forwarding ✅</code>\n"
-        f"• <b>Bot Name:</b> <code>{active_bot_name}</code> (/setname)\n"
+        f"• <b>Bot Name:</b> <code>{active_bot_name}</code>\n"
         f"• <b>Handover Mode:</b> <code>Zero-Restart Handover Active 🔄</code>\n"
         f"• <b>Session Uptime:</b> <code>{uptime_str}</code>\n"
         f"• <b>Next Handover:</b> {handover_info}\n"
         f"• <b>Platform:</b> <code>Thirdwave IPRN (v1/traffic)</code>\n"
-        f"• <b>API Base:</b> <code>{client.base_url}</code> (/seturl)\n"
-        f"• <b>API Key:</b> <code>{masked_key}</code> (/setkey)\n"
+        f"• <b>API Base:</b> <code>{client.base_url}</code>\n"
+        f"• <b>API Key:</b> <code>{masked_key}</code>\n"
         f"• <b>Database:</b> <code>{gist_status}</code>\n"
         f"• <b>Target Groups:</b> <code>{group_text}</code>\n"
         f"• <b>OTPs Forwarded:</b> <code>{total_forwarded_count}</code> <i>(accumulated)</i>\n"
         f"• <b>Lifetime DB:</b> <code>{db_count} total records</code>\n"
         f"• <b>Poll Speed:</b> <code>{POLL_INTERVAL_SECONDS}s</code> (30 req/min limit)\n"
-        f"• <b>SMS Format:</b> <code>{fmt_label}</code> (/toggleformat)\n"
-        f"• <b>Link Button:</b> {link_str} (/setlink)\n"
+        f"• <b>SMS Format:</b> <code>{fmt_label}</code>\n"
+        f"• <b>Link Button:</b> {link_str}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"{country_lines}"
         f"🔔 <i>Real-time seamless forwarding active. Zero restart alerts.</i>"
     )
 
     keyboard = [
-        [InlineKeyboardButton(f"📋 Toggle Format ({active_format.upper()})", callback_data="toggle_format"),
-         InlineKeyboardButton("🔄 Refresh", callback_data="refresh_dash")],
-        [InlineKeyboardButton("✏️ Change Bot Name", callback_data="bot_name_help"),
-         InlineKeyboardButton("🔗 Link Button", callback_data="link_help")],
+        [InlineKeyboardButton("🔄 Refresh", callback_data="refresh_dash")],
     ]
     return msg, InlineKeyboardMarkup(keyboard)
 
 def get_admin_reply_keyboard() -> ReplyKeyboardMarkup:
     """
     Bottom persistent reply keyboard for admins.
-    Row 1: 📊 Status | 🔑 API Key
-    Row 2: 🌐 API URL | 📋 Toggle Format
+    Row 1: 📊 Status | 📋 Toggle Format
+    Row 2: 🌐 API URL | 🔑 API Key (API Key placed right after API URL)
     Row 3: ✏️ Bot Name | 🔗 Link Button
     Row 4: 🗑️ Remove Link | 🔄 Restart
     """
     keyboard = [
-        [KeyboardButton("📊 Status"), KeyboardButton("🔑 API Key")],
-        [KeyboardButton("🌐 API URL"), KeyboardButton("📋 Toggle Format")],
+        [KeyboardButton("📊 Status"), KeyboardButton("📋 Toggle Format")],
+        [KeyboardButton("🌐 API URL"), KeyboardButton("🔑 API Key")],
         [KeyboardButton("✏️ Bot Name"), KeyboardButton("🔗 Link Button")],
         [KeyboardButton("🗑️ Remove Link"), KeyboardButton("🔄 Restart")],
     ]
@@ -1651,14 +1664,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
         return
     msg, markup = build_status_dashboard()
-    # Send dashboard with inline buttons + persistent reply keyboard
+    is_start = bool(msg_obj.text and msg_obj.text.strip().startswith("/start"))
+    if is_start:
+        await msg_obj.reply_text(
+            "⚡ <b>Welcome to Admin Control!</b> Menu buttons ready below.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_admin_reply_keyboard(),
+        )
     await msg_obj.reply_text(
         msg,
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_admin_reply_keyboard(),
-    )
-    await msg_obj.reply_text(
-        "👑 <b>Admin Control Panel</b> — Use the keyboard buttons below or inline buttons above.",
         parse_mode=ParseMode.HTML,
         reply_markup=markup,
     )
@@ -1908,6 +1922,29 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         except Exception:
             await query.answer("Refreshed")
 
+    elif query.data == "confirm_restart":
+        await query.answer("Restarting engine 🔄")
+        try:
+            await query.edit_message_text(
+                "⏳ <i>Zero-restart session handover initiated...</i>",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            pass
+        await perform_zero_restart_handover(query.message)
+
+    elif query.data == "cancel_restart":
+        await query.answer("Cancelled")
+        try:
+            await query.edit_message_text(
+                "❌ <b>Restart Cancelled</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "The bot engine continues running normally without interruption.",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            pass
+
 async def seturl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat    = update.effective_chat
     user    = update.effective_user
@@ -1999,22 +2036,20 @@ async def setkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
 
-async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command to trigger clean zero-restart session handover."""
+async def perform_zero_restart_handover(target_message):
+    """Executes the clean zero-restart session handover."""
     global _is_handover
-    user_id = update.effective_user.id if update.effective_user else 0
-    if not is_user_authorized(user_id):
-        await update.effective_message.reply_text("⛔ Unauthorized access.")
-        return
-
-    msg = await update.effective_message.reply_text(
-        "🔄 <b>Zero-Restart Handover Triggered</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "💾 <i>Flushing SQLite database checkpoint...</i>\n"
-        "☁️ <i>Syncing continuous state to GitHub Gist...</i>\n"
-        "🚀 <i>Triggering clean session handover...</i>",
-        parse_mode=ParseMode.HTML
-    )
+    try:
+        msg = await target_message.reply_text(
+            "🔄 <b>Zero-Restart Handover Triggered</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "💾 <i>Flushing SQLite database checkpoint...</i>\n"
+            "☁️ <i>Syncing continuous state to GitHub Gist...</i>\n"
+            "🚀 <i>Triggering clean session handover...</i>",
+            parse_mode=ParseMode.HTML
+        )
+    except Exception:
+        msg = target_message
 
     _is_handover = True
     try:
@@ -2024,13 +2059,16 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning(f"Handover PRAGMA notice: {e}")
 
     if gist_storage.enabled:
-        await gist_storage.save_state(
-            seen_dict=seen_timestamps,
-            is_handover=True,
-            total_forwarded=total_forwarded_count,
-            country_counts=country_forwarded_counts,
-            base_url=client.base_url,
-        )
+        try:
+            await gist_storage.save_state(
+                seen_dict=seen_timestamps,
+                is_handover=True,
+                total_forwarded=total_forwarded_count,
+                country_counts=country_forwarded_counts,
+                base_url=client.base_url,
+            )
+        except Exception as e:
+            logger.warning(f"Handover Gist save notice: {e}")
 
     try:
         await msg.edit_text(
@@ -2044,6 +2082,34 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.info("Admin triggered zero-restart handover. Exiting cleanly (code 0)...")
     sys.exit(0)
+
+async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command with confirmation prompt to trigger clean zero-restart session handover."""
+    user_id = update.effective_user.id if update.effective_user else 0
+    if not is_user_authorized(user_id):
+        await update.effective_message.reply_text("⛔ Unauthorized access.")
+        return
+
+    # Direct force restart if argument passed: /restart force
+    if context and context.args and context.args[0].lower() in ("force", "yes", "now"):
+        await perform_zero_restart_handover(update.effective_message)
+        return
+
+    confirm_kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Confirm Restart", callback_data="confirm_restart"),
+            InlineKeyboardButton("❌ Cancel", callback_data="cancel_restart"),
+        ]
+    ])
+    await update.effective_message.reply_text(
+        "⚠️ <b>Confirm Bot Restart</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Are you sure you want to trigger a zero-restart session handover?\n\n"
+        "• State & forward counters will be safely saved to Cloud DB.\n"
+        "• The runner will reboot and continue OTP forwarding seamlessly.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=confirm_kb,
+    )
 
 async def send_startup_announcement(application: Application):
     """
@@ -2324,11 +2390,32 @@ async def main():
         asyncio.create_task(periodic_db_cleanup_loop())
         asyncio.create_task(periodic_gist_sync_loop())
         try:
-            await application.bot.set_my_commands([
-                ("start", "🚀 Start / Admin Dashboard"),
-            ])
-        except Exception:
-            pass
+            # 1. COMPLETELY WIPE commands from ALL groups
+            for sc in (BotCommandScopeAllGroupChats(), BotCommandScopeAllChatAdministrators()):
+                try:
+                    await application.bot.delete_my_commands(scope=sc)
+                except Exception:
+                    pass
+            for gid in get_target_group_chat_ids():
+                try:
+                    await application.bot.delete_my_commands(scope=BotCommandScopeChat(gid))
+                except Exception:
+                    pass
+
+            # 2. In private DMs and default scope: strictly ONLY /start command
+            start_only = [BotCommand("start", "🚀 Start / Admin Dashboard")]
+            await application.bot.set_my_commands(start_only, scope=BotCommandScopeDefault())
+            await application.bot.set_my_commands(start_only, scope=BotCommandScopeAllPrivateChats())
+            for aid in ADMIN_USER_IDS:
+                try:
+                    await application.bot.delete_my_commands(scope=BotCommandScopeChat(aid))
+                    await application.bot.set_my_commands(start_only, scope=BotCommandScopeChat(aid))
+                except Exception:
+                    pass
+            await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+            logger.info("✅ Command scopes configured: ONLY /start in DM, 0 commands in groups.")
+        except Exception as e:
+            logger.warning(f"Error configuring command menu scopes: {e}")
         logger.info("✅ OTP WAVE is fully online and monitoring incoming messages...")
 
         # Robust polling starter with automatic conflict recovery
