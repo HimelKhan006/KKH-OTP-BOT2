@@ -53,7 +53,7 @@ from typing import Set, Dict, Any, List, Optional, Tuple
 from datetime import datetime, timezone
 
 import httpx
-from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton
+from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
 from telegram.constants import ParseMode
 from telegram.error import RetryAfter, TimedOut, NetworkError, Conflict
 from telegram.request import HTTPXRequest
@@ -1609,6 +1609,22 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     ]
     return msg, InlineKeyboardMarkup(keyboard)
 
+def get_admin_reply_keyboard() -> ReplyKeyboardMarkup:
+    """
+    Bottom persistent reply keyboard for admins.
+    Row 1: 📊 Status | 🔑 API Key
+    Row 2: 🌐 API URL | 📋 Toggle Format
+    Row 3: ✏️ Bot Name | 🔗 Link Button
+    Row 4: 🗑️ Remove Link | 🔄 Restart
+    """
+    keyboard = [
+        [KeyboardButton("📊 Status"), KeyboardButton("🔑 API Key")],
+        [KeyboardButton("🌐 API URL"), KeyboardButton("📋 Toggle Format")],
+        [KeyboardButton("✏️ Bot Name"), KeyboardButton("🔗 Link Button")],
+        [KeyboardButton("🗑️ Remove Link"), KeyboardButton("🔄 Restart")],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 async def sync_data_to_secret_db():
     """Immediately sync all persistent state and settings secretly to the cloud database."""
     if "gist_storage" in globals() and gist_storage.enabled:
@@ -1635,7 +1651,17 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
         return
     msg, markup = build_status_dashboard()
-    await msg_obj.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=markup)
+    # Send dashboard with inline buttons + persistent reply keyboard
+    await msg_obj.reply_text(
+        msg,
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_admin_reply_keyboard(),
+    )
+    await msg_obj.reply_text(
+        "👑 <b>Admin Control Panel</b> — Use the keyboard buttons below or inline buttons above.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=markup,
+    )
 
 async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat    = update.effective_chat
@@ -2073,6 +2099,56 @@ async def periodic_gist_sync_loop():
                 base_url=client.base_url,
             )
 
+async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handles bottom reply keyboard button presses from admins (private DM only).
+    Group messages are completely ignored — only OTP forwards appear in the group.
+    """
+    chat    = update.effective_chat
+    msg_obj = update.effective_message
+    user    = update.effective_user
+    if not msg_obj or not user or not chat:
+        return
+    user_id = user.id
+    if not is_user_authorized(user_id):
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        return
+
+    text = (msg_obj.text or "").strip()
+
+    if text == "📊 Status":
+        await start_command(update, context)
+
+    elif text == "🔑 API Key":
+        # Show current key info (no args = show info)
+        context.args = []
+        await setkey_command(update, context)
+
+    elif text == "🌐 API URL":
+        # Show current URL info (no args = show info)
+        context.args = []
+        await seturl_command(update, context)
+
+    elif text == "📋 Toggle Format":
+        context.args = []
+        await toggleformat_command(update, context)
+
+    elif text == "✏️ Bot Name":
+        # Show usage instructions
+        context.args = []
+        await setname_command(update, context)
+
+    elif text == "🔗 Link Button":
+        # Show usage instructions
+        context.args = []
+        await setlink_command(update, context)
+
+    elif text == "🗑️ Remove Link":
+        await removelink_command(update, context)
+
+    elif text == "🔄 Restart":
+        await restart_command(update, context)
+
 # ==========================================
 # 13. Diagnostics (--test mode)
 # ==========================================
@@ -2195,20 +2271,22 @@ async def main():
         .build()
     )
 
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("status", start_command))
-    application.add_handler(CommandHandler("restart", restart_command))
-    application.add_handler(CommandHandler("setkey", setkey_command))
-    application.add_handler(CommandHandler("key", setkey_command))
-    application.add_handler(CommandHandler("seturl", seturl_command))
-    application.add_handler(CommandHandler("toggleformat", toggleformat_command))
-    application.add_handler(CommandHandler("format", toggleformat_command))
-    application.add_handler(CommandHandler("setformat", toggleformat_command))
-    application.add_handler(CommandHandler("setname", setname_command))
-    application.add_handler(CommandHandler("resetname", resetname_command))
-    application.add_handler(CommandHandler("setlink", setlink_command))
-    application.add_handler(CommandHandler("removelink", removelink_command))
+    # ── All command & keyboard handlers: PRIVATE chat ONLY ──────────────────
+    # The group is exclusively for OTP forwarding. Commands are completely
+    # invisible to the group — Telegram never even dispatches them here.
+    _private = filters.ChatType.PRIVATE
+    application.add_handler(CommandHandler("start",        start_command,        filters=_private))
+    application.add_handler(CommandHandler("status",       start_command,        filters=_private))
+    application.add_handler(CommandHandler("setkey",       setkey_command,       filters=_private))
+    application.add_handler(CommandHandler("seturl",       seturl_command,       filters=_private))
+    application.add_handler(CommandHandler("toggleformat", toggleformat_command, filters=_private))
+    application.add_handler(CommandHandler("setname",      setname_command,      filters=_private))
+    application.add_handler(CommandHandler("resetname",    resetname_command,    filters=_private))
+    application.add_handler(CommandHandler("setlink",      setlink_command,      filters=_private))
+    application.add_handler(CommandHandler("removelink",   removelink_command,   filters=_private))
+    application.add_handler(CommandHandler("restart",      restart_command,      filters=_private))
     application.add_handler(CallbackQueryHandler(admin_callback_handler))
+    application.add_handler(MessageHandler(_private & filters.TEXT & ~filters.COMMAND, keyboard_button_handler))
 
     def start_health_server():
         port_str = os.getenv("PORT")
@@ -2247,11 +2325,11 @@ async def main():
         asyncio.create_task(periodic_gist_sync_loop())
         try:
             await application.bot.set_my_commands([
-                ("start",        "📊 Bot status & admin dashboard"),
-                ("status",       "⚡ Live zero-restart engine status"),
-                ("setkey",       "🔑 View or update Thirdwave API key"),
-                ("seturl",       "🌐 View or update Thirdwave API base URL"),
-                ("toggleformat", "🔄 Toggle SMS format (Short / Long)"),
+                ("start",        "📊 Admin dashboard & control panel"),
+                ("status",       "⚡ Live engine status"),
+                ("setkey",       "🔑 Update Thirdwave API key"),
+                ("seturl",       "🌐 Update Thirdwave API base URL"),
+                ("toggleformat", "📋 Toggle SMS format (Short / Long)"),
                 ("setname",      "✏️ Change bot display name"),
                 ("resetname",    "🔄 Reset bot name to default"),
                 ("setlink",      "🔗 Add custom link button on SMS"),
