@@ -1647,7 +1647,7 @@ async def poll_incoming_messages(application: Application):
             local_data.pop("base_url", None)
             local_data.update(saved_bot_data)
             save_stored_data(local_data)
-            custom_name = local_data.get("bot_name")
+            custom_name = local_data.get("bot_name") or local_data.get("default_bot_name")
             if custom_name:
                 try:
                     await application.bot.set_my_name(name=custom_name)
@@ -1756,9 +1756,23 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     else:
         handover_info = "<code>Always-Online (Continuous)</code>"
 
+def get_default_bot_name() -> str:
+    data = load_stored_data()
+    val = data.get("default_bot_name")
+    if val and isinstance(val, str) and val.strip():
+        return val.strip()[:64]
+    return "OTP Wave Bot"
+
+def get_bot_name() -> str:
+    data = load_stored_data()
+    val = data.get("bot_name")
+    if val and isinstance(val, str) and val.strip():
+        return val.strip()[:64]
+    return get_default_bot_name()
+
     # Format & Link button status
     data = load_stored_data()
-    active_bot_name = data.get("bot_name", "OTP Wave Bot")
+    active_bot_name = get_bot_name()
     active_format = data.get("sms_format", "short")
     fmt_label = "Short (Modern ⚡)" if active_format == "short" else "Long (Detailed 📜)"
 
@@ -1940,6 +1954,7 @@ async def setname_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = load_stored_data()
     data["bot_name"] = new_name
+    data["default_bot_name"] = new_name
     save_stored_data(data)
     asyncio.create_task(sync_data_to_secret_db())
 
@@ -1947,6 +1962,7 @@ async def setname_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ <b>Bot Name Successfully Updated!</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"• <b>New Name:</b> <code>{html.escape(new_name)}</code>\n"
+        f"• <b>Default Name:</b> <code>{html.escape(new_name)} (Saved as permanent default)</code>\n"
         f"• <b>Telegram API:</b> <code>Applied Officially ✅</code>\n"
         f"• <b>Database:</b> <code>Saved Secretly to Cloud Store 🔒</code>",
         parse_mode=ParseMode.HTML
@@ -1963,22 +1979,23 @@ async def resetname_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
         return
 
-    DEFAULT_NAME = "OTP Wave Bot"
+    data = load_stored_data()
+    default_name = data.get("default_bot_name") or data.get("bot_name") or "OTP Wave Bot"
+    data["bot_name"] = default_name
+    data["default_bot_name"] = default_name
+    save_stored_data(data)
+    asyncio.create_task(sync_data_to_secret_db())
+
     try:
-        await context.bot.set_my_name(name=DEFAULT_NAME)
+        await context.bot.set_my_name(name=default_name)
     except Exception as e:
         logger.warning(f"Reset bot name warning: {e}")
-
-    data = load_stored_data()
-    if "bot_name" in data:
-        del data["bot_name"]
-        save_stored_data(data)
-        asyncio.create_task(sync_data_to_secret_db())
 
     await msg_obj.reply_text(
         f"✅ <b>Bot Name Reset to Default!</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Active Name:</b> <code>{DEFAULT_NAME}</code>\n"
+        f"• <b>Active Name:</b> <code>{html.escape(default_name)}</code>\n"
+        f"• <b>Default Name:</b> <code>{html.escape(default_name)}</code>\n"
         f"• <b>Database:</b> <code>Secret Cloud Store Synced 🔒</code>",
         parse_mode=ParseMode.HTML
     )
@@ -3008,7 +3025,7 @@ async def send_startup_announcement(application: Application):
         return
 
     admin_msg = (
-        "⚡ <b>OTP WAVE 24/7 ONLINE</b>\n"
+        f"⚡ <b>{html.escape(get_bot_name())} 24/7 ONLINE</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "• <b>Status:</b> <code>Active & Monitoring Live OTPs ✅</code>\n"
         "• <b>Engine:</b> <code>Zero-Restart Handover Engine 🔄</code>\n"
