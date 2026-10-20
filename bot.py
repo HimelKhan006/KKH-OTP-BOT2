@@ -2325,15 +2325,7 @@ async def main():
         asyncio.create_task(periodic_gist_sync_loop())
         try:
             await application.bot.set_my_commands([
-                ("start",        "📊 Admin dashboard & control panel"),
-                ("status",       "⚡ Live engine status"),
-                ("setkey",       "🔑 Update Thirdwave API key"),
-                ("seturl",       "🌐 Update Thirdwave API base URL"),
-                ("toggleformat", "📋 Toggle SMS format (Short / Long)"),
-                ("setname",      "✏️ Change bot display name"),
-                ("resetname",    "🔄 Reset bot name to default"),
-                ("setlink",      "🔗 Add custom link button on SMS"),
-                ("removelink",   "🗑️ Remove custom link button"),
+                ("start", "🚀 Start / Admin Dashboard"),
             ])
         except Exception:
             pass
