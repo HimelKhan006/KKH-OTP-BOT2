@@ -175,6 +175,7 @@ def normalize_button_url(raw_url: str) -> Optional[str]:
     - https://... or http://... or tg://...
     - @bot_username or @channel -> https://t.me/bot_username
     - t.me/bot_username -> https://t.me/bot_username
+    - telegram.me/bot_username -> https://t.me/bot_username
     - bot_username -> https://t.me/bot_username
     """
     url = str(raw_url or "").strip()
@@ -185,6 +186,9 @@ def normalize_button_url(raw_url: str) -> Optional[str]:
         return f"https://t.me/{clean_user}" if clean_user else None
     if url.startswith("t.me/"):
         return f"https://{url}"
+    if url.startswith("telegram.me/"):
+        clean_user = url.replace("telegram.me/", "").strip()
+        return f"https://t.me/{clean_user}" if clean_user else None
     if url.startswith(("http://", "https://", "tg://")):
         return url
     if all(c.isalnum() or c == "_" for c in url):
@@ -1811,15 +1815,13 @@ def get_admin_reply_keyboard() -> ReplyKeyboardMarkup:
     Row 1: 📊 Status | 📋 Toggle Format
     Row 2: 🌐 API URL | 🔑 API Key
     Row 3: ✏️ Bot Name | 🔗 Link Button
-    Row 4: 👥 Linked Groups
-    Row 5: 🔄 Restart
+    Row 4: 👥 Linked Groups | 🔄 Restart
     """
     keyboard = [
         [KeyboardButton("📊 Status"), KeyboardButton("📋 Toggle Format")],
         [KeyboardButton("🌐 API URL"), KeyboardButton("🔑 API Key")],
         [KeyboardButton("✏️ Bot Name"), KeyboardButton("🔗 Link Button")],
-        [KeyboardButton("👥 Linked Groups")],
-        [KeyboardButton("🔄 Restart")],
+        [KeyboardButton("👥 Linked Groups"), KeyboardButton("🔄 Restart")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -1848,7 +1850,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_user_authorized(user_id):
         await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
         return
-    msg, markup = build_status_dashboard()
+
     is_start = bool(msg_obj.text and msg_obj.text.strip().startswith("/start"))
     if is_start:
         await msg_obj.reply_text(
@@ -1856,6 +1858,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML,
             reply_markup=get_admin_reply_keyboard(),
         )
+        return
+
+    msg, markup = build_status_dashboard()
     await msg_obj.reply_text(
         msg,
         parse_mode=ParseMode.HTML,
@@ -2095,14 +2100,27 @@ async def setlink_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     raw_args = " ".join(context.args).strip() if context.args else ""
-    if not raw_args or "|" not in raw_args:
+    if not raw_args:
         text, markup = build_buttons_list_view()
         await msg_obj.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
         return
 
-    parts = raw_args.split("|", 1)
-    btn_text = parts[0].strip()
-    raw_url  = parts[1].strip()
+    if "|" in raw_args:
+        parts = raw_args.split("|", 1)
+        btn_text = parts[0].strip()
+        raw_url  = parts[1].strip()
+    else:
+        parts = raw_args.split()
+        if len(parts) >= 2:
+            raw_url = parts[-1].strip()
+            btn_text = " ".join(parts[:-1]).strip()
+        elif len(parts) == 1:
+            raw_url = parts[0].strip()
+            btn_text = raw_url.lstrip("@")
+        else:
+            text, markup = build_buttons_list_view()
+            await msg_obj.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            return
 
     if not btn_text:
         await msg_obj.reply_text("❌ Button text cannot be empty.", parse_mode=ParseMode.HTML)
@@ -2431,8 +2449,8 @@ async def setbtnurl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args or len(context.args) < 2:
         await msg_obj.reply_text(
-            "🔗 <b>Usage:</b> <code>/setbtnurl &lt;Button ID&gt; &lt;New URL&gt;</code>\n"
-            "<i>Example:</i> <code>/setbtnurl 1 https://t.me/newchannel</code>",
+            "🔗 <b>Usage:</b> <code>/setbtnurl &lt;Button ID&gt; &lt;New URL or @bot_username&gt;</code>\n"
+            "<i>Example:</i> <code>/setbtnurl 1 @my_bot</code> or <code>/setbtnurl 1 https://t.me/newchannel</code>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -2619,7 +2637,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         found = next((b for b in buttons if str(b["id"]) == btn_id), None)
         if found:
             context.user_data["awaiting_btn_action"] = {"action": "reurl", "id": found["id"]}
-            await query.answer("Send new URL in chat 💬")
+            await query.answer("Send new URL or bot username 💬")
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("◀️ Cancel / Back", callback_data=f"link_view_{found['id']}")]
             ])
@@ -2628,9 +2646,10 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"• <b>Button:</b> <code>{html.escape(found['text'])}</code>\n"
                 f"• <b>Current URL:</b> <code>{html.escape(found['url'])}</code>\n\n"
-                f"💬 <b>Send the new link URL</b> directly in this chat, or use:\n"
-                f"<code>/setbtnurl {found['id']} &lt;New URL&gt;</code>\n"
-                f"<i>(Must start with https://, http://, or tg://)</i>",
+                f"💬 <b>Send the new link URL or bot username</b> directly in this chat:\n"
+                f"<code>https://...</code> or <code>@bot_username</code>\n\n"
+                f"<b>Or use command:</b>\n"
+                f"<code>/setbtnurl {found['id']} &lt;New URL or @bot_username&gt;</code>",
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb
             )
@@ -2642,16 +2661,18 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             [InlineKeyboardButton("◀️ Cancel / Back", callback_data="link_list")]
         ])
         await query.edit_message_text(
-            "➕ <b>Add New Custom Link Button</b>\n"
+            "➕ <b>Add New Custom Button</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "Custom buttons appear side-by-side below OTP messages in groups.\n\n"
-            "💬 <b>Send the button name and URL</b> in this chat using the format:\n"
-            "<code>Button Name | https://yourlink.com</code>\n\n"
+            "💬 <b>Send button name and link or bot username</b> in chat using this format:\n"
+            "<code>Button Name | @bot_username</code>\n"
+            "<i>or:</i> <code>Button Name | https://yourlink.com</code>\n\n"
             "<b>Or run command:</b>\n"
-            "<code>/setlink Button Name | https://yourlink.com</code>\n\n"
+            "<code>/setlink Button Name | @bot_username</code>\n\n"
             "<i>Examples:</i>\n"
+            "• <code>🤖 Number Bot | @my_number_bot</code>\n"
             "• <code>📢 Join Channel | https://t.me/mychannel</code>\n"
-            "• <code>👥 Support | https://t.me/mysupport</code>",
+            "• <code>👥 Support | @mysupport</code>",
             parse_mode=ParseMode.HTML,
             reply_markup=kb
         )
@@ -3217,6 +3238,9 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
                 if len(parts) >= 2:
                     raw_url = parts[-1].strip()
                     b_name = " ".join(parts[:-1]).strip()
+                elif len(parts) == 1:
+                    raw_url = parts[0].strip()
+                    b_name = raw_url.lstrip("@")
 
             clean_url = normalize_button_url(raw_url)
             if not b_name or not clean_url:
@@ -3225,7 +3249,7 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
                     "Please provide button name and link or bot username separated by <code>|</code>:\n"
                     "<code>Button Name | @bot_username</code>\n"
                     "<i>or:</i> <code>Button Name | https://yourlink.com</code>\n\n"
-                    "<i>Example:</i> <code>📢 Telegram Channel | @mychannel</code>",
+                    "<i>Example:</i> <code>🤖 Number Bot | @my_number_bot</code>",
                     parse_mode=ParseMode.HTML,
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("❌ Cancel", callback_data="link_list")]
