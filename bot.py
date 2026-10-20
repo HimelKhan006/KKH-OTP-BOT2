@@ -1811,14 +1811,14 @@ def get_admin_reply_keyboard() -> ReplyKeyboardMarkup:
     Row 1: 📊 Status | 📋 Toggle Format
     Row 2: 🌐 API URL | 🔑 API Key
     Row 3: ✏️ Bot Name | 🔗 Link Button
-    Row 4: 👥 Linked Groups | 🗑️ Remove Link
+    Row 4: 👥 Linked Groups
     Row 5: 🔄 Restart
     """
     keyboard = [
         [KeyboardButton("📊 Status"), KeyboardButton("📋 Toggle Format")],
         [KeyboardButton("🌐 API URL"), KeyboardButton("🔑 API Key")],
         [KeyboardButton("✏️ Bot Name"), KeyboardButton("🔗 Link Button")],
-        [KeyboardButton("👥 Linked Groups"), KeyboardButton("🗑️ Remove Link")],
+        [KeyboardButton("👥 Linked Groups")],
         [KeyboardButton("🔄 Restart")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -2506,13 +2506,21 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         )
 
     elif query.data == "link_help" or query.data == "link_list":
-        await query.answer()
         context.user_data.pop("awaiting_btn_action", None)
         msg_text, markup = build_buttons_list_view()
         try:
             await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
-        except Exception:
-            await query.message.reply_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            await query.answer("✅ Refreshed")
+        except Exception as e:
+            err_str = str(e).lower()
+            if "message is not modified" in err_str or "not modified" in err_str:
+                await query.answer("✅ Already up to date")
+            else:
+                await query.answer()
+                try:
+                    await query.message.reply_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+                except Exception:
+                    pass
 
     elif query.data.startswith("link_view_"):
         await query.answer()
@@ -2649,13 +2657,21 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         )
 
     elif query.data == "grp_list":
-        await query.answer()
         context.user_data.pop("awaiting_grp_action", None)
         msg_text, markup = build_groups_list_view()
         try:
             await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
-        except Exception:
-            await query.message.reply_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            await query.answer("✅ Refreshed")
+        except Exception as e:
+            err_str = str(e).lower()
+            if "message is not modified" in err_str or "not modified" in err_str:
+                await query.answer("✅ Already up to date")
+            else:
+                await query.answer()
+                try:
+                    await query.message.reply_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+                except Exception:
+                    pass
 
     elif query.data == "grp_max_reached":
         await query.answer("⚠️ Maximum limit of 10 groups reached! Remove an existing group before linking a new one.", show_alert=True)
@@ -3048,7 +3064,7 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         await setname_command(update, context)
         return
 
-    elif text in ("🔗 Link Button", "🗑️ Remove Link"):
+    elif text == "🔗 Link Button":
         context.user_data.pop("awaiting_btn_action", None)
         context.user_data.pop("awaiting_grp_action", None)
         msg_text, markup = build_buttons_list_view()
@@ -3434,7 +3450,7 @@ async def main():
             await application.bot.set_my_commands(start_only, scope=BotCommandScopeAllPrivateChats())
             for aid in ADMIN_USER_IDS:
                 try:
-                    await application.bot.delete_my_commands(scope=BotCommandScopeChat(aid))
+                    # Set /start for each admin DM — do NOT delete first (that would wipe it)
                     await application.bot.set_my_commands(start_only, scope=BotCommandScopeChat(aid))
                 except Exception:
                     pass
