@@ -1735,6 +1735,20 @@ async def poll_incoming_messages(application: Application):
 # ==========================================
 # 12. Bot Commands & Admin Control Panel
 # ==========================================
+def get_default_bot_name() -> str:
+    data = load_stored_data()
+    val = data.get("default_bot_name")
+    if val and isinstance(val, str) and val.strip():
+        return val.strip()[:64]
+    return "OTP Wave Bot"
+
+def get_bot_name() -> str:
+    data = load_stored_data()
+    val = data.get("bot_name")
+    if val and isinstance(val, str) and val.strip():
+        return val.strip()[:64]
+    return get_default_bot_name()
+
 def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     group_ids = get_target_group_chat_ids()
     db_count  = get_total_processed_count()
@@ -1755,20 +1769,6 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
         handover_info = f"<code>{h_hours}h {h_mins}m remaining</code> (Auto-Sync 🔄)"
     else:
         handover_info = "<code>Always-Online (Continuous)</code>"
-
-def get_default_bot_name() -> str:
-    data = load_stored_data()
-    val = data.get("default_bot_name")
-    if val and isinstance(val, str) and val.strip():
-        return val.strip()[:64]
-    return "OTP Wave Bot"
-
-def get_bot_name() -> str:
-    data = load_stored_data()
-    val = data.get("bot_name")
-    if val and isinstance(val, str) and val.strip():
-        return val.strip()[:64]
-    return get_default_bot_name()
 
     # Format & Link button status
     data = load_stored_data()
