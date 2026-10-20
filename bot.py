@@ -1826,13 +1826,13 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
 def get_admin_reply_keyboard() -> ReplyKeyboardMarkup:
     """
     Bottom persistent reply keyboard for admins.
-    Row 1: 📊 Status | 📋 Toggle Format
+    Row 1: 📊 Status | 📋 SMS Format
     Row 2: 🌐 API URL | 🔑 API Key
     Row 3: ✏️ Bot Name | 🔗 Link Button
     Row 4: 👥 Linked Groups | 🔄 Restart
     """
     keyboard = [
-        [KeyboardButton("📊 Status"), KeyboardButton("📋 Toggle Format")],
+        [KeyboardButton("📊 Status"), KeyboardButton("📋 SMS Format")],
         [KeyboardButton("🌐 API URL"), KeyboardButton("🔑 API Key")],
         [KeyboardButton("✏️ Bot Name"), KeyboardButton("🔗 Link Button")],
         [KeyboardButton("👥 Linked Groups"), KeyboardButton("🔄 Restart")],
@@ -1916,89 +1916,6 @@ async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYP
         parse_mode=ParseMode.HTML
     )
 
-async def setname_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat    = update.effective_chat
-    user    = update.effective_user
-    msg_obj = update.effective_message
-    if not chat or not msg_obj:
-        return
-    user_id = user.id if user else 0
-    if not is_user_authorized(user_id):
-        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
-        return
-
-    new_name = " ".join(context.args).strip() if context.args else ""
-    if not new_name:
-        await msg_obj.reply_text(
-            "✏️ <b>Change Bot Name:</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "Usage: <code>/setname Your New Bot Name</code>\n\n"
-            "<b>Example:</b>\n"
-            "<code>/setname OTP Wave VIP</code>\n"
-            "<code>/setname Thirdwave OTP Hub</code>\n\n"
-            "• Changes the bot's official Telegram name\n"
-            "• Persists secretly in the cloud database\n"
-            "• To reset to default, use <code>/resetname</code>",
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    if len(new_name) > 64:
-        await msg_obj.reply_text("❌ Bot name must be 64 characters or fewer.", parse_mode=ParseMode.HTML)
-        return
-
-    try:
-        await context.bot.set_my_name(name=new_name)
-    except Exception as e:
-        logger.warning(f"Failed to set Telegram bot name: {e}")
-
-    data = load_stored_data()
-    data["bot_name"] = new_name
-    data["default_bot_name"] = new_name
-    save_stored_data(data)
-    asyncio.create_task(sync_data_to_secret_db())
-
-    await msg_obj.reply_text(
-        f"✅ <b>Bot Name Successfully Updated!</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>New Name:</b> <code>{html.escape(new_name)}</code>\n"
-        f"• <b>Default Name:</b> <code>{html.escape(new_name)} (Saved as permanent default)</code>\n"
-        f"• <b>Telegram API:</b> <code>Applied Officially ✅</code>\n"
-        f"• <b>Database:</b> <code>Saved Secretly to Cloud Store 🔒</code>",
-        parse_mode=ParseMode.HTML
-    )
-
-async def resetname_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat    = update.effective_chat
-    user    = update.effective_user
-    msg_obj = update.effective_message
-    if not chat or not msg_obj:
-        return
-    user_id = user.id if user else 0
-    if not is_user_authorized(user_id):
-        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
-        return
-
-    data = load_stored_data()
-    default_name = data.get("default_bot_name") or data.get("bot_name") or "OTP Wave Bot"
-    data["bot_name"] = default_name
-    data["default_bot_name"] = default_name
-    save_stored_data(data)
-    asyncio.create_task(sync_data_to_secret_db())
-
-    try:
-        await context.bot.set_my_name(name=default_name)
-    except Exception as e:
-        logger.warning(f"Reset bot name warning: {e}")
-
-    await msg_obj.reply_text(
-        f"✅ <b>Bot Name Reset to Default!</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Active Name:</b> <code>{html.escape(default_name)}</code>\n"
-        f"• <b>Default Name:</b> <code>{html.escape(default_name)}</code>\n"
-        f"• <b>Database:</b> <code>Secret Cloud Store Synced 🔒</code>",
-        parse_mode=ParseMode.HTML
-    )
 
 
 def build_buttons_list_view() -> Tuple[str, InlineKeyboardMarkup]:
@@ -2531,14 +2448,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             logger.warning(f"Could not edit dashboard message on toggle: {e}")
 
     elif query.data == "bot_name_help":
-        await query.answer()
-        await query.message.reply_text(
-            "✏️ <b>Change Bot Display Name:</b>\n\n"
-            "Use the command <code>/setname &lt;New Name&gt;</code>\n"
-            "<i>Example:</i> <code>/setname Thirdwave OTP Hub</code>\n\n"
-            "To reset back to default: <code>/resetname</code>",
-            parse_mode=ParseMode.HTML
-        )
+        await query.answer("ℹ️ Bot name is managed by the admin.", show_alert=True)
 
     elif query.data == "link_help" or query.data == "link_list":
         context.user_data.pop("awaiting_btn_action", None)
@@ -3092,14 +3002,12 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         context.args = []
         await seturl_command(update, context)
 
-    elif text == "📋 Toggle Format":
+    elif text == "📋 SMS Format":
         context.args = []
         await toggleformat_command(update, context)
 
     elif text == "✏️ Bot Name":
-        context.user_data.pop("awaiting_btn_action", None)
-        context.args = []
-        await setname_command(update, context)
+        await msg_obj.reply_text("ℹ️ <b>Bot name</b> is set by the system and cannot be changed via command.", parse_mode=ParseMode.HTML)
         return
 
     elif text == "🔗 Link Button":
@@ -3422,8 +3330,7 @@ async def main():
     application.add_handler(CommandHandler("setkey",       setkey_command,       filters=_private))
     application.add_handler(CommandHandler("seturl",       seturl_command,       filters=_private))
     application.add_handler(CommandHandler("toggleformat", toggleformat_command, filters=_private))
-    application.add_handler(CommandHandler("setname",      setname_command,      filters=_private))
-    application.add_handler(CommandHandler("resetname",    resetname_command,    filters=_private))
+
     application.add_handler(CommandHandler("setlink",      setlink_command,      filters=_private))
     application.add_handler(CommandHandler("removelink",   removelink_command,   filters=_private))
     application.add_handler(CommandHandler("setbtnname",   setbtnname_command,   filters=_private))
