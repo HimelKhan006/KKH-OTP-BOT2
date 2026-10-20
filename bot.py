@@ -1872,6 +1872,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML,
             reply_markup=get_admin_reply_keyboard(),
         )
+        return
 
     msg, markup = build_status_dashboard()
     await msg_obj.reply_text(
@@ -1879,6 +1880,171 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML,
         reply_markup=markup,
     )
+
+def clear_all_admin_states(context: ContextTypes.DEFAULT_TYPE):
+    """Clears all awaiting admin states from user_data."""
+    if not context or not hasattr(context, "user_data") or not isinstance(context.user_data, dict):
+        return
+    context.user_data.pop("awaiting_api_url", None)
+    context.user_data.pop("awaiting_api_key", None)
+    context.user_data.pop("awaiting_bot_name", None)
+    context.user_data.pop("awaiting_btn_action", None)
+    context.user_data.pop("awaiting_grp_action", None)
+    context.user_data.pop("awaiting_action", None)
+
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to cancel any pending interactive action."""
+    chat = update.effective_chat
+    user = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj:
+        return
+    if not is_user_authorized(user.id if user else 0):
+        return
+    clear_all_admin_states(context)
+    await msg_obj.reply_text(
+        "❌ <b>Operation Cancelled.</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "No changes were made. All current settings remain active.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 View Live Status", callback_data="refresh_dash_msg")]
+        ])
+    )
+
+def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, InlineKeyboardMarkup]:
+    """Builds interactive configuration & live preview panel for SMS delivery format."""
+    data = load_stored_data()
+    curr_fmt = data.get("sms_format", "short")
+
+    short_active = "✅ (Active)" if curr_fmt == "short" else "⚪"
+    long_active  = "✅ (Active)" if curr_fmt == "long" else "⚪"
+
+    msg = (
+        "📋 <b>SMS Delivery Format Configuration</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Active Mode:</b> <code>{'Short (Modern ⚡)' if curr_fmt == 'short' else 'Long (Detailed 📜)'}</code>\n"
+        f"• <b>Target Groups:</b> <code>Simultaneous Multi-Group ⚡</code>\n"
+        f"• <b>Cloud Database:</b> <code>Synced & Encrypted 🔒</code>\n\n"
+        "<b>Available Format Modes:</b>\n"
+        f"• <b>Short Format:</b> {short_active}\n"
+        "  Clean & compact modern layout. Displays flag, masked phone number, country, and service with quick-copy OTP button.\n\n"
+        f"• <b>Long Format:</b> {long_active}\n"
+        "  Comprehensive layout. Displays all header fields plus the full original SMS message content body.\n"
+    )
+
+    if preview_mode == "short":
+        msg += (
+            "\n━━━━━━━━━━━━━━━━━━━━\n"
+            "👁️ <b>Live Preview (Short Format):</b>\n"
+            "⚡ <b>NEW SMS RECEIVED</b> ⚡\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "• <b>Number:</b> 🇳🇵 <code>+977 9801***456</code>\n"
+            "• <b>Service:</b> <code>WhatsApp</code>\n"
+            "• <b>Country:</b> 🇳🇵 <code>Nepal (NP)</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "<i>Buttons: [📋 492810] [🤖 GET NUMBER]</i>"
+        )
+    elif preview_mode == "long":
+        msg += (
+            "\n━━━━━━━━━━━━━━━━━━━━\n"
+            "👁️ <b>Live Preview (Long Format):</b>\n"
+            "⚡ <b>NEW SMS RECEIVED</b> ⚡\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "• <b>Number:</b> 🇳🇵 <code>+977 9801***456</code>\n"
+            "• <b>Service:</b> <code>WhatsApp</code>\n"
+            "• <b>Country:</b> 🇳🇵 <code>Nepal (NP)</code>\n\n"
+            "💬 <b>Message Content:</b>\n"
+            "<code>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "<i>Buttons: [📋 492810] [🤖 GET NUMBER]</i>"
+        )
+    else:
+        msg += "\n<i>Choose an option below to set format or view a live preview:</i>"
+
+    kb = [
+        [
+            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'short' else ''}⚡ Set Short", callback_data="fmt_set_short"),
+            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'long' else ''}📜 Set Long", callback_data="fmt_set_long"),
+        ],
+        [
+            InlineKeyboardButton("👁️ Preview Short", callback_data="fmt_preview_short"),
+            InlineKeyboardButton("👁️ Preview Long", callback_data="fmt_preview_long"),
+        ],
+        [
+            InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")
+        ]
+    ]
+    return msg, InlineKeyboardMarkup(kb)
+
+def build_api_url_view() -> Tuple[str, InlineKeyboardMarkup]:
+    """Builds interactive configuration panel for Thirdwave API Base URL."""
+    masked_url = client.base_url
+    msg = (
+        "🌐 <b>Thirdwave API URL Configuration</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Active Base URL:</b> <code>{html.escape(masked_url)}</code>\n"
+        f"• <b>Traffic Endpoint:</b> <code>{html.escape(masked_url)}/api/v1/traffic</code>\n"
+        f"• <b>Default System URL:</b> <code>https://thirdwave.im</code>\n"
+        f"• <b>Cloud Database:</b> <code>Synced & Encrypted 🔒</code>\n\n"
+        "💬 <b>How to update:</b>\n"
+        "• Click <b>✏️ Enter New URL</b> below to type in chat.\n"
+        "• Or send: <code>/seturl &lt;new_url&gt;</code>\n"
+        "<i>Example:</i> <code>/seturl https://thirdwave.im</code>"
+    )
+    kb = [
+        [
+            InlineKeyboardButton("✏️ Enter New URL", callback_data="prompt_set_url"),
+            InlineKeyboardButton("🔄 Reset to Default", callback_data="reset_url_default"),
+        ],
+        [InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")]
+    ]
+    return msg, InlineKeyboardMarkup(kb)
+
+def build_api_key_view() -> Tuple[str, InlineKeyboardMarkup]:
+    """Builds interactive configuration panel for Thirdwave API Key."""
+    current_key = client.api_key
+    masked_key = f"{current_key[:8]}...{current_key[-4:]}" if len(current_key) > 12 else (current_key or "<i>None</i>")
+    msg = (
+        "🔑 <b>Thirdwave API Key Configuration</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Active API Key:</b> <code>{masked_key}</code>\n"
+        f"• <b>Status:</b> <code>{'Configured ✅' if current_key else 'Missing ⚠️'}</code>\n"
+        f"• <b>Cloud Database:</b> <code>Synced & Encrypted 🔒</code>\n\n"
+        "💬 <b>How to update:</b>\n"
+        "• Click <b>✏️ Enter New Key</b> below to type in chat.\n"
+        "• Or send: <code>/setkey &lt;your_api_key&gt;</code>\n"
+        "<i>Example:</i> <code>/setkey tw_live_1234567890abcdef</code>"
+    )
+    kb = [
+        [InlineKeyboardButton("✏️ Enter New Key", callback_data="prompt_set_key")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")]
+    ]
+    return msg, InlineKeyboardMarkup(kb)
+
+def build_bot_name_view() -> Tuple[str, InlineKeyboardMarkup]:
+    """Builds interactive configuration panel for Bot Display Name."""
+    curr_name = get_bot_name()
+    default_name = get_default_bot_name()
+    msg = (
+        "✏️ <b>Bot Display Name Configuration</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Current Active Name:</b> <code>{html.escape(curr_name)}</code>\n"
+        f"• <b>Default System Name:</b> <code>{html.escape(default_name)}</code>\n"
+        f"• <b>Telegram Bot API:</b> <code>Official Name Sync ✅</code>\n"
+        f"• <b>Cloud Database:</b> <code>Synced & Encrypted 🔒</code>\n\n"
+        "💬 <b>How to update:</b>\n"
+        "• Click <b>✏️ Change Bot Name</b> below to type in chat.\n"
+        "• Click <b>🔄 Reset to Default</b> to restore system name."
+    )
+    kb = [
+        [
+            InlineKeyboardButton("✏️ Change Bot Name", callback_data="prompt_set_bot_name"),
+            InlineKeyboardButton("🔄 Reset to Default", callback_data="reset_bot_name_default"),
+        ],
+        [InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")]
+    ]
+    return msg, InlineKeyboardMarkup(kb)
 
 async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat    = update.effective_chat
@@ -1891,29 +2057,29 @@ async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
         return
 
-    data = load_stored_data()
-    curr = data.get("sms_format", "short")
+    # If called with an argument e.g. /format short or /format long:
+    if context and context.args:
+        arg = context.args[0].strip().lower()
+        if arg in ("short", "long"):
+            data = load_stored_data()
+            data["sms_format"] = arg
+            save_stored_data(data)
+            asyncio.create_task(sync_data_to_secret_db())
+            mode_label = "Long (Detailed with SMS Content 📜)" if arg == "long" else "Short (Modern Bullet ⚡)"
+            await msg_obj.reply_text(
+                f"✅ <b>SMS Delivery Format Updated!</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>Active Mode:</b> <code>{mode_label}</code>\n"
+                f"• <b>Format Setting:</b> <code>{arg}</code>\n"
+                f"• <b>Database:</b> <code>Saved Secretly to Cloud Store 🔒</code>",
+                parse_mode=ParseMode.HTML
+            )
+            return
 
-    arg = context.args[0].strip().lower() if (context and context.args) else ""
-    if arg in ("short", "long"):
-        new_fmt = arg
-    else:
-        new_fmt = "long" if curr == "short" else "short"
-
-    data["sms_format"] = new_fmt
-    save_stored_data(data)
-    asyncio.create_task(sync_data_to_secret_db())
-
-    mode_label = "Long (Detailed with SMS Content 📜)" if new_fmt == "long" else "Short (Modern Bullet ⚡)"
-    await msg_obj.reply_text(
-        f"✅ <b>SMS Delivery Format Updated!</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Active Mode:</b> <code>{mode_label}</code>\n"
-        f"• <b>Format Setting:</b> <code>{new_fmt}</code>\n"
-        f"• <b>Database:</b> <code>Saved Secretly to Cloud Store 🔒</code>\n\n"
-        f"<i>Tip: Send <code>/format short</code> or <code>/format long</code> or <code>/toggleformat</code> anytime.</i>",
-        parse_mode=ParseMode.HTML
-    )
+    # Otherwise show interactive professional menu
+    clear_all_admin_states(context)
+    text, markup = build_sms_format_view()
+    await msg_obj.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
 
 
 
@@ -1950,7 +2116,10 @@ def build_buttons_list_view() -> Tuple[str, InlineKeyboardMarkup]:
         InlineKeyboardButton("➕ Add New Button", callback_data="link_add_prompt"),
         InlineKeyboardButton("🗑️ Clear All", callback_data="link_clear_all_confirm"),
     ])
-    kb.append([InlineKeyboardButton("🔄 Refresh List", callback_data="link_list")])
+    kb.append([
+        InlineKeyboardButton("🔄 Refresh List", callback_data="link_list"),
+        InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action"),
+    ])
     return msg, InlineKeyboardMarkup(kb)
 
 def build_button_detail_view(btn_id: str) -> Tuple[Optional[str], Optional[InlineKeyboardMarkup]]:
@@ -1976,7 +2145,8 @@ def build_button_detail_view(btn_id: str) -> Tuple[Optional[str], Optional[Inlin
             InlineKeyboardButton("🗑️ Remove Button", callback_data=f"link_del_confirm_{found['id']}"),
         ],
         [
-            InlineKeyboardButton("◀️ Back to Buttons List", callback_data="link_list"),
+            InlineKeyboardButton("◀️ Back to List", callback_data="link_list"),
+            InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action"),
         ]
     ]
     return msg, InlineKeyboardMarkup(kb)
@@ -2182,7 +2352,10 @@ def build_groups_list_view() -> Tuple[str, InlineKeyboardMarkup]:
 
     if bottom_row:
         kb.append(bottom_row)
-    kb.append([InlineKeyboardButton("🔄 Refresh Groups", callback_data="grp_list")])
+    kb.append([
+        InlineKeyboardButton("🔄 Refresh Groups", callback_data="grp_list"),
+        InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action"),
+    ])
     return msg, InlineKeyboardMarkup(kb)
 
 async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2703,10 +2876,11 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         if len(all_current) >= MAX_FORWARDING_GROUPS:
             await query.answer("⚠️ Maximum limit of 10 groups reached! Remove an existing group first.", show_alert=True)
             return
+        clear_all_admin_states(context)
         context.user_data["awaiting_grp_action"] = "add"
         await query.answer("Send group chat ID 💬")
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("◀️ Cancel / Back", callback_data="grp_list")]
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")]
         ])
         await query.edit_message_text(
             f"➕ <b>Link New Forwarding Group</b>\n"
@@ -2720,7 +2894,148 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=kb
         )
 
-    elif query.data == "refresh_dash":
+    elif query.data == "cancel_admin_action":
+        clear_all_admin_states(context)
+        await query.answer("Operation Cancelled ❌")
+        try:
+            await query.edit_message_text(
+                "❌ <b>Operation Cancelled</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "No changes were made. All current settings remain active.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📊 View Live Status", callback_data="refresh_dash_msg")]
+                ])
+            )
+        except Exception:
+            pass
+
+    elif query.data == "prompt_set_url":
+        clear_all_admin_states(context)
+        context.user_data["awaiting_api_url"] = True
+        await query.answer("Send new API URL 💬")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")]
+        ])
+        await query.edit_message_text(
+            f"🌐 <b>Update API Base URL</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Current URL:</b> <code>{html.escape(client.base_url)}</code>\n\n"
+            f"💬 <b>Please send the new API URL</b> directly in this chat:\n"
+            f"<i>Example:</i> <code>https://thirdwave.im</code>\n\n"
+            f"Or click <b>❌ Cancel</b> below to abort.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb
+        )
+
+    elif query.data == "reset_url_default":
+        default_url = "https://thirdwave.im"
+        client.update_base_url(default_url)
+        data = load_stored_data()
+        data["thirdwave_base_url"] = default_url
+        save_stored_data(data)
+        asyncio.create_task(sync_data_to_secret_db())
+        await query.answer("API URL Reset to Default ✅")
+        text_view, markup = build_api_url_view()
+        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data == "api_url_menu":
+        clear_all_admin_states(context)
+        text_view, markup = build_api_url_view()
+        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data == "prompt_set_key":
+        clear_all_admin_states(context)
+        context.user_data["awaiting_api_key"] = True
+        await query.answer("Send new API Key 💬")
+        current_key = client.api_key
+        masked_key = f"{current_key[:8]}...{current_key[-4:]}" if len(current_key) > 12 else (current_key or "<i>None</i>")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")]
+        ])
+        await query.edit_message_text(
+            f"🔑 <b>Update Thirdwave API Key</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Current Key:</b> <code>{masked_key}</code>\n\n"
+            f"💬 <b>Please send your new API Key</b> directly in this chat:\n"
+            f"<i>Example:</i> <code>tw_live_1234567890abcdef</code>\n\n"
+            f"Or click <b>❌ Cancel</b> below to abort.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb
+        )
+
+    elif query.data == "api_key_menu":
+        clear_all_admin_states(context)
+        text_view, markup = build_api_key_view()
+        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data == "prompt_set_bot_name":
+        clear_all_admin_states(context)
+        context.user_data["awaiting_bot_name"] = True
+        await query.answer("Send new bot name 💬")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")]
+        ])
+        await query.edit_message_text(
+            f"✏️ <b>Change Bot Display Name</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Current Name:</b> <code>{html.escape(get_bot_name())}</code>\n\n"
+            f"💬 <b>Please send the new bot display name</b> (1-64 characters) in chat.\n"
+            f"It will be updated on the Telegram Bot API and saved across reboots.\n\n"
+            f"💡 <i>Tip: Send <code>reset</code> or <code>default</code> to restore default name.</i>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb
+        )
+
+    elif query.data == "reset_bot_name_default":
+        default_name = get_default_bot_name()
+        try:
+            await context.bot.set_my_name(name=default_name)
+        except Exception as e:
+            logger.warning(f"Reset bot name error: {e}")
+        data = load_stored_data()
+        data["bot_name"] = default_name
+        data["default_bot_name"] = default_name
+        save_stored_data(data)
+        asyncio.create_task(sync_data_to_secret_db())
+        await query.answer("Bot Name Reset to Default ✅")
+        text_view, markup = build_bot_name_view()
+        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data == "bot_name_menu":
+        clear_all_admin_states(context)
+        text_view, markup = build_bot_name_view()
+        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data == "fmt_set_short":
+        data = load_stored_data()
+        data["sms_format"] = "short"
+        save_stored_data(data)
+        asyncio.create_task(sync_data_to_secret_db())
+        await query.answer("SMS Format set to Short ⚡")
+        text_view, markup = build_sms_format_view()
+        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data == "fmt_set_long":
+        data = load_stored_data()
+        data["sms_format"] = "long"
+        save_stored_data(data)
+        asyncio.create_task(sync_data_to_secret_db())
+        await query.answer("SMS Format set to Long 📜")
+        text_view, markup = build_sms_format_view()
+        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data == "fmt_preview_short":
+        await query.answer("Previewing Short Format")
+        text_view, markup = build_sms_format_view(preview_mode="short")
+        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data == "fmt_preview_long":
+        await query.answer("Previewing Long Format")
+        text_view, markup = build_sms_format_view(preview_mode="long")
+        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data in ("refresh_dash", "refresh_dash_msg"):
         try:
             msg_text, reply_markup = build_status_dashboard()
             await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
@@ -2763,19 +3078,9 @@ async def seturl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not context.args:
-        await msg_obj.reply_text(
-            f"⚙️ <b>Thirdwave API Base URL Configuration</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>Active URL:</b> <code>{client.base_url}</code>\n"
-            f"• <b>Traffic Endpoint:</b> <code>{client.base_url}/api/v1/traffic</code>\n\n"
-            f"<b>How to update:</b>\n"
-            f"1. <b>Instant Change (Telegram):</b>\n"
-            f"   <code>/seturl &lt;new_url&gt;</code>\n"
-            f"   <i>Example:</i> <code>/seturl https://thirdwave.im</code>\n\n"
-            f"2. <b>Permanent Cloud Hosting (GitHub Secrets):</b>\n"
-            f"   Add or update the secret <code>THIRDWAVE_BASE_URL</code> in GitHub Repository Settings.",
-            parse_mode=ParseMode.HTML
-        )
+        clear_all_admin_states(context)
+        text, markup = build_api_url_view()
+        await msg_obj.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
         return
 
     raw_input = " ".join(context.args).strip()
@@ -2793,7 +3098,11 @@ async def seturl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• <b>New Active URL:</b> <code>{new_url}</code>\n"
         f"• <b>Endpoint:</b> <code>{new_url}/api/v1/traffic</code>\n\n"
         f"The bot is now requesting OTP traffic from this URL in real-time.",
-        parse_mode=ParseMode.HTML
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🌐 API URL Settings", callback_data="api_url_menu")],
+            [InlineKeyboardButton("📊 Status", callback_data="refresh_dash_msg")]
+        ])
     )
 
 async def setkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2811,18 +3120,9 @@ async def setkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     masked_key = f"{current_key[:8]}...{current_key[-4:]}" if len(current_key) > 12 else (current_key or "<i>None</i>")
 
     if not context.args:
-        await msg_obj.reply_text(
-            f"🔑 <b>Thirdwave API Key Configuration</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>Active API Key:</b> <code>{masked_key}</code>\n\n"
-            f"<b>How to update:</b>\n"
-            f"1. <b>Instant Change (Telegram):</b>\n"
-            f"   <code>/setkey &lt;your_api_key&gt;</code>\n"
-            f"   <i>Example:</i> <code>/setkey tw_live_1234567890abcdef</code>\n\n"
-            f"2. <b>Permanent Cloud Hosting (GitHub Secrets):</b>\n"
-            f"   Update secret <code>THIRDWAVE_API_KEY</code> in GitHub Repository Settings.",
-            parse_mode=ParseMode.HTML
-        )
+        clear_all_admin_states(context)
+        text, markup = build_api_key_view()
+        await msg_obj.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
         return
 
     raw_input = context.args[0].strip()
@@ -2839,7 +3139,55 @@ async def setkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"• <b>New Active Key:</b> <code>{new_masked}</code>\n\n"
         f"The bot is now requesting OTP traffic with this key in real-time.",
-        parse_mode=ParseMode.HTML
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔑 API Key Settings", callback_data="api_key_menu")],
+            [InlineKeyboardButton("📊 Status", callback_data="refresh_dash_msg")]
+        ])
+    )
+
+async def setname_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat    = update.effective_chat
+    user    = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj:
+        return
+    user_id = user.id if user else 0
+    if not is_user_authorized(user_id):
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        return
+
+    new_name = " ".join(context.args).strip() if (context and context.args) else ""
+    if not new_name:
+        clear_all_admin_states(context)
+        text, markup = build_bot_name_view()
+        await msg_obj.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        return
+
+    new_name = new_name[:64]
+    try:
+        await context.bot.set_my_name(name=new_name)
+    except Exception as e:
+        logger.warning(f"Could not set Telegram bot name: {e}")
+
+    data = load_stored_data()
+    data["bot_name"] = new_name
+    data["default_bot_name"] = new_name
+    save_stored_data(data)
+    asyncio.create_task(sync_data_to_secret_db())
+
+    await msg_obj.reply_text(
+        f"✅ <b>Bot Name Successfully Updated!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>New Name:</b> <code>{html.escape(new_name)}</code>\n"
+        f"• <b>Default Name:</b> <code>{html.escape(new_name)} (Saved as permanent default)</code>\n"
+        f"• <b>Telegram API:</b> <code>Applied Officially ✅</code>\n"
+        f"• <b>Database:</b> <code>Saved Secretly to Cloud Store 🔒</code>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✏️ Bot Name Settings", callback_data="bot_name_menu")],
+            [InlineKeyboardButton("📊 Status", callback_data="refresh_dash_msg")]
+        ])
     )
 
 async def perform_zero_restart_handover(target_message):
@@ -2988,16 +3336,34 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
 
     text = (msg_obj.text or "").strip()
 
+    # Clear pending prompt states if an admin clicks any reply menu button
+    if text in ("📊 Status", "🔑 API Key", "🌐 API URL", "📋 SMS Format", "✏️ Bot Name", "🔗 Link Button", "👥 Linked Groups", "🔄 Restart"):
+        clear_all_admin_states(context)
+
+    # Cancel command or cancel text
+    if text.lower() in ("cancel", "❌ cancel", "/cancel"):
+        clear_all_admin_states(context)
+        await msg_obj.reply_text(
+            "❌ <b>Operation Cancelled.</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "No changes were made. All current settings remain active.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📊 View Live Status", callback_data="refresh_dash_msg")]
+            ])
+        )
+        return
+
     if text == "📊 Status":
         await start_command(update, context)
 
     elif text == "🔑 API Key":
-        # Show current key info (no args = show info)
+        # Show current key info / interactive panel
         context.args = []
         await setkey_command(update, context)
 
     elif text == "🌐 API URL":
-        # Show current URL info (no args = show info)
+        # Show current URL info / interactive panel
         context.args = []
         await seturl_command(update, context)
 
@@ -3006,27 +3372,106 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         await toggleformat_command(update, context)
 
     elif text == "✏️ Bot Name":
-        await msg_obj.reply_text("ℹ️ <b>Bot name</b> is set by the system and cannot be changed via command.", parse_mode=ParseMode.HTML)
+        clear_all_admin_states(context)
+        text_view, markup = build_bot_name_view()
+        await msg_obj.reply_text(text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
         return
 
     elif text == "🔗 Link Button":
-        context.user_data.pop("awaiting_btn_action", None)
-        context.user_data.pop("awaiting_grp_action", None)
+        clear_all_admin_states(context)
         msg_text, markup = build_buttons_list_view()
         await msg_obj.reply_text(msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
         return
 
     elif text == "👥 Linked Groups":
-        context.user_data.pop("awaiting_btn_action", None)
-        context.user_data.pop("awaiting_grp_action", None)
+        clear_all_admin_states(context)
         msg_text, markup = build_groups_list_view()
         await msg_obj.reply_text(msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
         return
 
     elif text == "🔄 Restart":
-        context.user_data.pop("awaiting_btn_action", None)
-        context.user_data.pop("awaiting_grp_action", None)
+        clear_all_admin_states(context)
         await restart_command(update, context)
+        return
+
+    # Awaiting API URL text input
+    if context.user_data.get("awaiting_api_url"):
+        context.user_data.pop("awaiting_api_url", None)
+        new_url = client.update_base_url(text)
+        data = load_stored_data()
+        data["thirdwave_base_url"] = new_url
+        save_stored_data(data)
+        asyncio.create_task(sync_data_to_secret_db())
+        await msg_obj.reply_text(
+            f"✅ <b>API Base URL Successfully Updated!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>New Active URL:</b> <code>{new_url}</code>\n"
+            f"• <b>Endpoint:</b> <code>{new_url}/api/v1/traffic</code>\n"
+            f"• <b>Cloud DB:</b> <code>Synced & Encrypted 🔒</code>\n\n"
+            f"The bot is now requesting OTP traffic from this URL in real-time.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🌐 API URL Settings", callback_data="api_url_menu")],
+                [InlineKeyboardButton("📊 Status", callback_data="refresh_dash_msg")]
+            ])
+        )
+        return
+
+    # Awaiting API Key text input
+    if context.user_data.get("awaiting_api_key"):
+        context.user_data.pop("awaiting_api_key", None)
+        new_key = client.update_api_key(text)
+        data = load_stored_data()
+        data["thirdwave_api_key"] = new_key
+        save_stored_data(data)
+        asyncio.create_task(sync_data_to_secret_db())
+        new_masked = f"{new_key[:8]}...{new_key[-4:]}" if len(new_key) > 12 else new_key
+        await msg_obj.reply_text(
+            f"✅ <b>Thirdwave API Key Successfully Updated!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>New Active Key:</b> <code>{new_masked}</code>\n"
+            f"• <b>Status:</b> <code>Active & Forwarding OTPs ⚡</code>\n"
+            f"• <b>Cloud DB:</b> <code>Synced & Encrypted 🔒</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔑 API Key Settings", callback_data="api_key_menu")],
+                [InlineKeyboardButton("📊 Status", callback_data="refresh_dash_msg")]
+            ])
+        )
+        return
+
+    # Awaiting Bot Name text input
+    if context.user_data.get("awaiting_bot_name"):
+        context.user_data.pop("awaiting_bot_name", None)
+        new_name = text.strip()[:64]
+        default_name = get_default_bot_name()
+        if new_name.lower() in ("default", "reset"):
+            new_name = default_name
+
+        try:
+            await context.bot.set_my_name(name=new_name)
+        except Exception as e:
+            logger.warning(f"Set bot name error: {e}")
+
+        data = load_stored_data()
+        data["bot_name"] = new_name
+        data["default_bot_name"] = new_name
+        save_stored_data(data)
+        asyncio.create_task(sync_data_to_secret_db())
+
+        await msg_obj.reply_text(
+            f"✅ <b>Bot Name Successfully Updated!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>New Name:</b> <code>{html.escape(new_name)}</code>\n"
+            f"• <b>Default Name:</b> <code>{html.escape(new_name)} (Saved as permanent default)</code>\n"
+            f"• <b>Telegram API:</b> <code>Applied Officially ✅</code>\n"
+            f"• <b>Cloud DB:</b> <code>Saved Secretly to Cloud Store 🔒</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✏️ Bot Name Settings", callback_data="bot_name_menu")],
+                [InlineKeyboardButton("📊 Status", callback_data="refresh_dash_msg")]
+            ])
+        )
         return
 
     # Check if admin is linking a group
@@ -3329,6 +3774,9 @@ async def main():
     application.add_handler(CommandHandler("setkey",       setkey_command,       filters=_private))
     application.add_handler(CommandHandler("seturl",       seturl_command,       filters=_private))
     application.add_handler(CommandHandler("toggleformat", toggleformat_command, filters=_private))
+    application.add_handler(CommandHandler("format",       toggleformat_command, filters=_private))
+    application.add_handler(CommandHandler("cancel",       cancel_command,       filters=_private))
+    application.add_handler(CommandHandler("setname",      setname_command,      filters=_private))
 
     application.add_handler(CommandHandler("setlink",      setlink_command,      filters=_private))
     application.add_handler(CommandHandler("removelink",   removelink_command,   filters=_private))
