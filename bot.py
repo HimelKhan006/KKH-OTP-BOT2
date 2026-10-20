@@ -1877,7 +1877,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg_obj.reply_text(
         msg,
         parse_mode=ParseMode.HTML,
-        reply_markup=get_admin_reply_keyboard(),
+        reply_markup=markup,
     )
 
 async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
