@@ -121,6 +121,8 @@ THIRDWAVE_BASE_URL    = _raw_base or "https://thirdwave.im"
 
 TELEGRAM_GROUP_CHAT_ID = os.getenv("TELEGRAM_GROUP_CHAT_ID", "").strip()
 SECONDARY_GROUP_CHAT_ID = os.getenv("SECONDARY_GROUP_CHAT_ID", os.getenv("TELEGRAM_SECONDARY_GROUP_CHAT_ID", "")).strip()
+MIN_FORWARDING_GROUPS: int = 1
+MAX_FORWARDING_GROUPS: int = 10
 POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "2.5"))
 STARTUP_TYPE          = os.getenv("STARTUP_TYPE", "workflow_dispatch").strip().lower()
 
@@ -166,12 +168,180 @@ def save_stored_data(data: dict):
     except Exception as e:
         logger.warning(f"Error saving stored data to {DATA_FILE}: {e}")
 
+def normalize_button_url(raw_url: str) -> Optional[str]:
+    """
+    Normalizes URLs, Telegram bot usernames (@bot / bot), and links to valid clickable URLs.
+    Supports:
+    - https://... or http://... or tg://...
+    - @bot_username or @channel -> https://t.me/bot_username
+    - t.me/bot_username -> https://t.me/bot_username
+    - bot_username -> https://t.me/bot_username
+    """
+    url = str(raw_url or "").strip()
+    if not url:
+        return None
+    if url.startswith("@"):
+        clean_user = url.lstrip("@").strip()
+        return f"https://t.me/{clean_user}" if clean_user else None
+    if url.startswith("t.me/"):
+        return f"https://{url}"
+    if url.startswith(("http://", "https://", "tg://")):
+        return url
+    if all(c.isalnum() or c == "_" for c in url):
+        return f"https://t.me/{url}"
+    if "." in url and not url.startswith("http"):
+        return f"https://{url}"
+    return url
+
+def get_custom_link_buttons() -> List[Dict[str, str]]:
+    """
+    Returns list of custom buttons: [{"id": "1", "text": "...", "url": "..."}, ...]
+    Maintains backward compatibility with legacy single dict data['custom_link_button'].
+    """
+    data = load_stored_data()
+    buttons = []
+    raw_list = data.get("custom_link_buttons")
+    if isinstance(raw_list, list):
+        for idx, item in enumerate(raw_list):
+            if isinstance(item, dict) and item.get("text") and item.get("url"):
+                b_text = str(item["text"]).strip()
+                raw_u  = str(item["url"]).strip()
+                b_url  = normalize_button_url(raw_u) or raw_u
+                b_id   = str(item.get("id") or (idx + 1))
+                buttons.append({"id": b_id, "text": b_text, "url": b_url})
+
+    legacy = data.get("custom_link_button")
+    if isinstance(legacy, dict) and legacy.get("text") and legacy.get("url"):
+        legacy_text = str(legacy["text"]).strip()
+        raw_lu      = str(legacy["url"]).strip()
+        legacy_url  = normalize_button_url(raw_lu) or raw_lu
+        if not any(b["text"] == legacy_text and b["url"] == legacy_url for b in buttons):
+            buttons.insert(0, {"id": "1", "text": legacy_text, "url": legacy_url})
+            for idx, b in enumerate(buttons):
+                b["id"] = str(idx + 1)
+            data["custom_link_buttons"] = buttons
+            save_stored_data(data)
+    return buttons
+
+def save_custom_link_buttons(buttons: List[Dict[str, str]]):
+    """Saves normalized custom link buttons list and updates legacy key for backward compatibility."""
+    data = load_stored_data()
+    normalized = []
+    for idx, b in enumerate(buttons):
+        raw_u  = str(b.get("url", "")).strip()
+        norm_u = normalize_button_url(raw_u) or raw_u
+        normalized.append({
+            "id": str(idx + 1),
+            "text": str(b.get("text", "")).strip(),
+            "url": norm_u,
+        })
+    data["custom_link_buttons"] = normalized
+    if normalized:
+        data["custom_link_button"] = {"text": normalized[0]["text"], "url": normalized[0]["url"]}
+    else:
+        data.pop("custom_link_button", None)
+    save_stored_data(data)
+    if "sync_data_to_secret_db" in globals():
+        try:
+            asyncio.create_task(sync_data_to_secret_db())
+        except Exception:
+            pass
+
+def get_dynamic_linked_groups() -> List[int]:
+    """Returns list of dynamically linked group chat IDs configured by admin."""
+    data = load_stored_data()
+    raw = data.get("linked_groups", [])
+    result = []
+    if isinstance(raw, list):
+        for item in raw:
+            try:
+                cid = int(str(item).strip())
+                if cid not in result:
+                    result.append(cid)
+            except ValueError:
+                pass
+    return result
+
+def add_dynamic_linked_group(chat_id: int) -> Tuple[bool, str]:
+    """
+    Adds a new group chat ID to the forwarding pool with strict 1-10 limit enforcement.
+    Returns (True, "SUCCESS") or (False, reason).
+    """
+    all_current = get_target_group_chat_ids()
+    if chat_id in all_current:
+        return False, "ALREADY_LINKED"
+    if len(all_current) >= MAX_FORWARDING_GROUPS:
+        return False, "MAX_LIMIT_REACHED"
+
+    data = load_stored_data()
+    groups = get_dynamic_linked_groups()
+    if chat_id not in groups:
+        groups.append(chat_id)
+        data["linked_groups"] = groups
+        save_stored_data(data)
+        if "sync_data_to_secret_db" in globals():
+            try:
+                asyncio.create_task(sync_data_to_secret_db())
+            except Exception:
+                pass
+        return True, "SUCCESS"
+    return False, "ALREADY_LINKED"
+
+def remove_dynamic_linked_group(chat_id: int) -> Tuple[bool, str]:
+    """
+    Removes a dynamic group chat ID from the forwarding pool with strict 1-10 limit enforcement.
+    Returns (True, "SUCCESS") or (False, reason).
+    """
+    all_current = get_target_group_chat_ids()
+    if len(all_current) <= MIN_FORWARDING_GROUPS:
+        return False, "MIN_LIMIT_REACHED"
+
+    data = load_stored_data()
+    groups = get_dynamic_linked_groups()
+    if chat_id in groups:
+        groups = [c for c in groups if c != chat_id]
+        data["linked_groups"] = groups
+        save_stored_data(data)
+        if "sync_data_to_secret_db" in globals():
+            try:
+                asyncio.create_task(sync_data_to_secret_db())
+            except Exception:
+                pass
+        return True, "SUCCESS"
+    return False, "ENV_PROTECTED"
+
+def clear_dynamic_linked_groups() -> Tuple[bool, str]:
+    """
+    Clears all dynamically added groups, ensuring at least MIN_FORWARDING_GROUPS remain.
+    """
+    all_current = get_target_group_chat_ids()
+    dynamic_groups = get_dynamic_linked_groups()
+    env_remaining = [g for g in all_current if g not in dynamic_groups]
+    if len(env_remaining) < MIN_FORWARDING_GROUPS:
+        return False, "MIN_LIMIT_REACHED"
+
+    data = load_stored_data()
+    data["linked_groups"] = []
+    save_stored_data(data)
+    if "sync_data_to_secret_db" in globals():
+        try:
+            asyncio.create_task(sync_data_to_secret_db())
+        except Exception:
+            pass
+    return True, "SUCCESS"
+
 def get_target_group_chat_ids() -> List[int]:
-    """Returns a list of all configured target group chat IDs (Primary + Secondary)."""
+    """Returns a list of all configured target group chat IDs (Dynamic + Primary + Secondary), capped at MAX_FORWARDING_GROUPS (10)."""
     groups: List[int] = []
     seen = set()
 
-    # Check stored json overrides
+    # 1. Dynamic groups added by admin
+    for gid in get_dynamic_linked_groups():
+        if gid not in seen:
+            seen.add(gid)
+            groups.append(gid)
+
+    # 2. Check stored json overrides
     data = load_stored_data()
     for key in ["group_chat_id", "primary_group_chat_id", "secondary_group_chat_id"]:
         val = data.get(key)
@@ -187,7 +357,7 @@ def get_target_group_chat_ids() -> List[int]:
                     except ValueError:
                         pass
 
-    # Check primary env variable (supports comma-separated list as well)
+    # 3. Check primary env variable (supports comma-separated list as well)
     if TELEGRAM_GROUP_CHAT_ID:
         for part in TELEGRAM_GROUP_CHAT_ID.split(","):
             part = part.strip()
@@ -200,7 +370,7 @@ def get_target_group_chat_ids() -> List[int]:
                 except ValueError:
                     pass
 
-    # Check secondary env variable
+    # 4. Check secondary env variable
     if SECONDARY_GROUP_CHAT_ID:
         for part in SECONDARY_GROUP_CHAT_ID.split(","):
             part = part.strip()
@@ -213,7 +383,7 @@ def get_target_group_chat_ids() -> List[int]:
                 except ValueError:
                     pass
 
-    return groups
+    return groups[:MAX_FORWARDING_GROUPS]
 
 def get_linked_group_chat_id() -> Optional[int]:
     """Returns the primary linked group chat ID."""
@@ -1231,23 +1401,35 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
     formatted_text, otp, raw_msg = format_otp_notification(item, sms_format=sms_format)
     sent_to_any = False
 
-    # Build inline buttons: OTP code button + optional Admin Custom Link button
+    # Build inline buttons: OTP code button + optional Admin Custom Link buttons (side-by-side)
     markup = None
     try:
         buttons = []
         if otp:
             buttons.append([InlineKeyboardButton(otp, copy_text=CopyTextButton(text=otp))])
 
-        link_cfg = data.get("custom_link_button")
-        if isinstance(link_cfg, dict) and link_cfg.get("text") and link_cfg.get("url"):
-            b_text = str(link_cfg["text"]).strip()
-            b_url  = str(link_cfg["url"]).strip()
-            if b_url.startswith(("http://", "https://", "tg://")):
-                buttons.append([InlineKeyboardButton(b_text, url=b_url)])
+        custom_buttons = get_custom_link_buttons()
+        if custom_buttons:
+            custom_row = []
+            for cb in custom_buttons:
+                b_text = str(cb.get("text", "")).strip()
+                raw_u  = str(cb.get("url", "")).strip()
+                norm_u = normalize_button_url(raw_u) or raw_u
+                if b_text and norm_u.startswith(("http://", "https://", "tg://")):
+                    custom_row.append(InlineKeyboardButton(b_text, url=norm_u))
+
+            # Display multiple custom buttons side-by-side!
+            if len(custom_row) <= 3:
+                if custom_row:
+                    buttons.append(custom_row)
+            else:
+                for i in range(0, len(custom_row), 2):
+                    buttons.append(custom_row[i:i+2])
 
         if buttons:
             markup = InlineKeyboardMarkup(buttons)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Error building OTP message buttons: {e}")
         markup = None
 
     for cid in dest_ids:
@@ -1576,9 +1758,10 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     active_format = data.get("sms_format", "short")
     fmt_label = "Short (Modern ⚡)" if active_format == "short" else "Long (Detailed 📜)"
 
-    link_cfg = data.get("custom_link_button")
-    if isinstance(link_cfg, dict) and link_cfg.get("text"):
-        link_str = f"<code>{html.escape(str(link_cfg['text']))}</code> ({html.escape(str(link_cfg.get('url','')))})"
+    custom_buttons = get_custom_link_buttons()
+    if custom_buttons:
+        link_items = [f"<code>{html.escape(b['text'])}</code>" for b in custom_buttons]
+        link_str = f"<b>{len(custom_buttons)} Active:</b> " + ", ".join(link_items)
     else:
         link_str = "<i>None configured</i>"
 
@@ -1626,15 +1809,17 @@ def get_admin_reply_keyboard() -> ReplyKeyboardMarkup:
     """
     Bottom persistent reply keyboard for admins.
     Row 1: 📊 Status | 📋 Toggle Format
-    Row 2: 🌐 API URL | 🔑 API Key (API Key placed right after API URL)
+    Row 2: 🌐 API URL | 🔑 API Key
     Row 3: ✏️ Bot Name | 🔗 Link Button
-    Row 4: 🗑️ Remove Link | 🔄 Restart
+    Row 4: 👥 Linked Groups | 🗑️ Remove Link
+    Row 5: 🔄 Restart
     """
     keyboard = [
         [KeyboardButton("📊 Status"), KeyboardButton("📋 Toggle Format")],
         [KeyboardButton("🌐 API URL"), KeyboardButton("🔑 API Key")],
         [KeyboardButton("✏️ Bot Name"), KeyboardButton("🔗 Link Button")],
-        [KeyboardButton("🗑️ Remove Link"), KeyboardButton("🔄 Restart")],
+        [KeyboardButton("👥 Linked Groups"), KeyboardButton("🗑️ Remove Link")],
+        [KeyboardButton("🔄 Restart")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -1793,6 +1978,111 @@ async def resetname_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
 
+
+def build_buttons_list_view() -> Tuple[str, InlineKeyboardMarkup]:
+    """Builds the main custom link buttons management menu view."""
+    buttons = get_custom_link_buttons()
+    if not buttons:
+        msg = (
+            "🗂️ <b>Custom Link Buttons Management</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "ℹ️ <i>No custom buttons are currently configured.</i>\n\n"
+            "Custom buttons appear side-by-side on all forwarded group OTP messages.\n\n"
+            "Tap <b>➕ Add New Button</b> below to create one, or use:\n"
+            "<code>/setlink Button Name | https://yourlink.com</code>"
+        )
+        kb = [
+            [InlineKeyboardButton("➕ Add New Button", callback_data="link_add_prompt")],
+            [InlineKeyboardButton("🔄 Refresh List", callback_data="link_list")],
+        ]
+        return msg, InlineKeyboardMarkup(kb)
+
+    msg = (
+        f"🗂️ <b>Custom Link Buttons Management</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Total Active Buttons:</b> <code>{len(buttons)}</code>\n"
+        f"• <b>Display Mode:</b> <code>Side-by-Side in Group OTPs ⚡</code>\n\n"
+        f"Select a button below to edit its name, change link, or remove it:"
+    )
+    kb = []
+    for b in buttons:
+        kb.append([InlineKeyboardButton(f"🔗 {b['text']}", callback_data=f"link_view_{b['id']}")])
+
+    kb.append([
+        InlineKeyboardButton("➕ Add New Button", callback_data="link_add_prompt"),
+        InlineKeyboardButton("🗑️ Clear All", callback_data="link_clear_all_confirm"),
+    ])
+    kb.append([InlineKeyboardButton("🔄 Refresh List", callback_data="link_list")])
+    return msg, InlineKeyboardMarkup(kb)
+
+def build_button_detail_view(btn_id: str) -> Tuple[Optional[str], Optional[InlineKeyboardMarkup]]:
+    """Builds detail/edit view for a single custom link button."""
+    buttons = get_custom_link_buttons()
+    found = next((b for b in buttons if str(b["id"]) == str(btn_id)), None)
+    if not found:
+        return None, None
+
+    msg = (
+        f"⚙️ <b>Manage Custom Button #{found['id']}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Button Label:</b> <code>{html.escape(found['text'])}</code>\n"
+        f"• <b>Target URL:</b> <code>{html.escape(found['url'])}</code>\n\n"
+        f"Choose an option below to modify or remove this button:"
+    )
+    kb = [
+        [
+            InlineKeyboardButton("✏️ Change Name", callback_data=f"link_rename_{found['id']}"),
+            InlineKeyboardButton("🔗 Change Link", callback_data=f"link_reurl_{found['id']}"),
+        ],
+        [
+            InlineKeyboardButton("🗑️ Remove Button", callback_data=f"link_del_confirm_{found['id']}"),
+        ],
+        [
+            InlineKeyboardButton("◀️ Back to Buttons List", callback_data="link_list"),
+        ]
+    ]
+    return msg, InlineKeyboardMarkup(kb)
+
+def build_button_delete_confirm_view(btn_id: str) -> Tuple[Optional[str], Optional[InlineKeyboardMarkup]]:
+    """Builds delete confirmation view for a single custom link button."""
+    buttons = get_custom_link_buttons()
+    found = next((b for b in buttons if str(b["id"]) == str(btn_id)), None)
+    if not found:
+        return None, None
+
+    msg = (
+        f"⚠️ <b>Confirm Button Removal</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"Are you sure you want to remove this button?\n\n"
+        f"• <b>Button:</b> <code>{html.escape(found['text'])}</code>\n"
+        f"• <b>URL:</b> <code>{html.escape(found['url'])}</code>\n\n"
+        f"It will be removed immediately from all group OTP messages."
+    )
+    kb = [
+        [
+            InlineKeyboardButton("✅ Yes, Delete", callback_data=f"link_del_execute_{found['id']}"),
+            InlineKeyboardButton("❌ Cancel", callback_data=f"link_view_{found['id']}"),
+        ]
+    ]
+    return msg, InlineKeyboardMarkup(kb)
+
+def build_buttons_clear_all_confirm_view() -> Tuple[str, InlineKeyboardMarkup]:
+    """Builds confirmation dialog for clearing all custom buttons."""
+    buttons = get_custom_link_buttons()
+    msg = (
+        f"⚠️ <b>Confirm Clear All Buttons</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"Are you sure you want to remove <b>ALL ({len(buttons)})</b> custom buttons?\n\n"
+        f"This action cannot be undone. OTP messages will only display the OTP copy button."
+    )
+    kb = [
+        [
+            InlineKeyboardButton("⚠️ Yes, Clear All", callback_data="link_clear_all_execute"),
+            InlineKeyboardButton("❌ Cancel", callback_data="link_list"),
+        ]
+    ]
+    return msg, InlineKeyboardMarkup(kb)
+
 async def setlink_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat    = update.effective_chat
     user    = update.effective_user
@@ -1806,43 +2096,46 @@ async def setlink_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     raw_args = " ".join(context.args).strip() if context.args else ""
     if not raw_args or "|" not in raw_args:
-        await msg_obj.reply_text(
-            "🔗 <b>How to set a Custom Link Button:</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "Use the command with <code>Button Name | URL</code>:\n\n"
-            "<b>Example:</b>\n"
-            "<code>/setlink 📢 Join Our Channel | https://t.me/mychannel</code>\n"
-            "<code>/setlink 👥 Support Group | https://t.me/mysupport</code>\n"
-            "<code>/setlink 🤖 Official Bot | https://t.me/mybot</code>\n\n"
-            "To remove the button at any time, run <code>/removelink</code>.",
-            parse_mode=ParseMode.HTML
-        )
+        text, markup = build_buttons_list_view()
+        await msg_obj.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
         return
 
     parts = raw_args.split("|", 1)
     btn_text = parts[0].strip()
-    btn_url  = parts[1].strip()
+    raw_url  = parts[1].strip()
 
     if not btn_text:
         await msg_obj.reply_text("❌ Button text cannot be empty.", parse_mode=ParseMode.HTML)
         return
-    if not btn_url.startswith(("http://", "https://", "tg://")):
-        await msg_obj.reply_text("❌ URL must start with <code>https://</code>, <code>http://</code>, or <code>tg://</code>.", parse_mode=ParseMode.HTML)
+    btn_url = normalize_button_url(raw_url)
+    if not btn_url:
+        await msg_obj.reply_text("❌ Invalid link or bot username. Use <code>https://...</code> or <code>@bot_username</code>.", parse_mode=ParseMode.HTML)
         return
 
-    data = load_stored_data()
-    data["custom_link_button"] = {"text": btn_text, "url": btn_url}
-    save_stored_data(data)
-    asyncio.create_task(sync_data_to_secret_db())
+    buttons = get_custom_link_buttons()
+    existing = next((b for b in buttons if b["text"].lower() == btn_text.lower()), None)
+    if existing:
+        existing["url"] = btn_url
+        action_note = "Updated existing button URL"
+        active_id = existing["id"]
+    else:
+        new_id = str(len(buttons) + 1)
+        buttons.append({"id": new_id, "text": btn_text, "url": btn_url})
+        action_note = "Added new button"
+        active_id = new_id
 
+    save_custom_link_buttons(buttons)
+    _, detail_kb = build_button_detail_view(active_id)
     await msg_obj.reply_text(
-        f"✅ <b>Custom Link Button Configured!</b>\n"
+        f"✅ <b>Custom Link Button Configured!</b> ({action_note})\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"• <b>Button Label:</b> <code>{html.escape(btn_text)}</code>\n"
         f"• <b>Target URL:</b> <code>{html.escape(btn_url)}</code>\n"
+        f"• <b>Total Active Buttons:</b> <code>{len(buttons)}</code> (displayed side-by-side in group OTPs)\n"
         f"• <b>Database:</b> <code>Saved Secretly to Cloud Store 🔒</code>\n\n"
-        f"Every forwarded SMS will now include this button.",
-        parse_mode=ParseMode.HTML
+        f"Every forwarded SMS will now include all active buttons side-by-side.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=detail_kb
     )
 
 async def removelink_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1856,14 +2149,322 @@ async def removelink_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
         return
 
-    data = load_stored_data()
-    if "custom_link_button" in data:
-        del data["custom_link_button"]
-        save_stored_data(data)
-        asyncio.create_task(sync_data_to_secret_db())
-        await msg_obj.reply_text("✅ <b>Custom link button removed.</b> SMS messages will no longer show the extra button.", parse_mode=ParseMode.HTML)
+    raw_arg = (" ".join(context.args).strip() if context.args else "").lower()
+
+    if raw_arg in ("all", "clear", "reset"):
+        save_custom_link_buttons([])
+        await msg_obj.reply_text("✅ <b>All custom link buttons removed.</b> SMS messages will no longer show extra buttons.", parse_mode=ParseMode.HTML)
+        return
+
+    if raw_arg:
+        buttons = get_custom_link_buttons()
+        matching = [b for b in buttons if str(b["id"]) == raw_arg or b["text"].lower() == raw_arg]
+        if matching:
+            target = matching[0]
+            new_list = [b for b in buttons if b["id"] != target["id"]]
+            save_custom_link_buttons(new_list)
+            await msg_obj.reply_text(
+                f"✅ <b>Removed button:</b> <code>{html.escape(target['text'])}</code>\n"
+                f"Remaining buttons: <code>{len(new_list)}</code>",
+                parse_mode=ParseMode.HTML
+            )
+            return
+
+    # No arguments: open interactive management dashboard
+    text, markup = build_buttons_list_view()
+    await msg_obj.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+def build_groups_list_view() -> Tuple[str, InlineKeyboardMarkup]:
+    """Builds interactive management menu for all linked forwarding groups with strict 1-10 limits."""
+    all_targets = get_target_group_chat_ids()
+    dynamic_groups = get_dynamic_linked_groups()
+    total_count = len(all_targets)
+
+    # Progress capacity indicator
+    filled = min(total_count, 10)
+    progress_bar = "🟩" * filled + "⬜" * (10 - filled)
+
+    msg = (
+        "👥 <b>Linked Forwarding Groups Management</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Active Forwarding Groups:</b> <code>{total_count} / {MAX_FORWARDING_GROUPS}</code>\n"
+        f"• <b>Group Limits:</b> <code>Min: {MIN_FORWARDING_GROUPS} | Max: {MAX_FORWARDING_GROUPS}</code>\n"
+        f"• <b>Capacity:</b> [{progress_bar}]\n"
+        f"• <b>Forwarding Mode:</b> <code>Simultaneous Multi-Group ⚡</code>\n\n"
+        "<b>Currently Active Forwarding Groups:</b>\n"
+    )
+    if all_targets:
+        for idx, gid in enumerate(all_targets, 1):
+            is_dyn = gid in dynamic_groups
+            tag = "Admin Added ⚡" if is_dyn else "Server Secret 🔒"
+            msg += f"  <b>{idx}.</b> <code>{gid}</code> ({tag})\n"
     else:
-        await msg_obj.reply_text("ℹ️ No custom link button is currently set.", parse_mode=ParseMode.HTML)
+        msg += "  <i>⚠️ No groups configured. Bot requires at least 1 group!</i>\n"
+
+    msg += (
+        "\n━━━━━━━━━━━━━━━━━━━━\n"
+        "💬 <b>How to link a group:</b>\n"
+        "• Click <b>➕ Link New Group</b> below or send:\n"
+        "  <code>/addgroup &lt;Chat ID&gt;</code>\n"
+        "  <i>Example:</i> <code>/addgroup -1004473973263</code>\n\n"
+        "💬 <b>How to remove a group:</b>\n"
+        "• Click <b>🗑️ Remove</b> below or send:\n"
+        "  <code>/delgroup &lt;Chat ID&gt;</code>\n\n"
+        "<i>⚡ All OTPs are forwarded simultaneously to all active groups. Only custom link buttons appear on OTP messages (group IDs are never shown as buttons). Group chat command menus are automatically cleared (0 commands).</i>"
+    )
+
+    kb = []
+    # Dynamic group remove buttons
+    for gid in dynamic_groups:
+        kb.append([InlineKeyboardButton(f"🗑️ Remove {gid}", callback_data=f"grp_del_confirm_{gid}")])
+
+    bottom_row = []
+    if total_count < MAX_FORWARDING_GROUPS:
+        bottom_row.append(InlineKeyboardButton("➕ Link New Group", callback_data="grp_add_prompt"))
+    else:
+        bottom_row.append(InlineKeyboardButton("🔒 Max 10 Groups Reached", callback_data="grp_max_reached"))
+
+    # Can only clear if remaining groups >= 1
+    env_count = len([g for g in all_targets if g not in dynamic_groups])
+    if dynamic_groups and env_count >= MIN_FORWARDING_GROUPS:
+        bottom_row.append(InlineKeyboardButton("🗑️ Clear Added", callback_data="grp_clear_confirm"))
+
+    if bottom_row:
+        kb.append(bottom_row)
+    kb.append([InlineKeyboardButton("🔄 Refresh Groups", callback_data="grp_list")])
+    return msg, InlineKeyboardMarkup(kb)
+
+async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj:
+        return
+    if not is_user_authorized(user.id if user else 0):
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        return
+
+    arg = context.args[0].strip() if context.args else ""
+    if not arg:
+        text, markup = build_groups_list_view()
+        await msg_obj.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        return
+
+    try:
+        new_gid = int(arg)
+    except ValueError:
+        await msg_obj.reply_text("❌ <b>Invalid Group Chat ID</b>: Must be an integer (e.g. <code>-1004473973263</code>).", parse_mode=ParseMode.HTML)
+        return
+
+    all_current = get_target_group_chat_ids()
+    if len(all_current) >= MAX_FORWARDING_GROUPS:
+        text, markup = build_groups_list_view()
+        await msg_obj.reply_text(
+            f"⚠️ <b>Maximum Group Limit Reached</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"You already have <b>{len(all_current)} / {MAX_FORWARDING_GROUPS} active groups</b>.\n"
+            f"The system allows a minimum of 1 and maximum of 10 groups.\n"
+            f"Please remove an existing group before adding a new one.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=markup
+        )
+        return
+
+    if new_gid in all_current:
+        text, markup = build_groups_list_view()
+        await msg_obj.reply_text(
+            f"ℹ️ <b>Group Already Linked</b>\n"
+            f"Group <code>{new_gid}</code> is already in the forwarding pool.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=markup
+        )
+        return
+
+    ok, reason = add_dynamic_linked_group(new_gid)
+    if not ok:
+        await msg_obj.reply_text(f"⚠️ Could not add group: {reason}", parse_mode=ParseMode.HTML)
+        return
+
+    try:
+        await context.bot.delete_my_commands(scope=BotCommandScopeChat(new_gid))
+    except Exception:
+        pass
+
+    text, markup = build_groups_list_view()
+    new_total = len(get_target_group_chat_ids())
+    await msg_obj.reply_text(
+        f"✅ <b>Group Linked Successfully!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Group Chat ID:</b> <code>{new_gid}</code>\n"
+        f"• <b>Active Groups:</b> <code>{new_total} / {MAX_FORWARDING_GROUPS}</code> (Limit: 1 - 10)\n"
+        f"• <b>Group Commands:</b> <code>Wiped from group chat menu (0 commands) 🔒</code>\n"
+        f"• <b>Forwarding:</b> <code>Real-Time Multi-Group Active ⚡</code>\n"
+        f"• <b>Cloud DB:</b> <code>Synced ☁️</code>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=markup
+    )
+
+async def delgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj:
+        return
+    if not is_user_authorized(user.id if user else 0):
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        return
+
+    arg = context.args[0].strip() if context.args else ""
+    if not arg:
+        text, markup = build_groups_list_view()
+        await msg_obj.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        return
+
+    try:
+        del_gid = int(arg)
+    except ValueError:
+        await msg_obj.reply_text("❌ Invalid group chat ID. Must be an integer.", parse_mode=ParseMode.HTML)
+        return
+
+    all_current = get_target_group_chat_ids()
+    if len(all_current) <= MIN_FORWARDING_GROUPS:
+        text, markup = build_groups_list_view()
+        await msg_obj.reply_text(
+            f"⚠️ <b>Minimum Group Limit Reached</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"You currently have <b>{len(all_current)} active group</b>.\n"
+            f"The bot requires at least <b>1 group</b> for OTP forwarding (Limit: 1 - 10 groups).\n"
+            f"You cannot remove the only remaining active group.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=markup
+        )
+        return
+
+    ok, reason = remove_dynamic_linked_group(del_gid)
+    if ok:
+        text, markup = build_groups_list_view()
+        new_total = len(get_target_group_chat_ids())
+        await msg_obj.reply_text(
+            f"✅ <b>Group unlinked:</b> <code>{del_gid}</code>\n"
+            f"• <b>Remaining Groups:</b> <code>{new_total} / {MAX_FORWARDING_GROUPS}</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=markup
+        )
+    elif reason == "MIN_LIMIT_REACHED":
+        await msg_obj.reply_text(
+            "⚠️ <b>Minimum Group Limit</b>: You must keep at least 1 group active (Limit: 1 - 10 groups).",
+            parse_mode=ParseMode.HTML
+        )
+    elif reason == "ENV_PROTECTED":
+        await msg_obj.reply_text(
+            f"🔒 Group <code>{del_gid}</code> is configured in the server environment secret.\n"
+            f"To replace it, add your new group first, or update your server settings.",
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        await msg_obj.reply_text(f"ℹ️ Group <code>{del_gid}</code> was not found in dynamically added groups.", parse_mode=ParseMode.HTML)
+
+async def groups_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj:
+        return
+    if not is_user_authorized(user.id if user else 0):
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        return
+    text, markup = build_groups_list_view()
+    await msg_obj.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+async def setbtnname_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat    = update.effective_chat
+    user    = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj:
+        return
+    user_id = user.id if user else 0
+    if not is_user_authorized(user_id):
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        return
+
+    if not context.args or len(context.args) < 2:
+        await msg_obj.reply_text(
+            "✏️ <b>Usage:</b> <code>/setbtnname &lt;Button ID&gt; &lt;New Button Name&gt;</code>\n"
+            "<i>Example:</i> <code>/setbtnname 1 📢 Official Updates</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    target_id = context.args[0].strip()
+    new_name = " ".join(context.args[1:]).strip()
+    buttons = get_custom_link_buttons()
+    found = next((b for b in buttons if str(b["id"]) == target_id), None)
+    if not found:
+        await msg_obj.reply_text(f"❌ Button ID <code>#{target_id}</code> was not found.", parse_mode=ParseMode.HTML)
+        return
+
+    old_name = found["text"]
+    found["text"] = new_name
+    save_custom_link_buttons(buttons)
+    _, detail_kb = build_button_detail_view(found["id"])
+    await msg_obj.reply_text(
+        f"✅ <b>Button Renamed!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Old Name:</b> <code>{html.escape(old_name)}</code>\n"
+        f"• <b>New Name:</b> <code>{html.escape(new_name)}</code>\n"
+        f"• <b>URL:</b> <code>{html.escape(found['url'])}</code>\n"
+        f"• <b>Synced:</b> <code>Cloud DB 🔒</code>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=detail_kb
+    )
+
+async def setbtnurl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat    = update.effective_chat
+    user    = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj:
+        return
+    user_id = user.id if user else 0
+    if not is_user_authorized(user_id):
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        return
+
+    if not context.args or len(context.args) < 2:
+        await msg_obj.reply_text(
+            "🔗 <b>Usage:</b> <code>/setbtnurl &lt;Button ID&gt; &lt;New URL&gt;</code>\n"
+            "<i>Example:</i> <code>/setbtnurl 1 https://t.me/newchannel</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    target_id = context.args[0].strip()
+    raw_url = context.args[1].strip()
+    clean_url = normalize_button_url(raw_url)
+    if not clean_url:
+        await msg_obj.reply_text("❌ Invalid link or bot username. Use <code>https://...</code> or <code>@bot_username</code>.", parse_mode=ParseMode.HTML)
+        return
+    new_url = clean_url
+
+    buttons = get_custom_link_buttons()
+    found = next((b for b in buttons if str(b["id"]) == target_id), None)
+    if not found:
+        await msg_obj.reply_text(f"❌ Button ID <code>#{target_id}</code> was not found.", parse_mode=ParseMode.HTML)
+        return
+
+    old_url = found["url"]
+    found["url"] = new_url
+    save_custom_link_buttons(buttons)
+    _, detail_kb = build_button_detail_view(found["id"])
+    await msg_obj.reply_text(
+        f"✅ <b>Button URL Updated!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Button:</b> <code>{html.escape(found['text'])}</code>\n"
+        f"• <b>Old URL:</b> <code>{html.escape(old_url)}</code>\n"
+        f"• <b>New URL:</b> <code>{html.escape(new_url)}</code>\n"
+        f"• <b>Synced:</b> <code>Cloud DB 🔒</code>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=detail_kb
+    )
 
 async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1893,6 +2494,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
         except Exception as e:
             logger.warning(f"Could not edit dashboard message on toggle: {e}")
+
     elif query.data == "bot_name_help":
         await query.answer()
         await query.message.reply_text(
@@ -1902,18 +2504,259 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             "To reset back to default: <code>/resetname</code>",
             parse_mode=ParseMode.HTML
         )
-    elif query.data == "link_help":
+
+    elif query.data == "link_help" or query.data == "link_list":
         await query.answer()
-        await query.message.reply_text(
-            "🔗 <b>Configure Custom Link Button:</b>\n\n"
-            "Adds a clickable button below every forwarded SMS alongside the OTP copy button.\n\n"
-            "• <b>Set Button:</b>\n"
-            "  <code>/setlink Button Text | https://yourlink.com</code>\n"
-            "  <i>Example:</i> <code>/setlink 📢 Updates Channel | https://t.me/mychannel</code>\n\n"
-            "• <b>Remove Button:</b>\n"
-            "  <code>/removelink</code>",
-            parse_mode=ParseMode.HTML
+        context.user_data.pop("awaiting_btn_action", None)
+        msg_text, markup = build_buttons_list_view()
+        try:
+            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        except Exception:
+            await query.message.reply_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data.startswith("link_view_"):
+        await query.answer()
+        context.user_data.pop("awaiting_btn_action", None)
+        btn_id = query.data.replace("link_view_", "").strip()
+        msg_text, markup = build_button_detail_view(btn_id)
+        if msg_text and markup:
+            try:
+                await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            except Exception:
+                await query.message.reply_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        else:
+            await query.answer("Button not found", show_alert=True)
+            msg_text, markup = build_buttons_list_view()
+            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data.startswith("link_del_confirm_"):
+        await query.answer()
+        btn_id = query.data.replace("link_del_confirm_", "").strip()
+        msg_text, markup = build_button_delete_confirm_view(btn_id)
+        if msg_text and markup:
+            try:
+                await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            except Exception:
+                await query.message.reply_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data.startswith("link_del_execute_"):
+        btn_id = query.data.replace("link_del_execute_", "").strip()
+        buttons = get_custom_link_buttons()
+        found = next((b for b in buttons if str(b["id"]) == btn_id), None)
+        new_list = [b for b in buttons if str(b["id"]) != btn_id]
+        save_custom_link_buttons(new_list)
+        await query.answer("Button removed! 🗑️", show_alert=False)
+        deleted_name = html.escape(found["text"]) if found else "Button"
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("◀️ Back to Buttons List", callback_data="link_list")]
+        ])
+        await query.edit_message_text(
+            f"✅ <b>Button Removed!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"<code>{deleted_name}</code> has been removed from all forwarded group OTP messages.\n\n"
+            f"• <b>Remaining Active Buttons:</b> <code>{len(new_list)}</code>\n"
+            f"• <b>Synced:</b> <code>Secret Cloud DB 🔒</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb
         )
+
+    elif query.data == "link_clear_all_confirm":
+        await query.answer()
+        msg_text, markup = build_buttons_clear_all_confirm_view()
+        try:
+            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        except Exception:
+            await query.message.reply_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data == "link_clear_all_execute":
+        save_custom_link_buttons([])
+        await query.answer("All buttons cleared! 🗑️", show_alert=False)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ Add New Button", callback_data="link_add_prompt")],
+            [InlineKeyboardButton("◀️ Back to List", callback_data="link_list")],
+        ])
+        await query.edit_message_text(
+            "✅ <b>All Custom Buttons Cleared!</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "All custom buttons have been removed. Forwarded OTP messages will only display the OTP copy button.\n\n"
+            "• <b>Storage:</b> <code>Cleared and Synced to Cloud DB 🔒</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb
+        )
+
+    elif query.data.startswith("link_rename_"):
+        btn_id = query.data.replace("link_rename_", "").strip()
+        buttons = get_custom_link_buttons()
+        found = next((b for b in buttons if str(b["id"]) == btn_id), None)
+        if found:
+            context.user_data["awaiting_btn_action"] = {"action": "rename", "id": found["id"]}
+            await query.answer("Send new name in chat 💬")
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ Cancel / Back", callback_data=f"link_view_{found['id']}")]
+            ])
+            await query.edit_message_text(
+                f"✏️ <b>Change Name for #{found['id']}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>Current Name:</b> <code>{html.escape(found['text'])}</code>\n"
+                f"• <b>Target URL:</b> <code>{html.escape(found['url'])}</code>\n\n"
+                f"💬 <b>Send the new button name</b> directly in this chat, or use:\n"
+                f"<code>/setbtnname {found['id']} &lt;New Name&gt;</code>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb
+            )
+
+    elif query.data.startswith("link_reurl_"):
+        btn_id = query.data.replace("link_reurl_", "").strip()
+        buttons = get_custom_link_buttons()
+        found = next((b for b in buttons if str(b["id"]) == btn_id), None)
+        if found:
+            context.user_data["awaiting_btn_action"] = {"action": "reurl", "id": found["id"]}
+            await query.answer("Send new URL in chat 💬")
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ Cancel / Back", callback_data=f"link_view_{found['id']}")]
+            ])
+            await query.edit_message_text(
+                f"🔗 <b>Change URL for #{found['id']}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>Button:</b> <code>{html.escape(found['text'])}</code>\n"
+                f"• <b>Current URL:</b> <code>{html.escape(found['url'])}</code>\n\n"
+                f"💬 <b>Send the new link URL</b> directly in this chat, or use:\n"
+                f"<code>/setbtnurl {found['id']} &lt;New URL&gt;</code>\n"
+                f"<i>(Must start with https://, http://, or tg://)</i>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb
+            )
+
+    elif query.data == "link_add_prompt":
+        context.user_data["awaiting_btn_action"] = {"action": "add"}
+        await query.answer("Send new button details 💬")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("◀️ Cancel / Back", callback_data="link_list")]
+        ])
+        await query.edit_message_text(
+            "➕ <b>Add New Custom Link Button</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Custom buttons appear side-by-side below OTP messages in groups.\n\n"
+            "💬 <b>Send the button name and URL</b> in this chat using the format:\n"
+            "<code>Button Name | https://yourlink.com</code>\n\n"
+            "<b>Or run command:</b>\n"
+            "<code>/setlink Button Name | https://yourlink.com</code>\n\n"
+            "<i>Examples:</i>\n"
+            "• <code>📢 Join Channel | https://t.me/mychannel</code>\n"
+            "• <code>👥 Support | https://t.me/mysupport</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb
+        )
+
+    elif query.data == "grp_list":
+        await query.answer()
+        context.user_data.pop("awaiting_grp_action", None)
+        msg_text, markup = build_groups_list_view()
+        try:
+            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        except Exception:
+            await query.message.reply_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data == "grp_max_reached":
+        await query.answer("⚠️ Maximum limit of 10 groups reached! Remove an existing group before linking a new one.", show_alert=True)
+
+    elif query.data.startswith("grp_del_confirm_"):
+        gid_str = query.data.replace("grp_del_confirm_", "").strip()
+        all_current = get_target_group_chat_ids()
+        if len(all_current) <= MIN_FORWARDING_GROUPS:
+            await query.answer("⚠️ Minimum 1 group required! Cannot remove the only remaining active group.", show_alert=True)
+            return
+
+        await query.answer()
+        kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ Yes, Remove", callback_data=f"grp_del_exec_{gid_str}"),
+                InlineKeyboardButton("❌ Cancel", callback_data="grp_list"),
+            ]
+        ])
+        await query.edit_message_text(
+            f"⚠️ <b>Confirm Group Removal</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Are you sure you want to unlink group <code>{gid_str}</code> from OTP forwarding?\n"
+            f"• <b>Active Groups:</b> <code>{len(all_current)} / {MAX_FORWARDING_GROUPS}</code>\n"
+            f"• <b>After Removal:</b> <code>{len(all_current) - 1} / {MAX_FORWARDING_GROUPS}</code>\n\n"
+            f"OTPs will no longer be forwarded to this group.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb
+        )
+
+    elif query.data.startswith("grp_del_exec_"):
+        gid_str = query.data.replace("grp_del_exec_", "").strip()
+        try:
+            ok, reason = remove_dynamic_linked_group(int(gid_str))
+            if ok:
+                await query.answer(f"Group {gid_str} removed! 🗑️")
+            elif reason == "MIN_LIMIT_REACHED":
+                await query.answer("⚠️ Minimum 1 group required! Cannot remove the last active group.", show_alert=True)
+            elif reason == "ENV_PROTECTED":
+                await query.answer("🔒 This group is configured in server secret settings.", show_alert=True)
+            else:
+                await query.answer("Could not remove group", show_alert=True)
+        except Exception:
+            await query.answer("Error removing group", show_alert=True)
+        msg_text, markup = build_groups_list_view()
+        await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data == "grp_clear_confirm":
+        all_current = get_target_group_chat_ids()
+        dynamic_groups = get_dynamic_linked_groups()
+        env_remaining = [g for g in all_current if g not in dynamic_groups]
+        if len(env_remaining) < MIN_FORWARDING_GROUPS:
+            await query.answer("⚠️ Minimum 1 group required! Clearing dynamic groups would leave 0 groups.", show_alert=True)
+            return
+
+        await query.answer()
+        kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("⚠️ Yes, Clear All", callback_data="grp_clear_exec"),
+                InlineKeyboardButton("❌ Cancel", callback_data="grp_list"),
+            ]
+        ])
+        await query.edit_message_text(
+            "⚠️ <b>Confirm Clear Added Groups</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Are you sure you want to remove all admin-added forwarding groups?\n"
+            "(Server secret groups will remain active).",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb
+        )
+
+    elif query.data == "grp_clear_exec":
+        ok, reason = clear_dynamic_linked_groups()
+        if ok:
+            await query.answer("All dynamic groups cleared! 🗑️")
+        else:
+            await query.answer("⚠️ Minimum 1 group required! Cannot clear.", show_alert=True)
+        msg_text, markup = build_groups_list_view()
+        await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data == "grp_add_prompt":
+        all_current = get_target_group_chat_ids()
+        if len(all_current) >= MAX_FORWARDING_GROUPS:
+            await query.answer("⚠️ Maximum limit of 10 groups reached! Remove an existing group first.", show_alert=True)
+            return
+        context.user_data["awaiting_grp_action"] = "add"
+        await query.answer("Send group chat ID 💬")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("◀️ Cancel / Back", callback_data="grp_list")]
+        ])
+        await query.edit_message_text(
+            f"➕ <b>Link New Forwarding Group</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Active Groups:</b> <code>{len(all_current)} / {MAX_FORWARDING_GROUPS}</code> (Limit: 1 - 10)\n\n"
+            f"💬 <b>Send the numerical chat ID</b> of the group below (e.g. <code>-1004473973263</code>):\n\n"
+            f"<b>Or use command:</b>\n"
+            f"<code>/addgroup &lt;Chat ID&gt;</code>\n\n"
+            f"<i>Note: Make sure this bot is added to the group as an admin. Commands will be automatically wiped from the group chat menu (0 commands).</i>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb
+        )
+
     elif query.data == "refresh_dash":
         try:
             msg_text, reply_markup = build_status_dashboard()
@@ -2200,20 +3043,196 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         await toggleformat_command(update, context)
 
     elif text == "✏️ Bot Name":
-        # Show usage instructions
+        context.user_data.pop("awaiting_btn_action", None)
         context.args = []
         await setname_command(update, context)
+        return
 
-    elif text == "🔗 Link Button":
-        # Show usage instructions
-        context.args = []
-        await setlink_command(update, context)
+    elif text in ("🔗 Link Button", "🗑️ Remove Link"):
+        context.user_data.pop("awaiting_btn_action", None)
+        context.user_data.pop("awaiting_grp_action", None)
+        msg_text, markup = build_buttons_list_view()
+        await msg_obj.reply_text(msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        return
 
-    elif text == "🗑️ Remove Link":
-        await removelink_command(update, context)
+    elif text == "👥 Linked Groups":
+        context.user_data.pop("awaiting_btn_action", None)
+        context.user_data.pop("awaiting_grp_action", None)
+        msg_text, markup = build_groups_list_view()
+        await msg_obj.reply_text(msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        return
 
     elif text == "🔄 Restart":
+        context.user_data.pop("awaiting_btn_action", None)
+        context.user_data.pop("awaiting_grp_action", None)
         await restart_command(update, context)
+        return
+
+    # Check if admin is linking a group
+    if context.user_data.get("awaiting_grp_action") == "add":
+        try:
+            new_gid = int(text)
+            all_current = get_target_group_chat_ids()
+            if len(all_current) >= MAX_FORWARDING_GROUPS:
+                context.user_data.pop("awaiting_grp_action", None)
+                msg_text, markup = build_groups_list_view()
+                await msg_obj.reply_text(
+                    f"⚠️ <b>Maximum Group Limit Reached</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"You already have <b>{len(all_current)} / {MAX_FORWARDING_GROUPS} active groups</b>.\n"
+                    f"The system allows a minimum of 1 and maximum of 10 groups.\n"
+                    f"Please remove an existing group before adding a new one.",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=markup
+                )
+                return
+
+            if new_gid in all_current:
+                context.user_data.pop("awaiting_grp_action", None)
+                msg_text, markup = build_groups_list_view()
+                await msg_obj.reply_text(
+                    f"ℹ️ <b>Group Already Linked</b>\n"
+                    f"Group <code>{new_gid}</code> is already in the forwarding pool.",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=markup
+                )
+                return
+
+            ok, reason = add_dynamic_linked_group(new_gid)
+            context.user_data.pop("awaiting_grp_action", None)
+            if not ok:
+                msg_text, markup = build_groups_list_view()
+                await msg_obj.reply_text(f"⚠️ Could not add group: {reason}", parse_mode=ParseMode.HTML, reply_markup=markup)
+                return
+
+            try:
+                await context.bot.delete_my_commands(scope=BotCommandScopeChat(new_gid))
+            except Exception:
+                pass
+            msg_text, markup = build_groups_list_view()
+            new_total = len(get_target_group_chat_ids())
+            await msg_obj.reply_text(
+                f"✅ <b>Group Linked Successfully!</b> <code>{new_gid}</code>\n"
+                f"• <b>Active Groups:</b> <code>{new_total} / {MAX_FORWARDING_GROUPS}</code> (Limit: 1 - 10)\n"
+                f"• Commands wiped from group menu (0 commands).\n"
+                f"• Forwarding active immediately with custom buttons.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=markup
+            )
+            return
+        except ValueError:
+            await msg_obj.reply_text(
+                "❌ <b>Invalid Group Chat ID</b>\n"
+                "Must be a numerical chat ID (e.g. <code>-1004473973263</code>).\n"
+                "Please send a valid chat ID or click Cancel:",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ Cancel", callback_data="grp_list")]
+                ])
+            )
+            return
+
+    # Check if admin was in middle of renaming, updating URL, or adding a button
+    awaiting = context.user_data.get("awaiting_btn_action")
+    if awaiting and isinstance(awaiting, dict):
+        action = awaiting.get("action")
+        target_id = awaiting.get("id")
+        buttons = get_custom_link_buttons()
+
+        if action == "rename" and target_id:
+            found = next((b for b in buttons if str(b["id"]) == str(target_id)), None)
+            if found:
+                old_name = found["text"]
+                found["text"] = text
+                save_custom_link_buttons(buttons)
+                context.user_data.pop("awaiting_btn_action", None)
+                _, detail_kb = build_button_detail_view(found["id"])
+                await msg_obj.reply_text(
+                    f"✅ <b>Button Renamed!</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"• <b>Old:</b> <code>{html.escape(old_name)}</code>\n"
+                    f"• <b>New:</b> <code>{html.escape(text)}</code>\n"
+                    f"• <b>URL:</b> <code>{html.escape(found['url'])}</code>\n"
+                    f"• <b>Synced:</b> <code>Cloud DB 🔒</code>",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=detail_kb
+                )
+                return
+
+        elif action == "reurl" and target_id:
+            found = next((b for b in buttons if str(b["id"]) == str(target_id)), None)
+            if found:
+                clean_url = normalize_button_url(text)
+                if not clean_url:
+                    await msg_obj.reply_text(
+                        "❌ <b>Invalid URL or Bot Username</b>\n"
+                        "Link must start with <code>https://</code>, <code>http://</code>, or be a bot username like <code>@bot_username</code>.\n"
+                        "Please send a valid link or click Cancel:",
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("❌ Cancel", callback_data=f"link_view_{found['id']}")]
+                        ])
+                    )
+                    return
+                old_url = found["url"]
+                found["url"] = clean_url
+                save_custom_link_buttons(buttons)
+                context.user_data.pop("awaiting_btn_action", None)
+                _, detail_kb = build_button_detail_view(found["id"])
+                await msg_obj.reply_text(
+                    f"✅ <b>Button URL Updated!</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"• <b>Button:</b> <code>{html.escape(found['text'])}</code>\n"
+                    f"• <b>New URL:</b> <code>{html.escape(clean_url)}</code>\n"
+                    f"• <b>Synced:</b> <code>Cloud DB 🔒</code>",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=detail_kb
+                )
+                return
+
+        elif action == "add":
+            b_name, raw_url = "", ""
+            if "|" in text:
+                parts = text.split("|", 1)
+                b_name = parts[0].strip()
+                raw_url = parts[1].strip()
+            else:
+                parts = text.split()
+                if len(parts) >= 2:
+                    raw_url = parts[-1].strip()
+                    b_name = " ".join(parts[:-1]).strip()
+
+            clean_url = normalize_button_url(raw_url)
+            if not b_name or not clean_url:
+                await msg_obj.reply_text(
+                    "❌ <b>Invalid Format</b>\n"
+                    "Please provide button name and link or bot username separated by <code>|</code>:\n"
+                    "<code>Button Name | @bot_username</code>\n"
+                    "<i>or:</i> <code>Button Name | https://yourlink.com</code>\n\n"
+                    "<i>Example:</i> <code>📢 Telegram Channel | @mychannel</code>",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("❌ Cancel", callback_data="link_list")]
+                    ])
+                )
+                return
+
+            new_id = str(len(buttons) + 1)
+            buttons.append({"id": new_id, "text": b_name, "url": clean_url})
+            save_custom_link_buttons(buttons)
+            context.user_data.pop("awaiting_btn_action", None)
+            _, detail_kb = build_button_detail_view(new_id)
+            await msg_obj.reply_text(
+                f"✅ <b>New Custom Button Added!</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>Label:</b> <code>{html.escape(b_name)}</code>\n"
+                f"• <b>Link:</b> <code>{html.escape(clean_url)}</code>\n"
+                f"• <b>Total Active Buttons:</b> <code>{len(buttons)}</code> (side-by-side in group OTPs)\n"
+                f"• <b>Synced:</b> <code>Cloud DB 🔒</code>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=detail_kb
+            )
+            return
 
 # ==========================================
 # 13. Diagnostics (--test mode)
@@ -2350,6 +3369,14 @@ async def main():
     application.add_handler(CommandHandler("resetname",    resetname_command,    filters=_private))
     application.add_handler(CommandHandler("setlink",      setlink_command,      filters=_private))
     application.add_handler(CommandHandler("removelink",   removelink_command,   filters=_private))
+    application.add_handler(CommandHandler("setbtnname",   setbtnname_command,   filters=_private))
+    application.add_handler(CommandHandler("setbtnurl",    setbtnurl_command,    filters=_private))
+    application.add_handler(CommandHandler("addgroup",     addgroup_command,     filters=_private))
+    application.add_handler(CommandHandler("linkgroup",    addgroup_command,     filters=_private))
+    application.add_handler(CommandHandler("delgroup",     delgroup_command,     filters=_private))
+    application.add_handler(CommandHandler("unlinkgroup",  delgroup_command,     filters=_private))
+    application.add_handler(CommandHandler("groups",       groups_command,       filters=_private))
+    application.add_handler(CommandHandler("listgroups",   groups_command,       filters=_private))
     application.add_handler(CommandHandler("restart",      restart_command,      filters=_private))
     application.add_handler(CallbackQueryHandler(admin_callback_handler))
     application.add_handler(MessageHandler(_private & filters.TEXT & ~filters.COMMAND, keyboard_button_handler))
@@ -2390,8 +3417,8 @@ async def main():
         asyncio.create_task(periodic_db_cleanup_loop())
         asyncio.create_task(periodic_gist_sync_loop())
         try:
-            # 1. COMPLETELY WIPE commands from ALL groups
-            for sc in (BotCommandScopeAllGroupChats(), BotCommandScopeAllChatAdministrators()):
+            # 1. COMPLETELY WIPE commands from DEFAULT scope and ALL groups
+            for sc in (BotCommandScopeDefault(), BotCommandScopeAllGroupChats(), BotCommandScopeAllChatAdministrators()):
                 try:
                     await application.bot.delete_my_commands(scope=sc)
                 except Exception:
@@ -2402,9 +3429,8 @@ async def main():
                 except Exception:
                     pass
 
-            # 2. In private DMs and default scope: strictly ONLY /start command
+            # 2. In private DMs: strictly ONLY /start command
             start_only = [BotCommand("start", "🚀 Start / Admin Dashboard")]
-            await application.bot.set_my_commands(start_only, scope=BotCommandScopeDefault())
             await application.bot.set_my_commands(start_only, scope=BotCommandScopeAllPrivateChats())
             for aid in ADMIN_USER_IDS:
                 try:
