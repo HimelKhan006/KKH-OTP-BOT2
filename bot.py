@@ -1872,13 +1872,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML,
             reply_markup=get_admin_reply_keyboard(),
         )
-        return
 
     msg, markup = build_status_dashboard()
     await msg_obj.reply_text(
         msg,
         parse_mode=ParseMode.HTML,
-        reply_markup=markup,
+        reply_markup=get_admin_reply_keyboard(),
     )
 
 async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
