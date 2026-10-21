@@ -69,6 +69,7 @@ from telegram import (
     BotCommandScopeAllChatAdministrators,
     BotCommandScopeChat,
     MenuButtonCommands,
+    MenuButtonDefault,
 )
 from telegram.constants import ParseMode
 from telegram.error import RetryAfter, TimedOut, NetworkError, Conflict
@@ -1887,6 +1888,17 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
         return
 
+    # Lock Telegram Menu Button in background task so start command response is instant (zero lag)
+    async def _bg_lock_menu():
+        try:
+            await context.bot.set_chat_menu_button(chat_id=chat.id, menu_button=MenuButtonDefault())
+            await context.bot.set_my_commands(
+                [BotCommand("start", "🚀 Start / Admin Dashboard")],
+                scope=BotCommandScopeChat(chat.id)
+            )
+        except Exception:
+            pass
+    asyncio.create_task(_bg_lock_menu())
     is_start = bool(msg_obj.text and msg_obj.text.strip().startswith("/start"))
     # Always show the keyboard (whether /start or any other trigger)
     await msg_obj.reply_text(
@@ -3868,12 +3880,12 @@ async def main():
             await application.bot.set_my_commands(start_only, scope=BotCommandScopeAllPrivateChats())
             for aid in ADMIN_USER_IDS:
                 try:
-                    # Set /start for each admin DM — do NOT delete first (that would wipe it)
                     await application.bot.set_my_commands(start_only, scope=BotCommandScopeChat(aid))
+                    await application.bot.set_chat_menu_button(chat_id=aid, menu_button=MenuButtonDefault())
                 except Exception:
                     pass
-            await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
-            logger.info("✅ Command scopes configured: ONLY /start in DM, 0 commands in groups.")
+            await application.bot.set_chat_menu_button(menu_button=MenuButtonDefault())
+            logger.info("✅ Telegram Bot Menu: MenuButtonDefault active (keyboard icon always visible in search/input bar).")
         except Exception as e:
             logger.warning(f"Error configuring command menu scopes: {e}")
         logger.info("✅ OTP WAVE is fully online and monitoring incoming messages...")

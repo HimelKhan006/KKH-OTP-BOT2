@@ -37,25 +37,27 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Cancel Any Other Running Instances
+      - name: Cancel Any Other Running or Queued Instances
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          echo "🔍 Cancelling any other active runs..."
-          curl -s -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/runs?status=in_progress&per_page=20" \
-            | python3 -c "
-          import sys, json
-          runs = json.load(sys.stdin).get('workflow_runs', [])
-          for r in runs:
-              if str(r['id']) != '${{ github.run_id }}':
-                  print(r['id'])
-          " | while read r_id; do
-            echo "  🛑 Cancelling old run #$r_id..."
-            curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id/cancel" || true
+          echo "🔍 Cancelling any other active or queued runs..."
+          for st in in_progress queued; do
+            curl -s -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs?status=$st&per_page=30" \
+              | python3 -c "
+            import sys, json
+            runs = json.load(sys.stdin).get('workflow_runs', [])
+            for r in runs:
+                if str(r['id']) != '${{ github.run_id }}':
+                    print(r['id'])
+            " | while read r_id; do
+              echo "  🛑 Cancelling older run #$r_id ($st)..."
+              curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id/cancel" || true
+            done
           done
-          echo "✅ Cleanup done."
+          echo "✅ Old and queued runs cancelled."
 
       - name: Clear Old Completed Workflow History
         env:
