@@ -1180,15 +1180,41 @@ def extract_country_name(range_str: str) -> str:
 def mask_phone_number(num_str: str) -> str:
     if not num_str:
         return ""
-    clean = str(num_str).strip().lstrip("+")
-    length = len(clean)
-    if length <= 4:
-        masked = clean
-    elif length <= 6:
-        masked = clean[:2] + "****" + clean[-2:]
-    else:
-        masked = f"{clean[:4]}****{clean[-3:]}"
-    return f"+{masked}"
+    clean = str(num_str).strip().replace(" ", "").replace("\u00a0", "")
+    if "*" in clean:
+        # Standardize existing masks (e.g. 0*** or *** -> ****)
+        masked = re.sub(r"\d?\*{2,}", "****", clean)
+        masked = re.sub(r"\*+", "****", masked)
+        if not masked.startswith("+"):
+            masked = f"+{masked}"
+        return masked
+    digits = re.sub(r"\D", "", clean)
+    if not digits:
+        return clean
+
+    # Match country calling code prefix from PREFIX_ISO_MAP (lengths 4, 3, 2, 1)
+    found_prefix = ""
+    for p_len in [4, 3, 2, 1]:
+        cand = digits[:p_len]
+        if cand in PREFIX_ISO_MAP and len(digits) > p_len:
+            found_prefix = cand
+            break
+
+    if found_prefix:
+        rest = digits[len(found_prefix):]
+        if len(rest) >= 6:
+            return f"+{found_prefix}{rest[:3]}****{rest[-3:]}"
+        elif len(rest) >= 4:
+            return f"+{found_prefix}{rest[:2]}****{rest[-2:]}"
+        elif len(rest) > 2:
+            return f"+{found_prefix}{rest[:1]}****{rest[-1:]}"
+        return f"+{found_prefix}{rest}"
+
+    if len(digits) >= 8:
+        return f"+{digits[:4]}****{digits[-3:]}"
+    elif len(digits) >= 5:
+        return f"+{digits[:2]}****{digits[-2:]}"
+    return f"+{digits}"
 
 def extract_otp_code(text: str) -> str:
     if not text:
@@ -1310,7 +1336,7 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
 # 10. Clean OTP Notification Formatter (No Language)
 # ==========================================
 def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = None) -> tuple:
-    """Returns (text, otp_code, raw_message) with clean layout (SMS language removed completely)."""
+    """Returns (text, otp_code, raw_message) with clean professional layout."""
     if not sms_format:
         try:
             sms_format = load_stored_data().get("sms_format", "short")
@@ -1331,39 +1357,50 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
 
     country_name = get_country_full_name(iso, item)
 
-    DIVIDER = "━━━━━━━━━━━━━━━━━━━━"
-    header = "⚡ <b>NEW SMS RECEIVED</b> ⚡"
-
-    lines = [header, DIVIDER]
-
-    if masked_number:
-        lines.append(f"• <b>Number:</b> {flag} <code>{masked_number}</code>")
-    else:
-        lines.append(f"• <b>Country:</b> {flag} <code>{country_name} ({iso})</code>")
-
-    # Check if WhatsApp service - either by source OR message text content
+    # Detect service name smartly
     low_source = source.lower()
     low_msg = raw_message.lower()
     wa_keywords = ["whatsapp", "‏واتساب‏", "واتساب", "ватсап", "wa code", "wa.me"]
-    is_wa = "whatsapp" in low_source or any(k in low_msg for k in wa_keywords)
-    if is_wa and "whatsapp" not in low_source:
+    tg_keywords = ["telegram", "telegram code", "t.me"]
+
+    if "whatsapp" in low_source or any(k in low_msg for k in wa_keywords):
         source = "WhatsApp"
+    elif "telegram" in low_source or any(k in low_msg for k in tg_keywords):
+        source = "Telegram"
+    elif "google" in low_source or "google" in low_msg or raw_message.startswith("G-"):
+        source = "Google"
 
-    lines.append(f"• <b>Service:</b> <code>{source}</code>")
+    iso_badge = f"{flag}\u202f<b>{iso}</b>" if iso else flag
+    header = f"⚡ <b>NEW SMS RECEIVED | {iso_badge}</b>"
+    num_part = f"<code>{masked_number}</code>" if masked_number else f"<code>{country_name}</code>"
+    line2 = f"\u00a0\u00a0\u00a0\u00a0<b>{source}</b>  |  {num_part} ⚡"
 
-    if masked_number:
-        lines.append(f"• <b>Country:</b> {flag} <code>{country_name} ({iso})</code>")
-
-    # Message Content block (SMS Language removed completely):
     clean_msg = raw_message.strip()
-    if clean_msg and (not otp_code or sms_format == "long"):
-        lines.append("")
-        lines.append("💬 <b>Message Content:</b>")
-        lines.append(f"<code>{html.escape(clean_msg, quote=False)}</code>")
+    if sms_format == "long":
+        # Detailed mode: header + line2 + expandable message content blockquote
+        if clean_msg:
+            full_text = (
+                f"{header}\n"
+                f"{line2}\n\n"
+                f"💬 <b>Message Content:</b>\n"
+                f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
+            )
+        else:
+            full_text = f"{header}\n{line2}"
+    else:
+        # Professional Short mode (default):
+        # ⚡ NEW SMS RECEIVED | 🇳🇵 NP
+        #     WhatsApp  |  +977980****456 ⚡
+        if clean_msg and not otp_code:
+            full_text = (
+                f"{header}\n"
+                f"{line2}\n\n"
+                f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
+            )
+        else:
+            full_text = f"{header}\n{line2}"
 
-    lines.append(DIVIDER)
-
-    return "\n".join(lines), otp_code, raw_message
+    return full_text, otp_code, raw_message
 
 # ==========================================
 # 11. Telegram Bot Engine & Polling Loop
@@ -1958,41 +1995,35 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
     msg = (
         "📋 <b>SMS Delivery Format Configuration</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Active Mode:</b> <code>{'Short (Modern ⚡)' if curr_fmt == 'short' else 'Long (Detailed 📜)'}</code>\n"
+        f"• <b>Active Mode:</b> <code>{'Short (Single-Line ⚡)' if curr_fmt == 'short' else 'Long (Detailed 📜)'}</code>\n"
         f"• <b>Target Groups:</b> <code>Simultaneous Multi-Group ⚡</code>\n"
         f"• <b>Cloud Database:</b> <code>Synced & Encrypted 🔒</code>\n\n"
         "<b>Available Format Modes:</b>\n"
         f"• <b>Short Format:</b> {short_active}\n"
-        "  Clean & compact modern layout. Displays flag, masked phone number, country, and service with quick-copy OTP button.\n\n"
+        "  Clean, ultra-compact single-line layout (⚡ NEW SMS RECEIVED ⚡ + Flag ISO | Number | Service) with side-by-side OTP button.\n\n"
         f"• <b>Long Format:</b> {long_active}\n"
-        "  Comprehensive layout. Displays all header fields plus the full original SMS message content body.\n"
+        "  Comprehensive layout. Displays tag, single-line info, plus expandable sleek blockquote for full message body.\n"
     )
 
     if preview_mode == "short":
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━\n"
-            "👁️ <b>Live Preview (Short Format):</b>\n"
-            "⚡ <b>NEW SMS RECEIVED</b> ⚡\n"
+            "<b>Live Preview (Short Format):</b>\n"
+            "⚡ <b>NEW SMS RECEIVED | 🇳🇵\u00a0<b>NP</b></b>\n"
+            "\u00a0\u00a0\u00a0\u00a0<b>WhatsApp</b>  |  <code>+977980****456</code> ⚡\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "• <b>Number:</b> 🇳🇵 <code>+977 9801***456</code>\n"
-            "• <b>Service:</b> <code>WhatsApp</code>\n"
-            "• <b>Country:</b> 🇳🇵 <code>Nepal (NP)</code>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Buttons: [📋 492810] [🤖 GET NUMBER]</i>"
+            "<i>Buttons (Side-by-Side): [ 492810 ] [ 🤖 GET NUMBER ]</i>"
         )
     elif preview_mode == "long":
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━\n"
-            "👁️ <b>Live Preview (Long Format):</b>\n"
-            "⚡ <b>NEW SMS RECEIVED</b> ⚡\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "• <b>Number:</b> 🇳🇵 <code>+977 9801***456</code>\n"
-            "• <b>Service:</b> <code>WhatsApp</code>\n"
-            "• <b>Country:</b> 🇳🇵 <code>Nepal (NP)</code>\n\n"
+            "<b>Live Preview (Long Format):</b>\n"
+            "⚡ <b>NEW SMS RECEIVED | 🇳🇵\u00a0<b>NP</b></b>\n"
+            "\u00a0\u00a0\u00a0\u00a0<b>WhatsApp</b>  |  <code>+977980****456</code> ⚡\n\n"
             "💬 <b>Message Content:</b>\n"
-            "<code>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</code>\n"
+            "<blockquote expandable>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Buttons: [📋 492810] [🤖 GET NUMBER]</i>"
+            "<i>Buttons (Side-by-Side): [ 492810 ] [ 🤖 GET NUMBER ]</i>"
         )
     else:
         msg += "\n<i>Choose an option below to set format or view a live preview:</i>"
@@ -2003,8 +2034,8 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'long' else ''}📜 Set Long", callback_data="fmt_set_long"),
         ],
         [
-            InlineKeyboardButton("👁️ Preview Short", callback_data="fmt_preview_short"),
-            InlineKeyboardButton("👁️ Preview Long", callback_data="fmt_preview_long"),
+            InlineKeyboardButton("Preview Short", callback_data="fmt_preview_short"),
+            InlineKeyboardButton("Preview Long", callback_data="fmt_preview_long"),
         ],
         [
             InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")
