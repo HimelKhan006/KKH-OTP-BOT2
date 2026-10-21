@@ -1379,9 +1379,9 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     if sms_format != "long":
         if otp_code:
             full_text = (
-                f"<code>"
-                f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
+                f"<b>📩   SMS RECEIVED</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"<code>"
                 f"{L_COUNTRY}   {country_plain}\n"
                 f"{L_FROM}   {source_plain}\n"
                 f"{L_TO}   {num_plain}\n"
@@ -1390,21 +1390,21 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             )
         elif clean_msg:
             full_text = (
-                f"<code>"
-                f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
+                f"<b>📩   SMS RECEIVED</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"<code>"
                 f"{L_COUNTRY}   {country_plain}\n"
                 f"{L_FROM}   {source_plain}\n"
                 f"{L_TO}   {num_plain}"
                 f"</code>\n\n"
-                f"💬 <b>𝐅𝐮𝐥𝐥 𝐌𝐞𝐬𝐬𝐚𝐠𝐞:</b>\n"
+                f"💬 <b>Full Message:</b>\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
         else:
             full_text = (
-                f"<code>"
-                f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
+                f"<b>📩   SMS RECEIVED</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"<code>"
                 f"{L_COUNTRY}   {country_plain}\n"
                 f"{L_FROM}   {source_plain}\n"
                 f"{L_TO}   {num_plain}"
@@ -1416,22 +1416,22 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         otp_val = otp_code if otp_code else "N/A"
         if clean_msg:
             full_text = (
-                f"<code>"
-                f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
+                f"<b>📩   SMS RECEIVED</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"<code>"
                 f"{L_COUNTRY}   {country_plain}\n"
                 f"{L_FROM}   {source_plain}\n"
                 f"{L_TO}   {num_plain}\n"
                 f"{L_OTP}   {otp_val}"
                 f"</code>\n\n"
-                f"💬 <b>𝐅𝐮𝐥𝐥 𝐌𝐞𝐬𝐬𝐚𝐠𝐞:</b>\n"
+                f"💬 <b>Full Message:</b>\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
         else:
             full_text = (
-                f"<code>"
-                f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
+                f"<b>📩   SMS RECEIVED</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"<code>"
                 f"{L_COUNTRY}   {country_plain}\n"
                 f"{L_FROM}   {source_plain}\n"
                 f"{L_TO}   {num_plain}"
@@ -2076,9 +2076,9 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>📺 Live Preview — Short:</b>\n\n"
-            "<code>"
-            "📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
+            "<b>📩   SMS RECEIVED</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
+            "<code>"
             "🌍 Country   :   🇳🇵 Nepal (NP)\n"
             "🏷️ From      :   WhatsApp\n"
             "☎️ To        :   +977980****456\n"
@@ -2091,15 +2091,15 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
-            "<code>"
-            "📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
+            "<b>📩   SMS RECEIVED</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
+            "<code>"
             "🌍 Country   :   🇳🇵 Nepal (NP)\n"
             "🏷️ From      :   WhatsApp\n"
             "☎️ To        :   +977980****456\n"
             "🔑 OTP Code  :   492810"
             "</code>\n\n"
-            "💬 <b>𝐅𝐮𝐥𝐥 𝐌𝐞𝐬𝐬𝐚𝐠𝐞:</b>\n"
+            "💬 <b>Full Message:</b>\n"
             "<blockquote expandable>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Buttons: [ 492810 ] [ Number Bot ]</i>"
@@ -3966,52 +3966,59 @@ async def main():
 
     start_health_server()
 
+async def setup_bot_commands_and_menus(application: Application):
+    """Configures command menus in the background without blocking polling startup."""
+    try:
+        for sc in (BotCommandScopeDefault(), BotCommandScopeAllGroupChats(), BotCommandScopeAllChatAdministrators()):
+            try:
+                await application.bot.delete_my_commands(scope=sc)
+            except Exception:
+                pass
+        for gid in get_target_group_chat_ids():
+            try:
+                await application.bot.delete_my_commands(scope=BotCommandScopeChat(gid))
+            except Exception:
+                pass
+
+        start_only = [BotCommand("start", "🚀 Start / Admin Dashboard")]
+        await application.bot.set_my_commands(start_only, scope=BotCommandScopeAllPrivateChats())
+        for aid in ADMIN_USER_IDS:
+            try:
+                await application.bot.set_my_commands(start_only, scope=BotCommandScopeChat(aid))
+                await application.bot.set_chat_menu_button(chat_id=aid, menu_button=MenuButtonDefault())
+            except Exception:
+                pass
+        await application.bot.set_chat_menu_button(menu_button=MenuButtonDefault())
+        logger.info("✅ Telegram Bot Menu: MenuButtonDefault active in background.")
+    except Exception as e:
+        logger.warning(f"Error configuring command menu scopes: {e}")
+
     try:
         await application.initialize()
         await application.start()
+
+        # 1. Start Telegram Polling IMMEDIATELY (0ms delay) so commands and buttons respond instantly!
+        # drop_pending_updates=False ensures buttons or /start clicked during restart are never dropped/ignored.
+        for attempt in range(1, 6):
+            try:
+                await application.updater.start_polling(drop_pending_updates=False)
+                logger.info("✅ Telegram Polling active & answering user updates immediately.")
+                break
+            except Conflict:
+                logger.warning(f"⚠️ Telegram conflict (previous session still releasing). Waiting 2s (attempt {attempt}/5)...")
+                await asyncio.sleep(2.0)
+            except Exception as poll_err:
+                logger.warning(f"Telegram polling notice on attempt {attempt}: {poll_err}")
+                await asyncio.sleep(1.5)
+
+        # 2. Run background tasks concurrently (does NOT block button/command responses)
         asyncio.create_task(send_startup_announcement(application))
         asyncio.create_task(poll_incoming_messages(application))
         asyncio.create_task(periodic_db_cleanup_loop())
         asyncio.create_task(periodic_gist_sync_loop())
-        try:
-            # 1. COMPLETELY WIPE commands from DEFAULT scope and ALL groups
-            for sc in (BotCommandScopeDefault(), BotCommandScopeAllGroupChats(), BotCommandScopeAllChatAdministrators()):
-                try:
-                    await application.bot.delete_my_commands(scope=sc)
-                except Exception:
-                    pass
-            for gid in get_target_group_chat_ids():
-                try:
-                    await application.bot.delete_my_commands(scope=BotCommandScopeChat(gid))
-                except Exception:
-                    pass
+        asyncio.create_task(setup_bot_commands_and_menus(application))
 
-            # 2. In private DMs: strictly ONLY /start command
-            start_only = [BotCommand("start", "🚀 Start / Admin Dashboard")]
-            await application.bot.set_my_commands(start_only, scope=BotCommandScopeAllPrivateChats())
-            for aid in ADMIN_USER_IDS:
-                try:
-                    await application.bot.set_my_commands(start_only, scope=BotCommandScopeChat(aid))
-                    await application.bot.set_chat_menu_button(chat_id=aid, menu_button=MenuButtonDefault())
-                except Exception:
-                    pass
-            await application.bot.set_chat_menu_button(menu_button=MenuButtonDefault())
-            logger.info("✅ Telegram Bot Menu: MenuButtonDefault active (keyboard icon always visible in search/input bar).")
-        except Exception as e:
-            logger.warning(f"Error configuring command menu scopes: {e}")
         logger.info("✅ OTP WAVE is fully online and monitoring incoming messages...")
-
-        # Robust polling starter with automatic conflict recovery
-        for attempt in range(1, 6):
-            try:
-                await application.updater.start_polling(drop_pending_updates=True)
-                break
-            except Conflict:
-                logger.warning(f"⚠️ Telegram conflict (previous session still releasing). Waiting 4s (attempt {attempt}/5)...")
-                await asyncio.sleep(4.0)
-            except Exception as poll_err:
-                logger.warning(f"Telegram polling warning on attempt {attempt}: {poll_err}")
-                await asyncio.sleep(3.0)
 
         # Resilient keepalive loop with scheduled zero-restart session handover
         start_time = time.time()
