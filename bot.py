@@ -1837,7 +1837,7 @@ def get_admin_reply_keyboard() -> ReplyKeyboardMarkup:
         [KeyboardButton("✏️ Bot Name"), KeyboardButton("🔗 Link Button")],
         [KeyboardButton("👥 Linked Groups"), KeyboardButton("🔄 Restart")],
     ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
 async def sync_data_to_secret_db():
     """Immediately sync all persistent state and settings secretly to the cloud database."""
@@ -1866,12 +1866,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     is_start = bool(msg_obj.text and msg_obj.text.strip().startswith("/start"))
+    # Always show the keyboard (whether /start or any other trigger)
+    await msg_obj.reply_text(
+        "⚡ <b>Welcome to Admin Control!</b> Menu buttons ready below.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_admin_reply_keyboard(),
+    )
     if is_start:
-        await msg_obj.reply_text(
-            "⚡ <b>Welcome to Admin Control!</b> Menu buttons ready below.",
-            parse_mode=ParseMode.HTML,
-            reply_markup=get_admin_reply_keyboard(),
-        )
         return
 
     msg, markup = build_status_dashboard()
