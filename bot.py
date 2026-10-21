@@ -1467,28 +1467,38 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
 
     # Build inline buttons: OTP code button + optional Admin Custom Link buttons (side-by-side)
     markup = None
+    buttons = []
     try:
-        buttons = []
-        if otp:
-            buttons.append([InlineKeyboardButton(otp, copy_text=CopyTextButton(text=otp))])
-
         custom_buttons = get_custom_link_buttons()
+        custom_btns = []
         if custom_buttons:
-            custom_row = []
             for cb in custom_buttons:
                 b_text = str(cb.get("text", "")).strip()
                 raw_u  = str(cb.get("url", "")).strip()
                 norm_u = normalize_button_url(raw_u) or raw_u
                 if b_text and norm_u.startswith(("http://", "https://", "tg://")):
-                    custom_row.append(InlineKeyboardButton(b_text, url=norm_u))
+                    custom_btns.append(InlineKeyboardButton(b_text, url=norm_u))
 
-            # Display multiple custom buttons side-by-side!
-            if len(custom_row) <= 3:
-                if custom_row:
-                    buttons.append(custom_row)
+        otp_btn = InlineKeyboardButton(otp, copy_text=CopyTextButton(text=otp)) if otp else None
+
+        if otp_btn and custom_btns:
+            # Show OTP button side-by-side with custom link button(s) in the same row!
+            if len(custom_btns) <= 2:
+                # 1 OTP + up to 2 custom buttons: all in 1 row side-by-side!
+                buttons.append([otp_btn] + custom_btns)
             else:
-                for i in range(0, len(custom_row), 2):
-                    buttons.append(custom_row[i:i+2])
+                # 1 OTP + 1st custom button on row 1, rest in pairs below
+                buttons.append([otp_btn, custom_btns[0]])
+                for i in range(1, len(custom_btns), 2):
+                    buttons.append(custom_btns[i:i+2])
+        elif otp_btn:
+            buttons.append([otp_btn])
+        elif custom_btns:
+            if len(custom_btns) <= 3:
+                buttons.append(custom_btns)
+            else:
+                for i in range(0, len(custom_btns), 2):
+                    buttons.append(custom_btns[i:i+2])
 
         if buttons:
             markup = InlineKeyboardMarkup(buttons)
