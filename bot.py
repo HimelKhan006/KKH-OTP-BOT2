@@ -1336,7 +1336,7 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
 # 10. Clean OTP Notification Formatter (No Language)
 # ==========================================
 def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = None) -> tuple:
-    """Returns (text, otp_code, raw_message) with clean professional layout."""
+    """Returns (text, otp_code, raw_message) with a fully professional layout."""
     if not sms_format:
         try:
             sms_format = load_stored_data().get("sms_format", "short")
@@ -1352,53 +1352,83 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
 
     country_iso   = get_country_iso_display(item).strip()
     parts = country_iso.split(maxsplit=1)
-    flag = parts[0] if parts else "🌐"
-    iso  = parts[1] if len(parts) > 1 else "XX"
+    flag  = parts[0] if parts else "🌐"
+    iso   = parts[1] if len(parts) > 1 else "XX"
+    country_name  = get_country_full_name(iso, item)
 
-    country_name = get_country_full_name(iso, item)
-
-    # Detect service name smartly
+    # Smart service detection
     low_source = source.lower()
-    low_msg = raw_message.lower()
+    low_msg    = raw_message.lower()
     wa_keywords = ["whatsapp", "‏واتساب‏", "واتساب", "ватсап", "wa code", "wa.me"]
     tg_keywords = ["telegram", "telegram code", "t.me"]
-
     if "whatsapp" in low_source or any(k in low_msg for k in wa_keywords):
+        service_icon = "💬"
         source = "WhatsApp"
     elif "telegram" in low_source or any(k in low_msg for k in tg_keywords):
+        service_icon = "✈️"
         source = "Telegram"
     elif "google" in low_source or "google" in low_msg or raw_message.startswith("G-"):
+        service_icon = "🔵"
         source = "Google"
+    else:
+        service_icon = "📩"
 
-    iso_badge = f"{flag}\u202f<b>{iso}</b>" if iso else flag
-    header = f"⚡ <b>NEW SMS RECEIVED | {iso_badge}</b>"
-    num_part = f"<code>{masked_number}</code>" if masked_number else f"<code>{country_name}</code>"
-    line2 = f"<b>{source}</b> | {num_part} ⚡"
+    # Display number / fallback to country name
+    num_display = f"<code>{masked_number}</code>" if masked_number else f"<code>{html.escape(country_name)}</code>"
+
+    # OTP highlight in text if present
+    otp_line = f"\n🔑 <b>OTP Code:</b>  <code>{html.escape(otp_code)}</code>" if otp_code else ""
 
     clean_msg = raw_message.strip()
-    if sms_format == "long":
-        # Detailed mode: header + line2 + expandable message content blockquote
+
+    # ── Short format (default) ───────────────────────────────────────────────
+    if sms_format != "long":
+        if otp_code:
+            # Clean compact card with OTP highlighted
+            full_text = (
+                f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"{service_icon} <b>From:</b>  <b>{html.escape(source)}</b>\n"
+                f"📱 <b>To:</b>      {num_display}"
+                f"{otp_line}"
+            )
+        elif clean_msg:
+            # No OTP — show expandable message body
+            full_text = (
+                f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"{service_icon} <b>From:</b>  <b>{html.escape(source)}</b>\n"
+                f"📱 <b>To:</b>      {num_display}\n\n"
+                f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
+            )
+        else:
+            full_text = (
+                f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"{service_icon} <b>From:</b>  <b>{html.escape(source)}</b>\n"
+                f"📱 <b>To:</b>      {num_display}"
+            )
+
+    # ── Long / Detailed format ───────────────────────────────────────────────
+    else:
         if clean_msg:
             full_text = (
-                f"{header}\n"
-                f"{line2}\n\n"
-                f"💬 <b>Message Content:</b>\n"
+                f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"{service_icon} <b>From:</b>  <b>{html.escape(source)}</b>\n"
+                f"📱 <b>To:</b>      {num_display}"
+                f"{otp_line}\n\n"
+                f"💬 <b>Full Message:</b>\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
         else:
-            full_text = f"{header}\n{line2}"
-    else:
-        # Professional Short mode (default):
-        # ⚡NEW SMS RECEIVED | 🇳🇵 NP
-        #  WhatsApp | +977980****456⚡
-        if clean_msg and not otp_code:
             full_text = (
-                f"{header}\n"
-                f"{line2}\n\n"
-                f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
+                f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"{service_icon} <b>From:</b>  <b>{html.escape(source)}</b>\n"
+                f"📱 <b>To:</b>      {num_display}"
+                f"{otp_line}"
             )
-        else:
-            full_text = f"{header}\n{line2}"
 
     return full_text, otp_code, raw_message
 
@@ -1866,30 +1896,29 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     masked_key = f"{client.api_key[:8]}...{client.api_key[-4:]}" if len(client.api_key) > 12 else (client.api_key or "<i>Missing</i>")
 
     msg = (
-        f"⚡ <b>{active_bot_name} 24/7 (Zero-Restart Engine)</b>\n"
+        f"⚡ <b>{html.escape(active_bot_name)}</b>  •  <code>LIVE & ONLINE</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Engine Status:</b> <code>100% Online & Forwarding ✅</code>\n"
-        f"• <b>Bot Name:</b> <code>{active_bot_name}</code>\n"
-        f"• <b>Handover Mode:</b> <code>Zero-Restart Handover Active 🔄</code>\n"
-        f"• <b>Session Uptime:</b> <code>{uptime_str}</code>\n"
-        f"• <b>Next Handover:</b> {handover_info}\n"
-        f"• <b>Platform:</b> <code>Thirdwave IPRN (v1/traffic)</code>\n"
-        f"• <b>API Base:</b> <code>{client.base_url}</code>\n"
-        f"• <b>API Key:</b> <code>{masked_key}</code>\n"
-        f"• <b>Database:</b> <code>{gist_status}</code>\n"
-        f"• <b>Target Groups:</b> <code>{group_text}</code>\n"
-        f"• <b>OTPs Forwarded:</b> <code>{total_forwarded_count}</code> <i>(accumulated)</i>\n"
-        f"• <b>Lifetime DB:</b> <code>{db_count} total records</code>\n"
-        f"• <b>Poll Speed:</b> <code>{POLL_INTERVAL_SECONDS}s</code> (30 req/min limit)\n"
-        f"• <b>SMS Format:</b> <code>{fmt_label}</code>\n"
-        f"• <b>Link Button:</b> {link_str}\n"
+        f"🟢 <b>Engine:</b>      <code>100% Online ✅</code>\n"
+        f"⏱️ <b>Uptime:</b>      <code>{uptime_str}</code>\n"
+        f"🔄 <b>Handover:</b>    {handover_info}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🌐 <b>API Base:</b>    <code>{html.escape(client.base_url)}</code>\n"
+        f"🔑 <b>API Key:</b>     <code>{masked_key}</code>\n"
+        f"🗄️ <b>Database:</b>   <code>{gist_status}</code>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"👥 <b>Groups:</b>      <code>{group_text}</code>\n"
+        f"📨 <b>OTPs Today:</b>  <code>{total_forwarded_count} forwarded</code>\n"
+        f"📦 <b>DB Records:</b>  <code>{db_count} total</code>\n"
+        f"⚡ <b>Poll Rate:</b>   <code>every {POLL_INTERVAL_SECONDS}s</code>\n"
+        f"📋 <b>SMS Format:</b>  <code>{fmt_label}</code>\n"
+        f"🔗 <b>Buttons:</b>     {link_str}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"{country_lines}"
-        f"🔔 <i>Real-time seamless forwarding active. Zero restart alerts.</i>"
+        f"<i>🔔 Real-time forwarding active — zero restarts, always on.</i>"
     )
 
     keyboard = [
-        [InlineKeyboardButton("🔄 Refresh", callback_data="refresh_dash")],
+        [InlineKeyboardButton("🔄 Refresh Status", callback_data="refresh_dash")],
     ]
     return msg, InlineKeyboardMarkup(keyboard)
 
@@ -1947,9 +1976,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
     asyncio.create_task(_bg_lock_menu())
     is_start = bool(msg_obj.text and msg_obj.text.strip().startswith("/start"))
+    bot_name = get_bot_name()
     # Always show the keyboard (whether /start or any other trigger)
     await msg_obj.reply_text(
-        "⚡ <b>Welcome to Admin Control!</b> Menu buttons ready below.",
+        f"👑 <b>Welcome, Admin!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"<i>Logged in to <b>{html.escape(bot_name)}</b> Control Panel.\n"
+        f"Use the menu buttons below to manage the bot.</i>",
         parse_mode=ParseMode.HTML,
         reply_markup=get_admin_reply_keyboard(),
     )
@@ -2003,49 +2036,53 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
     long_active  = "✅ (Active)" if curr_fmt == "long" else "⚪"
 
     msg = (
-        "📋 <b>SMS Delivery Format Configuration</b>\n"
+        "📋 <b>SMS Format Configuration</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Active Mode:</b> <code>{'Short (Single-Line ⚡)' if curr_fmt == 'short' else 'Long (Detailed 📜)'}</code>\n"
-        f"• <b>Target Groups:</b> <code>Simultaneous Multi-Group ⚡</code>\n"
-        f"• <b>Cloud Database:</b> <code>Synced & Encrypted 🔒</code>\n\n"
-        "<b>Available Format Modes:</b>\n"
-        f"• <b>Short Format:</b> {short_active}\n"
-        "  Clean, ultra-compact single-line layout (⚡ NEW SMS RECEIVED ⚡ + Flag ISO | Number | Service) with side-by-side OTP button.\n\n"
-        f"• <b>Long Format:</b> {long_active}\n"
-        "  Comprehensive layout. Displays tag, single-line info, plus expandable sleek blockquote for full message body.\n"
+        f"🟢 <b>Active Mode:</b>   <code>{'Short ⚡' if curr_fmt == 'short' else 'Long 📜'}</code>\n\n"
+        "<b>Available Modes:</b>\n"
+        f"• <b>Short</b> {short_active}\n"
+        "  Compact card with From / To / OTP highlighted. Ideal for fast reading.\n\n"
+        f"• <b>Long</b> {long_active}\n"
+        "  Full card including expandable message body for complete SMS context.\n"
     )
 
     if preview_mode == "short":
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>Live Preview (Short Format):</b>\n"
-            "⚡ <b>NEW SMS RECEIVED | 🇳🇵\u00a0<b>NP</b></b>\n"
-            "<b>WhatsApp</b> | <code>+977980****456</code> ⚡\n"
+            "<b>👁 Live Preview — Short:</b>\n"
+            "📩 <b>SMS RECEIVED</b>  •  🇳🇵 <b>NP</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Buttons (Side-by-Side): [ 492810 ] [ 🤖 GET NUMBER ]</i>"
+            "💬 <b>From:</b>  <b>WhatsApp</b>\n"
+            "📱 <b>To:</b>    <code>+977980****456</code>\n"
+            "🔑 <b>OTP Code:</b>  <code>492810</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "<i>Buttons: [ 📋 492810 ] [ 🔢 Number Bot ]</i>"
         )
     elif preview_mode == "long":
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>Live Preview (Long Format):</b>\n"
-            "⚡ <b>NEW SMS RECEIVED | 🇳🇵\u00a0<b>NP</b></b>\n"
-            "<b>WhatsApp</b> | <code>+977980****456</code> ⚡\n\n"
-            "💬 <b>Message Content:</b>\n"
+            "<b>👁 Live Preview — Long:</b>\n"
+            "📩 <b>SMS RECEIVED</b>  •  🇳🇵 <b>NP</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "💬 <b>From:</b>  <b>WhatsApp</b>\n"
+            "📱 <b>To:</b>    <code>+977980****456</code>\n"
+            "🔑 <b>OTP Code:</b>  <code>492810</code>\n\n"
+            "💬 <b>Full Message:</b>\n"
             "<blockquote expandable>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Buttons (Side-by-Side): [ 492810 ] [ 🤖 GET NUMBER ]</i>"
+            "<i>Buttons: [ 📋 492810 ] [ 🔢 Number Bot ]</i>"
         )
     else:
-        msg += "\n<i>Choose an option below to set format or view a live preview:</i>"
+        msg += "\n<i>Choose an option below to set the format or preview it live:</i>"
 
     kb = [
         [
-            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'short' else ''}⚡ Set Short", callback_data="fmt_set_short"),
-            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'long' else ''}📜 Set Long", callback_data="fmt_set_long"),
+            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'short' else ''}⚡ Short Format", callback_data="fmt_set_short"),
+            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'long' else ''}📜 Long Format", callback_data="fmt_set_long"),
         ],
         [
-            InlineKeyboardButton("Preview Short", callback_data="fmt_preview_short"),
-            InlineKeyboardButton("Preview Long", callback_data="fmt_preview_long"),
+            InlineKeyboardButton("👁 Preview Short", callback_data="fmt_preview_short"),
+            InlineKeyboardButton("👁 Preview Long", callback_data="fmt_preview_long"),
         ],
         [
             InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")
@@ -3358,14 +3395,14 @@ async def send_startup_announcement(application: Application):
         return
 
     admin_msg = (
-        f"⚡ <b>{html.escape(get_bot_name())} 24/7 ONLINE</b>\n"
+        f"✅ <b>{html.escape(get_bot_name())}</b> is now <b>LIVE</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "• <b>Status:</b> <code>Active & Monitoring Live OTPs ✅</code>\n"
-        "• <b>Engine:</b> <code>Zero-Restart Handover Engine 🔄</code>\n"
-        "• <b>Platform:</b> <code>Thirdwave IPRN (v1/traffic)</code>\n"
-        "• <b>Storage:</b> <code>28h Memory Active ☁️</code>\n"
+        "🟢 <b>Status:</b>    <code>Monitoring OTPs ✅</code>\n"
+        "🔄 <b>Engine:</b>    <code>Zero-Restart Handover</code>\n"
+        "📡 <b>Platform:</b>  <code>Thirdwave IPRN</code>\n"
+        "☁️ <b>Storage:</b>   <code>28h Cloud Memory</code>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "👑 <i>Send /start or /status anytime to view live status.</i>"
+        "<i>👑 Use /start anytime to open the admin dashboard.</i>"
     )
     for aid in ADMIN_USER_IDS:
         if aid:
