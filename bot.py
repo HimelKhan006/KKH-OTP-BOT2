@@ -1706,20 +1706,19 @@ async def poll_incoming_messages(application: Application):
             seen_message_ids.add(k)
             seen_timestamps[k] = ts
 
+        # Always restore cumulative forwarded count and per-country breakdown from Gist
+        saved_total = int(gist_state.get("total_forwarded") or 0)
+        if saved_total > total_forwarded_count:
+            total_forwarded_count = saved_total
+        saved_countries = gist_state.get("country_counts", {})
+        if isinstance(saved_countries, dict) and saved_countries:
+            for c_iso, c_cnt in saved_countries.items():
+                country_forwarded_counts[c_iso] = max(country_forwarded_counts.get(c_iso, 0), int(c_cnt))
+
         # Check if previous session performed a clean zero-restart handover
         if gist_state.get("handover"):
             _is_handover = True
             _handover_epoch = float(gist_state.get("handover_epoch") or 0.0)
-            saved_total = int(gist_state.get("total_forwarded") or 0)
-            if saved_total > total_forwarded_count:
-                total_forwarded_count = saved_total
-            saved_countries = gist_state.get("country_counts", {})
-            if isinstance(saved_countries, dict):
-                for c_iso, c_cnt in saved_countries.items():
-                    country_forwarded_counts[c_iso] = max(country_forwarded_counts.get(c_iso, 0), int(c_cnt))
-            # Note: Base URL & API Key are strictly controlled by environment/secrets
-            # (Do NOT let old Gist state overwrite the user's secret configuration)
-
             logger.info(
                 f"🔄 Zero-Restart Handover Active: {len(gist_seen)} messages restored, "
                 f"{total_forwarded_count} forwarded previously, last epoch {_handover_epoch:.0f}."
@@ -1753,7 +1752,7 @@ async def poll_incoming_messages(application: Application):
             logger.warning(f"DB sync from Gist warning: {e}")
         logger.info(f"☁️ Restored {len(gist_seen)} persistent message IDs from GitHub Gist.")
 
-    # 2. Preload seen IDs from local DB
+    # 2. Preload seen IDs and seed country stats from local DB
     try:
         with get_db_connection() as conn:
             for row in conn.execute("SELECT id FROM processed_otps ORDER BY forwarded_at DESC LIMIT 10000;"):
@@ -1761,6 +1760,18 @@ async def poll_incoming_messages(application: Application):
                 seen_message_ids.add(mid)
                 if mid not in seen_timestamps:
                     seen_timestamps[mid] = bot_start_time
+            # Seed country counts from SQLite if not already loaded from Gist
+            if not country_forwarded_counts:
+                try:
+                    cur = conn.execute("SELECT country, COUNT(*) FROM processed_otps WHERE country IS NOT NULL AND country != '' GROUP BY country;")
+                    for r in cur.fetchall():
+                        c_name = str(r[0]).strip()
+                        c_cnt = int(r[1])
+                        if c_name:
+                            disp = get_country_iso_display({"country": c_name})
+                            country_forwarded_counts[disp] = country_forwarded_counts.get(disp, 0) + c_cnt
+                except Exception as e:
+                    logger.debug(f"Country seeding note: {e}")
         logger.info(f"Preloaded {len(seen_message_ids)} total seen message keys from persistent database.")
     except Exception as e:
         logger.warning(f"Preload error: {e}")
@@ -3174,6 +3185,12 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                 "The bot engine continues running normally without interruption.",
                 parse_mode=ParseMode.HTML
             )
+        except Exception:
+            pass
+
+    else:
+        try:
+            await query.answer()
         except Exception:
             pass
 
