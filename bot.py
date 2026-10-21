@@ -1349,16 +1349,12 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     wa_keywords = ["whatsapp", "‏واتساب‏", "واتساب", "ватсап", "wa code", "wa.me"]
     tg_keywords = ["telegram", "telegram code", "t.me"]
     if "whatsapp" in low_source or any(k in low_msg for k in wa_keywords):
-        service_icon = "💬"
         source = "WhatsApp"
     elif "telegram" in low_source or any(k in low_msg for k in tg_keywords):
-        service_icon = "✈️"
         source = "Telegram"
     elif "google" in low_source or "google" in low_msg or raw_message.startswith("G-"):
-        service_icon = "🔵"
         source = "Google"
     else:
-        service_icon = "🏷️"
         source = html.escape(raw_source)
 
     # Display number / fallback to country name
@@ -1376,7 +1372,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             full_text = (
                 f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{service_icon} <b>From:</b>  <b>{source}</b>\n"
+                f"🏷️ <b>From:</b>  <b>{source}</b>\n"
                 f"☎️ <b>To:</b>      {num_display}"
                 f"{otp_line}"
             )
@@ -1385,7 +1381,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             full_text = (
                 f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{service_icon} <b>From:</b>  <b>{source}</b>\n"
+                f"🏷️ <b>From:</b>  <b>{source}</b>\n"
                 f"☎️ <b>To:</b>      {num_display}\n\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
@@ -1393,7 +1389,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             full_text = (
                 f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{service_icon} <b>From:</b>  <b>{source}</b>\n"
+                f"🏷️ <b>From:</b>  <b>{source}</b>\n"
                 f"☎️ <b>To:</b>      {num_display}"
             )
 
@@ -1403,17 +1399,17 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             full_text = (
                 f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{service_icon} <b>From:</b>  <b>{source}</b>\n"
+                f"🏷️ <b>From:</b>  <b>{source}</b>\n"
                 f"☎️ <b>To:</b>      {num_display}"
                 f"{otp_line}\n\n"
-                f"📝 <b>Full Message:</b>\n"
+                f"💬 <b>Full Message:</b>\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
         else:
             full_text = (
                 f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{service_icon} <b>From:</b>  <b>{source}</b>\n"
+                f"🏷️ <b>From:</b>  <b>{source}</b>\n"
                 f"☎️ <b>To:</b>      {num_display}"
                 f"{otp_line}"
             )
@@ -2061,7 +2057,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "<b>📺 Live Preview — Short:</b>\n"
             "📩 <b>SMS RECEIVED</b>  •  🇳🇵 <b>NP</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "💬 <b>From:</b>  <b>WhatsApp</b>\n"
+            "🏷️ <b>From:</b>  <b>WhatsApp</b>\n"
             "☎️ <b>To:</b>    <code>+977980****456</code>\n"
             "🔑 <b>OTP Code:</b>  <code>492810</code>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
@@ -2073,10 +2069,10 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "<b>📺 Live Preview — Long:</b>\n"
             "📩 <b>SMS RECEIVED</b>  •  🇳🇵 <b>NP</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "💬 <b>From:</b>  <b>WhatsApp</b>\n"
+            "🏷️ <b>From:</b>  <b>WhatsApp</b>\n"
             "☎️ <b>To:</b>    <code>+977980****456</code>\n"
             "🔑 <b>OTP Code:</b>  <code>492810</code>\n\n"
-            "📝 <b>Full Message:</b>\n"
+            "💬 <b>Full Message:</b>\n"
             "<blockquote expandable>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Buttons: [ 📋 492810 ] [ 🔢 Number Bot ]</i>"
