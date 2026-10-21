@@ -173,48 +173,27 @@ def normalize_button_url(raw_url: str) -> Optional[str]:
     Normalizes URLs, Telegram bot usernames (@bot / bot), and links to valid clickable URLs.
     Supports:
     - https://... or http://... or tg://...
-    - @bot_username or @channel -> https://t.me/bot_username?start=get
-    - t.me/bot_username         -> https://t.me/bot_username?start=get
-    - telegram.me/bot_username  -> https://t.me/bot_username?start=get
-    - bot_username              -> https://t.me/bot_username?start=get
-    Bot links automatically get ?start=get so the keyboard shows immediately on click.
+    - @bot_username or @channel -> https://t.me/bot_username
+    - t.me/bot_username         -> https://t.me/bot_username
+    - telegram.me/bot_username  -> https://t.me/bot_username
+    - bot_username              -> https://t.me/bot_username
     """
     url = str(raw_url or "").strip()
     if not url:
         return None
 
-    def _is_bot_username(name: str) -> bool:
-        """Simple heuristic: ends in 'bot' (case-insensitive) and is alphanumeric+underscore only."""
-        clean = name.strip().lstrip("@")
-        return bool(clean) and (clean.lower().endswith("bot")) and all(c.isalnum() or c == "_" for c in clean)
-
-    def _bot_url(username: str) -> str:
-        clean = username.strip().lstrip("@")
-        if _is_bot_username(clean):
-            return f"https://t.me/{clean}?start=get"
-        return f"https://t.me/{clean}"
-
     if url.startswith("@"):
-        return _bot_url(url)
+        clean_user = url.lstrip("@").strip()
+        return f"https://t.me/{clean_user}" if clean_user else None
     if url.startswith("t.me/"):
-        path = url[len("t.me/"):].split("/")[0].split("?")[0]
-        if _is_bot_username(path):
-            remainder = url[len("t.me/"):]
-            if "?" not in remainder:
-                return f"https://t.me/{remainder}?start=get"
         return f"https://{url}"
     if url.startswith("telegram.me/"):
-        clean_user = url.replace("telegram.me/", "").strip().split("/")[0].split("?")[0]
-        return _bot_url(clean_user)
+        clean_user = url.replace("telegram.me/", "").strip()
+        return f"https://t.me/{clean_user}" if clean_user else None
     if url.startswith(("http://", "https://", "tg://")):
-        # If it's a plain https://t.me/SomeBotName with no ?start= already, add it
-        import re as _re
-        m = _re.match(r'^https?://t\.me/([A-Za-z0-9_]+)$', url)
-        if m and _is_bot_username(m.group(1)):
-            return f"{url}?start=get"
         return url
     if all(c.isalnum() or c == "_" for c in url):
-        return _bot_url(url)
+        return f"https://t.me/{url}"
     if "." in url and not url.startswith("http"):
         return f"https://{url}"
     return url
