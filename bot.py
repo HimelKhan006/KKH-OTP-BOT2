@@ -1976,11 +1976,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.set_chat_menu_button(chat_id=chat.id, menu_button=MenuButtonDefault())
             await context.bot.set_my_commands(
-                [
-                    BotCommand("start", "🚀 Main Menu / Admin Dashboard"),
-                    BotCommand("status", "📊 View Live System Status"),
-                    BotCommand("format", "📋 SMS Format Settings"),
-                ],
+                [BotCommand("start", "🚀 Start / Admin Dashboard")],
                 scope=BotCommandScopeChat(chat.id)
             )
         except Exception:
@@ -1996,13 +1992,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Use the menu buttons below to manage the bot.</i>",
         parse_mode=ParseMode.HTML,
         reply_markup=get_admin_reply_keyboard(),
-    )
-    # Also show live status dashboard immediately on /start
-    msg, markup = build_status_dashboard()
-    await msg_obj.reply_text(
-        msg,
-        parse_mode=ParseMode.HTML,
-        reply_markup=markup,
     )
 
 def clear_all_admin_states(context: ContextTypes.DEFAULT_TYPE):
