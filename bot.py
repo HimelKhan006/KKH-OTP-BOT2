@@ -1369,7 +1369,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     num_display = f"<code>{masked_number}</code>" if masked_number else f"<code>{html.escape(country_name)}</code>"
 
     # OTP highlight in text if present
-    otp_line = f"\n🔑 <b>OTP Code:</b>  <code>{html.escape(otp_code)}</code>" if otp_code else ""
+    otp_line = f"\n🔑 <b>OTP Code:</b> <code>{html.escape(otp_code)}</code>" if otp_code else ""
 
     clean_msg = raw_message.strip()
 
@@ -2073,7 +2073,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "🌍 <b>Country:</b>  🇳🇵 <b>Nepal (NP)</b>\n"
             "🏷️ <b>From:</b>     <b>WhatsApp</b>\n"
             "☎️ <b>To:</b>       <code>+977980****456</code>\n"
-            "🔑 <b>OTP Code:</b>  <code>492810</code>\n"
+            "🔑 <b>OTP Code:</b> <code>492810</code>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Buttons: [ 492810 ] [ Number Bot ]</i>"
         )
@@ -2086,7 +2086,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "🌍 <b>Country:</b>  🇳🇵 <b>Nepal (NP)</b>\n"
             "🏷️ <b>From:</b>     <b>WhatsApp</b>\n"
             "☎️ <b>To:</b>       <code>+977980****456</code>\n"
-            "🔑 <b>OTP Code:</b>  <code>492810</code>\n\n"
+            "🔑 <b>OTP Code:</b> <code>492810</code>\n\n"
             "💬 <b>Full Message:</b>\n"
             "<blockquote expandable>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
