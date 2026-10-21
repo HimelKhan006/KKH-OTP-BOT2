@@ -1373,7 +1373,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     iso_badge = f"{flag}\u202f<b>{iso}</b>" if iso else flag
     header = f"⚡ <b>NEW SMS RECEIVED | {iso_badge}</b>"
     num_part = f"<code>{masked_number}</code>" if masked_number else f"<code>{country_name}</code>"
-    line2 = f"\u00a0\u00a0\u00a0\u00a0<b>{source}</b>  |  {num_part} ⚡"
+    line2 = f"<b>{source}</b> | {num_part} ⚡"
 
     clean_msg = raw_message.strip()
     if sms_format == "long":
@@ -1389,8 +1389,8 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             full_text = f"{header}\n{line2}"
     else:
         # Professional Short mode (default):
-        # ⚡ NEW SMS RECEIVED | 🇳🇵 NP
-        #     WhatsApp  |  +977980****456 ⚡
+        # ⚡NEW SMS RECEIVED | 🇳🇵 NP
+        #  WhatsApp | +977980****456⚡
         if clean_msg and not otp_code:
             full_text = (
                 f"{header}\n"
@@ -2010,7 +2010,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>Live Preview (Short Format):</b>\n"
             "⚡ <b>NEW SMS RECEIVED | 🇳🇵\u00a0<b>NP</b></b>\n"
-            "\u00a0\u00a0\u00a0\u00a0<b>WhatsApp</b>  |  <code>+977980****456</code> ⚡\n"
+            "<b>WhatsApp</b> | <code>+977980****456</code> ⚡\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Buttons (Side-by-Side): [ 492810 ] [ 🤖 GET NUMBER ]</i>"
         )
@@ -2019,7 +2019,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>Live Preview (Long Format):</b>\n"
             "⚡ <b>NEW SMS RECEIVED | 🇳🇵\u00a0<b>NP</b></b>\n"
-            "\u00a0\u00a0\u00a0\u00a0<b>WhatsApp</b>  |  <code>+977980****456</code> ⚡\n\n"
+            "<b>WhatsApp</b> | <code>+977980****456</code> ⚡\n\n"
             "💬 <b>Message Content:</b>\n"
             "<blockquote expandable>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
