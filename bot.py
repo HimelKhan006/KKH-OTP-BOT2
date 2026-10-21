@@ -1397,6 +1397,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"{L_FROM}   {source_plain}\n"
                 f"{L_TO}   {num_plain}"
                 f"</code>\n\n"
+                f"💬 <b>𝐅𝐮𝐥𝐥 𝐌𝐞𝐬𝐬𝐚𝐠𝐞:</b>\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
         else:
@@ -1423,7 +1424,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"{L_TO}   {num_plain}\n"
                 f"{L_OTP}   {otp_val}"
                 f"</code>\n\n"
-                f"💬 <b>Full Message:</b>\n"
+                f"💬 <b>𝐅𝐮𝐥𝐥 𝐌𝐞𝐬𝐬𝐚𝐠𝐞:</b>\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
         else:
@@ -2098,7 +2099,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "☎️ To        :   +977980****456\n"
             "🔑 OTP Code  :   492810"
             "</code>\n\n"
-            "💬 <b>Full Message:</b>\n"
+            "💬 <b>𝐅𝐮𝐥𝐥 𝐌𝐞𝐬𝐬𝐚𝐠𝐞:</b>\n"
             "<blockquote expandable>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Buttons: [ 492810 ] [ Number Bot ]</i>"
