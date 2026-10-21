@@ -2049,7 +2049,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
     if preview_mode == "short":
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>👁 Live Preview — Short:</b>\n"
+            "<b>📺 Live Preview — Short:</b>\n"
             "📩 <b>SMS RECEIVED</b>  •  🇳🇵 <b>NP</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "💬 <b>From:</b>  <b>WhatsApp</b>\n"
@@ -2061,7 +2061,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
     elif preview_mode == "long":
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━\n"
-            "<b>👁 Live Preview — Long:</b>\n"
+            "<b>📺 Live Preview — Long:</b>\n"
             "📩 <b>SMS RECEIVED</b>  •  🇳🇵 <b>NP</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "💬 <b>From:</b>  <b>WhatsApp</b>\n"
@@ -2081,8 +2081,8 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'long' else ''}📜 Long Format", callback_data="fmt_set_long"),
         ],
         [
-            InlineKeyboardButton("👁 Preview Short", callback_data="fmt_preview_short"),
-            InlineKeyboardButton("👁 Preview Long", callback_data="fmt_preview_long"),
+            InlineKeyboardButton("📺 Preview Short", callback_data="fmt_preview_short"),
+            InlineKeyboardButton("📺 Preview Long", callback_data="fmt_preview_long"),
         ],
         [
             InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")
