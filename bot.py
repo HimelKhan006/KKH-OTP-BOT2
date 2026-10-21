@@ -171,51 +171,38 @@ def save_stored_data(data: dict):
 
 def normalize_button_url(raw_url: str) -> Optional[str]:
     """
-    Normalizes URLs, Telegram bot usernames (@bot / bot), and links to valid clickable URLs.
+    Normalizes URLs, Telegram usernames (@bot / bot), and links to clean, valid clickable URLs.
     Supports:
     - https://... or http://... or tg://...
-    - @bot_username or @channel -> https://t.me/bot_username?start=get
-    - t.me/bot_username         -> https://t.me/bot_username?start=get
-    - telegram.me/bot_username  -> https://t.me/bot_username?start=get
-    - bot_username              -> https://t.me/bot_username?start=get
-    Bot links automatically get ?start=get so the keyboard shows immediately on click.
+    - @username or @channel    -> https://t.me/username
+    - t.me/username            -> https://t.me/username
+    - telegram.me/username     -> https://t.me/username
+    - username (alphanumeric)  -> https://t.me/username
+    Strips '?start=get' artifacts so links remain clean, professional, and standard.
     """
     url = str(raw_url or "").strip()
     if not url:
         return None
 
-    def _is_bot_username(name: str) -> bool:
-        """Simple heuristic: ends in 'bot' (case-insensitive) and is alphanumeric+underscore only."""
-        clean = name.strip().lstrip("@")
-        return bool(clean) and (clean.lower().endswith("bot")) and all(c.isalnum() or c == "_" for c in clean)
+    # Strip unwanted ?start=get artifact to keep links clean and professional
+    if url.endswith("?start=get"):
+        url = url[:-len("?start=get")].rstrip("/")
 
-    def _bot_url(username: str) -> str:
+    def _tg_url(username: str) -> str:
         clean = username.strip().lstrip("@")
-        if _is_bot_username(clean):
-            return f"https://t.me/{clean}?start=get"
         return f"https://t.me/{clean}"
 
     if url.startswith("@"):
-        return _bot_url(url)
+        return _tg_url(url)
     if url.startswith("t.me/"):
-        path = url[len("t.me/"):].split("/")[0].split("?")[0]
-        if _is_bot_username(path):
-            remainder = url[len("t.me/"):]
-            if "?" not in remainder:
-                return f"https://t.me/{remainder}?start=get"
         return f"https://{url}"
     if url.startswith("telegram.me/"):
-        clean_user = url.replace("telegram.me/", "").strip().split("/")[0].split("?")[0]
-        return _bot_url(clean_user)
+        clean_user = url.replace("telegram.me/", "").strip().lstrip("/")
+        return _tg_url(clean_user)
     if url.startswith(("http://", "https://", "tg://")):
-        # If it's a plain https://t.me/SomeBotName with no ?start= already, add it
-        import re as _re
-        m = _re.match(r'^https?://t\.me/([A-Za-z0-9_]+)$', url)
-        if m and _is_bot_username(m.group(1)):
-            return f"{url}?start=get"
         return url
     if all(c.isalnum() or c == "_" for c in url):
-        return _bot_url(url)
+        return _tg_url(url)
     if "." in url and not url.startswith("http"):
         return f"https://{url}"
     return url
@@ -1344,7 +1331,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             sms_format = "short"
     sms_format = str(sms_format).lower().strip()
 
-    source        = html.escape(str(item.get("sender_id") or item.get("sourceAddress") or item.get("source") or item.get("caller") or item.get("sender") or "SMS Service").strip())
+    raw_source    = str(item.get("sender_id") or item.get("sourceAddress") or item.get("source") or item.get("caller") or item.get("sender") or "SMS Service").strip()
     raw_number    = str(item.get("number") or item.get("destinationNumber") or item.get("range_template") or item.get("rangeTemplate") or item.get("template") or item.get("dst") or "")
     masked_number = html.escape(mask_phone_number(raw_number)) if raw_number else ""
     raw_message   = str(item.get("sms") or item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "")
@@ -1357,7 +1344,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     country_name  = get_country_full_name(iso, item)
 
     # Smart service detection
-    low_source = source.lower()
+    low_source = raw_source.lower()
     low_msg    = raw_message.lower()
     wa_keywords = ["whatsapp", "‏واتساب‏", "واتساب", "ватсап", "wa code", "wa.me"]
     tg_keywords = ["telegram", "telegram code", "t.me"]
@@ -1371,7 +1358,8 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         service_icon = "🔵"
         source = "Google"
     else:
-        service_icon = "📩"
+        service_icon = "🏷️"
+        source = html.escape(raw_source)
 
     # Display number / fallback to country name
     num_display = f"<code>{masked_number}</code>" if masked_number else f"<code>{html.escape(country_name)}</code>"
@@ -1388,7 +1376,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             full_text = (
                 f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{service_icon} <b>From:</b>  <b>{html.escape(source)}</b>\n"
+                f"{service_icon} <b>From:</b>  <b>{source}</b>\n"
                 f"☎️ <b>To:</b>      {num_display}"
                 f"{otp_line}"
             )
@@ -1397,7 +1385,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             full_text = (
                 f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{service_icon} <b>From:</b>  <b>{html.escape(source)}</b>\n"
+                f"{service_icon} <b>From:</b>  <b>{source}</b>\n"
                 f"☎️ <b>To:</b>      {num_display}\n\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
@@ -1405,7 +1393,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             full_text = (
                 f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{service_icon} <b>From:</b>  <b>{html.escape(source)}</b>\n"
+                f"{service_icon} <b>From:</b>  <b>{source}</b>\n"
                 f"☎️ <b>To:</b>      {num_display}"
             )
 
@@ -1415,17 +1403,17 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             full_text = (
                 f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{service_icon} <b>From:</b>  <b>{html.escape(source)}</b>\n"
+                f"{service_icon} <b>From:</b>  <b>{source}</b>\n"
                 f"☎️ <b>To:</b>      {num_display}"
                 f"{otp_line}\n\n"
-                f"💬 <b>Full Message:</b>\n"
+                f"📝 <b>Full Message:</b>\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
         else:
             full_text = (
                 f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{service_icon} <b>From:</b>  <b>{html.escape(source)}</b>\n"
+                f"{service_icon} <b>From:</b>  <b>{source}</b>\n"
                 f"☎️ <b>To:</b>      {num_display}"
                 f"{otp_line}"
             )
@@ -1953,6 +1941,25 @@ async def sync_data_to_secret_db():
         except Exception as e:
             logger.debug(f"Cloud DB sync notice: {e}")
 
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Directly displays the live system status dashboard without sending a welcome greeting."""
+    chat    = update.effective_chat
+    user    = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj:
+        return
+    user_id = user.id if user else 0
+    if not is_user_authorized(user_id):
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        return
+    clear_all_admin_states(context)
+    msg, markup = build_status_dashboard()
+    await msg_obj.reply_text(
+        msg,
+        parse_mode=ParseMode.HTML,
+        reply_markup=markup,
+    )
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat    = update.effective_chat
     user    = update.effective_user
@@ -1969,15 +1976,19 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.set_chat_menu_button(chat_id=chat.id, menu_button=MenuButtonDefault())
             await context.bot.set_my_commands(
-                [BotCommand("start", "🚀 Start / Admin Dashboard")],
+                [
+                    BotCommand("start", "🚀 Main Menu / Admin Dashboard"),
+                    BotCommand("status", "📊 View Live System Status"),
+                    BotCommand("format", "📋 SMS Format Settings"),
+                ],
                 scope=BotCommandScopeChat(chat.id)
             )
         except Exception:
             pass
     asyncio.create_task(_bg_lock_menu())
-    is_start = bool(msg_obj.text and msg_obj.text.strip().startswith("/start"))
+
     bot_name = get_bot_name()
-    # Always show the keyboard (whether /start or any other trigger)
+    # Show welcome greeting with the persistent admin keyboard on /start
     await msg_obj.reply_text(
         f"👑 <b>Welcome, Admin!</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -1986,9 +1997,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML,
         reply_markup=get_admin_reply_keyboard(),
     )
-    if is_start:
-        return
-
+    # Also show live status dashboard immediately on /start
     msg, markup = build_status_dashboard()
     await msg_obj.reply_text(
         msg,
@@ -2067,7 +2076,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "💬 <b>From:</b>  <b>WhatsApp</b>\n"
             "☎️ <b>To:</b>    <code>+977980****456</code>\n"
             "🔑 <b>OTP Code:</b>  <code>492810</code>\n\n"
-            "💬 <b>Full Message:</b>\n"
+            "📝 <b>Full Message:</b>\n"
             "<blockquote expandable>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Buttons: [ 📋 492810 ] [ 🔢 Number Bot ]</i>"
@@ -3468,7 +3477,7 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         return
 
     if text == "📊 Status":
-        await start_command(update, context)
+        await status_command(update, context)
 
     elif text == "🔑 API Key":
         # Show current key info / interactive panel
@@ -3883,7 +3892,7 @@ async def main():
     # invisible to the group — Telegram never even dispatches them here.
     _private = filters.ChatType.PRIVATE
     application.add_handler(CommandHandler("start",        start_command,        filters=_private))
-    application.add_handler(CommandHandler("status",       start_command,        filters=_private))
+    application.add_handler(CommandHandler("status",       status_command,       filters=_private))
     application.add_handler(CommandHandler("setkey",       setkey_command,       filters=_private))
     application.add_handler(CommandHandler("seturl",       seturl_command,       filters=_private))
     application.add_handler(CommandHandler("toggleformat", toggleformat_command, filters=_private))
