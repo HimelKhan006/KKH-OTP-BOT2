@@ -1380,7 +1380,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         if otp_code:
             full_text = (
                 f"<code>"
-                f"📩 SMS RECEIVED\n"
+                f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{L_COUNTRY}   {country_plain}\n"
                 f"{L_FROM}   {source_plain}\n"
@@ -1391,7 +1391,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         elif clean_msg:
             full_text = (
                 f"<code>"
-                f"📩 SMS RECEIVED\n"
+                f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{L_COUNTRY}   {country_plain}\n"
                 f"{L_FROM}   {source_plain}\n"
@@ -1402,7 +1402,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         else:
             full_text = (
                 f"<code>"
-                f"📩 SMS RECEIVED\n"
+                f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{L_COUNTRY}   {country_plain}\n"
                 f"{L_FROM}   {source_plain}\n"
@@ -1416,7 +1416,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         if clean_msg:
             full_text = (
                 f"<code>"
-                f"📩 SMS RECEIVED\n"
+                f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{L_COUNTRY}   {country_plain}\n"
                 f"{L_FROM}   {source_plain}\n"
@@ -1429,7 +1429,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         else:
             full_text = (
                 f"<code>"
-                f"📩 SMS RECEIVED\n"
+                f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{L_COUNTRY}   {country_plain}\n"
                 f"{L_FROM}   {source_plain}\n"
@@ -2076,7 +2076,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>📺 Live Preview — Short:</b>\n\n"
             "<code>"
-            "📩 SMS RECEIVED\n"
+            "📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🌍 Country   :   🇳🇵 Nepal (NP)\n"
             "🏷️ From      :   WhatsApp\n"
@@ -2091,7 +2091,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
             "<code>"
-            "📩 SMS RECEIVED\n"
+            "📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🌍 Country   :   🇳🇵 Nepal (NP)\n"
             "🏷️ From      :   WhatsApp\n"
