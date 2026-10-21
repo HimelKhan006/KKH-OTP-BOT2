@@ -1389,7 +1389,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{service_icon} <b>From:</b>  <b>{html.escape(source)}</b>\n"
-                f"📱 <b>To:</b>      {num_display}"
+                f"☎️ <b>To:</b>      {num_display}"
                 f"{otp_line}"
             )
         elif clean_msg:
@@ -1398,7 +1398,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{service_icon} <b>From:</b>  <b>{html.escape(source)}</b>\n"
-                f"📱 <b>To:</b>      {num_display}\n\n"
+                f"☎️ <b>To:</b>      {num_display}\n\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
         else:
@@ -1406,7 +1406,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{service_icon} <b>From:</b>  <b>{html.escape(source)}</b>\n"
-                f"📱 <b>To:</b>      {num_display}"
+                f"☎️ <b>To:</b>      {num_display}"
             )
 
     # ── Long / Detailed format ───────────────────────────────────────────────
@@ -1416,7 +1416,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{service_icon} <b>From:</b>  <b>{html.escape(source)}</b>\n"
-                f"📱 <b>To:</b>      {num_display}"
+                f"☎️ <b>To:</b>      {num_display}"
                 f"{otp_line}\n\n"
                 f"💬 <b>Full Message:</b>\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
@@ -1426,7 +1426,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"📩 <b>SMS RECEIVED</b>  •  {flag} <b>{iso}</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{service_icon} <b>From:</b>  <b>{html.escape(source)}</b>\n"
-                f"📱 <b>To:</b>      {num_display}"
+                f"☎️ <b>To:</b>      {num_display}"
                 f"{otp_line}"
             )
 
@@ -2053,7 +2053,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "📩 <b>SMS RECEIVED</b>  •  🇳🇵 <b>NP</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "💬 <b>From:</b>  <b>WhatsApp</b>\n"
-            "📱 <b>To:</b>    <code>+977980****456</code>\n"
+            "☎️ <b>To:</b>    <code>+977980****456</code>\n"
             "🔑 <b>OTP Code:</b>  <code>492810</code>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Buttons: [ 📋 492810 ] [ 🔢 Number Bot ]</i>"
@@ -2065,7 +2065,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "📩 <b>SMS RECEIVED</b>  •  🇳🇵 <b>NP</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "💬 <b>From:</b>  <b>WhatsApp</b>\n"
-            "📱 <b>To:</b>    <code>+977980****456</code>\n"
+            "☎️ <b>To:</b>    <code>+977980****456</code>\n"
             "🔑 <b>OTP Code:</b>  <code>492810</code>\n\n"
             "💬 <b>Full Message:</b>\n"
             "<blockquote expandable>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n"
