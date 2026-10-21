@@ -48,7 +48,6 @@ import asyncio
 import time
 import argparse
 import hashlib
-import unicodedata
 from typing import Set, Dict, Any, List, Optional, Tuple
 from datetime import datetime, timezone
 
@@ -60,7 +59,6 @@ from telegram import (
     InlineKeyboardMarkup,
     CopyTextButton,
     ReplyKeyboardMarkup,
-    ReplyKeyboardRemove,
     KeyboardButton,
     BotCommand,
     BotCommandScopeDefault,
@@ -68,7 +66,6 @@ from telegram import (
     BotCommandScopeAllGroupChats,
     BotCommandScopeAllChatAdministrators,
     BotCommandScopeChat,
-    MenuButtonCommands,
     MenuButtonDefault,
 )
 from telegram.constants import ParseMode
@@ -596,7 +593,6 @@ class GistStorage:
 
     async def save_seen(self, seen_dict: Dict[str, float]) -> bool:
         """Backwards compatibility wrapper for save_state."""
-        global total_forwarded_count, country_forwarded_counts
         base = client.base_url if "client" in globals() else ""
         return await self.save_state(seen_dict, is_handover=False, total_forwarded=total_forwarded_count,
                                      country_counts=country_forwarded_counts, base_url=base)
@@ -669,7 +665,7 @@ def save_processed_message(item: Dict[str, Any], chat_id: int,
     message_time = str(item.get("received_at") or item.get("receivedAt") or item.get("messageTime") or item.get("createdAt") or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
     try:
         with get_db_connection() as conn:
-            cur = conn.execute("""
+            conn.execute("""
                 INSERT OR IGNORE INTO processed_otps
                     (id, source, country, number, otp_code, raw_message, rate, message_time, chat_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
@@ -1374,10 +1370,10 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     clean_msg = raw_message.strip()
 
     # Fixed-width label strings for monospace alignment (emoji + label padded)
-    L_COUNTRY = "🌍 Country  :"
+    L_COUNTRY = "🌍 Country   :"
     L_FROM    = "🏷️ From      :"
-    L_TO      = "☎️ To         :"
-    L_OTP     = "🔑 OTP Code :"
+    L_TO      = "☎️ To        :"
+    L_OTP     = "🔑 OTP Code  :"
 
     # ── Short format (default) ───────────────────────────────────────────────
     if sms_format != "long":
@@ -1386,10 +1382,10 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"📩 <b>SMS RECEIVED</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"<code>"
-                f"{L_COUNTRY}  {country_plain}\n"
-                f"{L_FROM}  {source_plain}\n"
-                f"{L_TO}  {num_plain}\n"
-                f"{L_OTP}  {otp_code}"
+                f"{L_COUNTRY}   {country_plain}\n"
+                f"{L_FROM}   {source_plain}\n"
+                f"{L_TO}   {num_plain}\n"
+                f"{L_OTP}   {otp_code}"
                 f"</code>"
             )
         elif clean_msg:
@@ -1397,9 +1393,9 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"📩 <b>SMS RECEIVED</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"<code>"
-                f"{L_COUNTRY}  {country_plain}\n"
-                f"{L_FROM}  {source_plain}\n"
-                f"{L_TO}  {num_plain}"
+                f"{L_COUNTRY}   {country_plain}\n"
+                f"{L_FROM}   {source_plain}\n"
+                f"{L_TO}   {num_plain}"
                 f"</code>\n\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
@@ -1408,9 +1404,9 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"📩 <b>SMS RECEIVED</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"<code>"
-                f"{L_COUNTRY}  {country_plain}\n"
-                f"{L_FROM}  {source_plain}\n"
-                f"{L_TO}  {num_plain}"
+                f"{L_COUNTRY}   {country_plain}\n"
+                f"{L_FROM}   {source_plain}\n"
+                f"{L_TO}   {num_plain}"
                 f"</code>"
             )
 
@@ -1422,10 +1418,10 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"📩 <b>SMS RECEIVED</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"<code>"
-                f"{L_COUNTRY}  {country_plain}\n"
-                f"{L_FROM}  {source_plain}\n"
-                f"{L_TO}  {num_plain}\n"
-                f"{L_OTP}  {otp_val}"
+                f"{L_COUNTRY}   {country_plain}\n"
+                f"{L_FROM}   {source_plain}\n"
+                f"{L_TO}   {num_plain}\n"
+                f"{L_OTP}   {otp_val}"
                 f"</code>\n\n"
                 f"💬 <b>Full Message:</b>\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
@@ -1435,9 +1431,9 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"📩 <b>SMS RECEIVED</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"<code>"
-                f"{L_COUNTRY}  {country_plain}\n"
-                f"{L_FROM}  {source_plain}\n"
-                f"{L_TO}  {num_plain}"
+                f"{L_COUNTRY}   {country_plain}\n"
+                f"{L_FROM}   {source_plain}\n"
+                f"{L_TO}   {num_plain}"
                 f"</code>"
             )
 
@@ -1596,9 +1592,6 @@ async def run_startup_reconciliation(
 
     # Configuration constants
     MISSED_OTP_FORWARD_MAX_AGE = 900   # 15 minutes window: forward fresh missed OTPs to Telegram group
-    API_RATE_LIMIT_DELAY       = 2.1   # Seconds between API page calls (strictly respects 30 req/min limit)
-    MAX_AUDIT_PAGES            = 10    # Safety cap: scan up to 10 pages (1,000 SMS)
-    PAGE_SIZE                  = 100
 
     logger.info("=" * 70)
     logger.info("🔄 INITIATING PROFESSIONAL STARTUP RECONCILIATION")
@@ -2085,10 +2078,10 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "📩 <b>SMS RECEIVED</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<code>"
-            "🌍 Country  :  🇳🇵 Nepal (NP)\n"
-            "🏷️ From      :  WhatsApp\n"
-            "☎️ To         :  +977980****456\n"
-            "🔑 OTP Code :  492810"
+            "🌍 Country   :   🇳🇵 Nepal (NP)\n"
+            "🏷️ From      :   WhatsApp\n"
+            "☎️ To        :   +977980****456\n"
+            "🔑 OTP Code  :   492810"
             "</code>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Buttons: [ 492810 ] [ Number Bot ]</i>"
@@ -2100,10 +2093,10 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "📩 <b>SMS RECEIVED</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<code>"
-            "🌍 Country  :  🇳🇵 Nepal (NP)\n"
-            "🏷️ From      :  WhatsApp\n"
-            "☎️ To         :  +977980****456\n"
-            "🔑 OTP Code :  492810"
+            "🌍 Country   :   🇳🇵 Nepal (NP)\n"
+            "🏷️ From      :   WhatsApp\n"
+            "☎️ To        :   +977980****456\n"
+            "🔑 OTP Code  :   492810"
             "</code>\n\n"
             "💬 <b>Full Message:</b>\n"
             "<blockquote expandable>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n"
@@ -3273,9 +3266,6 @@ async def setkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
         return
 
-    current_key = client.api_key
-    masked_key = f"{current_key[:8]}...{current_key[-4:]}" if len(current_key) > 12 else (current_key or "<i>None</i>")
-
     if not context.args:
         clear_all_admin_states(context)
         text, markup = build_api_key_view()
@@ -3427,7 +3417,6 @@ async def send_startup_announcement(application: Application):
     Sends startup notification to Admin private DM only on initial deployment or push.
     COMPLETELY SILENT on routine 24/7 handover sessions (zero restart messages).
     """
-    global _is_handover
     silent_env = os.getenv("SILENT_STARTUP", "").strip().lower() in ("true", "1", "yes")
     if _is_handover or silent_env:
         logger.info("🤫 Automated session handover continuation: restart notification suppressed (zero-restart mode).")
@@ -3737,7 +3726,6 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
                         ])
                     )
                     return
-                old_url = found["url"]
                 found["url"] = clean_url
                 save_custom_link_buttons(buttons)
                 context.user_data.pop("awaiting_btn_action", None)
