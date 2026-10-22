@@ -17,10 +17,10 @@ on:
     # Backup safety net — fires every 6h if self-trigger ever fails
     - cron: '0 */6 * * *'
 
-# Allow new runner to boot up and install packages in parallel before taking over
+# Only ONE bot instance ever runs. New run cancels the old one instantly so updates apply immediately!
 concurrency:
   group: otp-wave-bot-single-instance
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   actions: write
@@ -36,6 +36,28 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Cancel Any Other Running or Queued Instances
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "🔍 Cancelling any other active or queued runs..."
+          for st in in_progress queued; do
+            curl -s -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs?status=$st&per_page=30" \
+              | python3 -c "
+            import sys, json
+            runs = json.load(sys.stdin).get('workflow_runs', [])
+            for r in runs:
+                if str(r['id']) != '${{ github.run_id }}':
+                    print(r['id'])
+            " | while read r_id; do
+              echo "  🛑 Cancelling older run #$r_id ($st)..."
+              curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id/cancel" || true
+            done
+          done
+          echo "✅ Old and queued runs cancelled."
 
       - name: Clear Old Completed Workflow History
         env:
