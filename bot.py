@@ -1443,29 +1443,29 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     if sms_format != "long":
         if otp_code:
             full_text = (
-                f"📩 <b>𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃</b>\n"
+                f"📩  <b>𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🌍 <b>Country:</b> {country_plain}\n"
-                f"🏷️ <b>From     :</b> {source_plain}\n"
-                f"☎️ <b>To          :</b> {num_plain}\n"
-                f"🔑 <b>OTP       :</b> <code>{otp_code}</code>"
+                f"🌍  <b>Country :</b> {country_plain}\n"
+                f"🏷️  <b>From      :</b> {source_plain}\n"
+                f"☎️  <b>To           :</b> {num_plain}\n"
+                f"🔑  <b>OTP        :</b> <code>{otp_code}</code>"
             )
         elif clean_msg:
             full_text = (
-                f"📩 <b>𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃</b>\n"
+                f"📩  <b>𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🌍 <b>Country:</b> {country_plain}\n"
-                f"🏷️ <b>From     :</b> {source_plain}\n"
-                f"☎️ <b>To         :</b> {num_plain}\n\n"
+                f"🌍  <b>Country :</b> {country_plain}\n"
+                f"🏷️  <b>From      :</b> {source_plain}\n"
+                f"☎️  <b>To          :</b> {num_plain}\n\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
         else:
             full_text = (
-                f"📩 <b>𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃</b>\n"
+                f"📩  <b>𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🌍 <b>Country:</b> {country_plain}\n"
-                f"🏷️ <b>From     :</b> {source_plain}\n"
-                f"☎️ <b>To         :</b> {num_plain}"
+                f"🌍  <b>Country:</b> {country_plain}\n"
+                f"🏷️  <b>From     :</b> {source_plain}\n"
+                f"☎️  <b>To         :</b> {num_plain}"
             )
 
     # ── Long / Detailed format ───────────────────────────────────────────────
@@ -1473,23 +1473,23 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         otp_display = f"<code>{otp_code}</code>" if otp_code else "N/A"
         if clean_msg:
             full_text = (
-                f"📩 <b>𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃</b>\n"
+                f"📩  <b>𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🌍 <b>Country:</b> {country_plain}\n"
-                f"🏷️ <b>From     :</b> {source_plain}\n"
-                f"☎️ <b>To          :</b> {num_plain}\n"
-                f"🔑 <b>OTP       :</b> {otp_display}\n\n"
-                f"💬 <b>Full Message:</b>\n"
+                f"🌍  <b>Country :</b> {country_plain}\n"
+                f"🏷️  <b>From      :</b> {source_plain}\n"
+                f"☎️  <b>To           :</b> {num_plain}\n"
+                f"🔑  <b>OTP        :</b> {otp_display}\n\n"
+                f"💬  <b>Full Message:</b>\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
         else:
             full_text = (
                 f"📩 <b>𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🌍 <b>Country:</b> {country_plain}\n"
-                f"🏷️ <b>From     :</b> {source_plain}\n"
-                f"☎️ <b>To          :</b> {num_plain}\n"
-                f"🔑 <b>OTP       :</b> {otp_display}"
+                f"🌍 <b>Country :</b> {country_plain}\n"
+                f"🏷️ <b>From      :</b> {source_plain}\n"
+                f"☎️ <b>To           :</b> {num_plain}\n"
+                f"🔑 <b>OTP        :</b> {otp_display}"
             )
 
     return full_text, otp_code, raw_message
@@ -2120,12 +2120,12 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>📺 Live Preview — Short:</b>\n\n"
-            "📩 <b>𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃</b>\n"
+            "📩  <b>𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "🌍 <b>Country:</b> 🇳🇵 Nepal (NP)\n"
-            "🏷️ <b>From     :</b> WhatsApp\n"
-            "☎️ <b>To          :</b> +977980****456\n"
-            "🔑 <b>OTP       :</b> <code>492810</code>\n"
+            "🌍  <b>Country :</b> 🇳🇵 Nepal (NP)\n"
+            "🏷️  <b>From      :</b> WhatsApp\n"
+            "☎️  <b>To           :</b> +977980****456\n"
+            "🔑  <b>OTP        :</b> <code>492810</code>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Buttons: [ 492810 ] [ Number Bot ]</i>"
         )
@@ -2133,13 +2133,13 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
-            "📩 <b>𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃</b>\n"
+            "📩  <b>𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "🌍 <b>Country:</b> 🇳🇵 Nepal (NP)\n"
-            "🏷️ <b>From     :</b> WhatsApp\n"
-            "☎️ <b>To          :</b> +977980****456\n"
-            "🔑 <b>OTP       :</b> <code>492810</code>\n\n"
-            "💬 <b>Full Message:</b>\n"
+            "🌍  <b>Country :</b> 🇳🇵 Nepal (NP)\n"
+            "🏷️  <b>From      :</b> WhatsApp\n"
+            "☎️  <b>To           :</b> +977980****456\n"
+            "🔑  <b>OTP        :</b> <code>492810</code>\n\n"
+            "💬  <b>Full Message:</b>\n"
             "<blockquote expandable>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Buttons: [ 492810 ] [ Number Bot ]</i>"
