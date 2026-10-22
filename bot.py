@@ -1443,31 +1443,28 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     if sms_format != "long":
         if otp_code:
             full_text = (
-                f"╭━━━━━━━━━━━━━━━━━━━━━━╮\n"
-                f"  🎟️ <b>VERIFICATION PASS</b>\n"
-                f"╰━━━━━━━━━━━━━━━━━━━━━━╯\n"
+                f"🎟️ <b>VERIFICATION PASS</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}\n"
-                f"┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
+                f"────────────────────\n"
                 f"🔑 <b>PASSCODE:</b> <code>{otp_code}</code>"
             )
         elif clean_msg:
             full_text = (
-                f"╭━━━━━━━━━━━━━━━━━━━━━━╮\n"
-                f"  🎟️ <b>VERIFICATION PASS</b>\n"
-                f"╰━━━━━━━━━━━━━━━━━━━━━━╯\n"
+                f"🎟️ <b>VERIFICATION PASS</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}\n"
-                f"┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n\n"
+                f"────────────────────\n\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
         else:
             full_text = (
-                f"╭━━━━━━━━━━━━━━━━━━━━━━╮\n"
-                f"  🎟️ <b>VERIFICATION PASS</b>\n"
-                f"╰━━━━━━━━━━━━━━━━━━━━━━╯\n"
+                f"🎟️ <b>VERIFICATION PASS</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}"
@@ -1478,26 +1475,24 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         otp_display = f"<code>{otp_code}</code>" if otp_code else "<i>N/A</i>"
         if clean_msg:
             full_text = (
-                f"╭━━━━━━━━━━━━━━━━━━━━━━╮\n"
-                f"  🎟️ <b>VERIFICATION PASS</b>\n"
-                f"╰━━━━━━━━━━━━━━━━━━━━━━╯\n"
+                f"🎟️ <b>VERIFICATION PASS</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}\n"
-                f"┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
+                f"────────────────────\n"
                 f"🔑 <b>PASSCODE:</b> {otp_display}\n\n"
                 f"💬 <b>Message Content:</b>\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
         else:
             full_text = (
-                f"╭━━━━━━━━━━━━━━━━━━━━━━╮\n"
-                f"  🎟️ <b>VERIFICATION PASS</b>\n"
-                f"╰━━━━━━━━━━━━━━━━━━━━━━╯\n"
+                f"🎟️ <b>VERIFICATION PASS</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}\n"
-                f"┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
+                f"────────────────────\n"
                 f"🔑 <b>PASSCODE:</b> {otp_display}"
             )
 
@@ -2129,13 +2124,12 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>📺 Live Preview — Short:</b>\n\n"
-            "╭━━━━━━━━━━━━━━━━━━━━━━╮\n"
-            "  🎟️ <b>VERIFICATION PASS</b>\n"
-            "╰━━━━━━━━━━━━━━━━━━━━━━╯\n"
+            "🎟️ <b>VERIFICATION PASS</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
             "🏷️ <b>Service:</b> WhatsApp\n"
             "🌍 <b>Country:</b> 🇳🇵 Nepal (NP)\n"
             "📱 <b>Number:</b> +977980****456\n"
-            "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
+            "────────────────────\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
             "<i>Buttons: [ 492810 ] [ Number Bot ]</i>"
         )
@@ -2143,13 +2137,12 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
-            "╭━━━━━━━━━━━━━━━━━━━━━━╮\n"
-            "  🎟️ <b>VERIFICATION PASS</b>\n"
-            "╰━━━━━━━━━━━━━━━━━━━━━━╯\n"
+            "🎟️ <b>VERIFICATION PASS</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
             "🏷️ <b>Service:</b> WhatsApp\n"
             "🌍 <b>Country:</b> 🇳🇵 Nepal (NP)\n"
             "📱 <b>Number:</b> +977980****456\n"
-            "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
+            "────────────────────\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
             "💬 <b>Message Content:</b>\n"
             "<blockquote expandable>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n\n"
