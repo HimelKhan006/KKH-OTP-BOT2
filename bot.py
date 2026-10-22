@@ -66,6 +66,7 @@ from telegram import (
     BotCommandScopeAllGroupChats,
     BotCommandScopeAllChatAdministrators,
     BotCommandScopeChat,
+    MenuButtonCommands,
     MenuButtonDefault,
 )
 from telegram.constants import ParseMode
@@ -1899,12 +1900,25 @@ async def poll_incoming_messages(application: Application):
 # ==========================================
 # 12. Bot Commands & Admin Control Panel
 # ==========================================
+_TELEGRAM_BOT_NAME: str = "SMS WAVE"
+
+def set_cached_telegram_name(name: str):
+    global _TELEGRAM_BOT_NAME
+    if name and isinstance(name, str) and name.strip():
+        _TELEGRAM_BOT_NAME = name.strip()[:64]
+
 def get_default_bot_name() -> str:
     data = load_stored_data()
     val = data.get("default_bot_name")
     if val and isinstance(val, str) and val.strip():
         return val.strip()[:64]
-    return "Thirdwave SMS Wave OTP Bot"
+    env_name = os.getenv("BOT_NAME", "").strip()
+    if env_name:
+        return env_name[:64]
+    global _TELEGRAM_BOT_NAME
+    if _TELEGRAM_BOT_NAME:
+        return _TELEGRAM_BOT_NAME[:64]
+    return "SMS WAVE"
 
 def get_bot_name() -> str:
     data = load_stored_data()
@@ -2002,6 +2016,19 @@ def get_admin_reply_keyboard() -> ReplyKeyboardMarkup:
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
+def get_bot_commands() -> List[BotCommand]:
+    """Returns the list of commands for the Telegram [≡ Menu] command button."""
+    return [
+        BotCommand("start", "🚀 Admin Dashboard"),
+        BotCommand("status", "📊 Bot Status & Stats"),
+        BotCommand("format", "📋 SMS Format Configuration"),
+        BotCommand("setname", "✏️ Change Bot Name"),
+        BotCommand("seturl", "🌐 Update API URL"),
+        BotCommand("setkey", "🔑 Update API Key"),
+        BotCommand("groups", "👥 Manage Linked Groups"),
+        BotCommand("restart", "🔄 Restart Bot Engine"),
+    ]
+
 async def sync_data_to_secret_db():
     """Immediately sync all persistent state and settings secretly to the cloud database."""
     if "gist_storage" in globals() and gist_storage.enabled:
@@ -2047,12 +2074,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
         return
 
-    # Lock Telegram Menu Button in background task so start command response is instant (zero lag)
+    # Lock Telegram Menu Button in background task so [≡ Menu] command button is ALWAYS visible
     async def _bg_lock_menu():
         try:
-            await context.bot.set_chat_menu_button(chat_id=chat.id, menu_button=MenuButtonDefault())
+            await context.bot.set_chat_menu_button(chat_id=chat.id, menu_button=MenuButtonCommands())
             await context.bot.set_my_commands(
-                [BotCommand("start", "🚀 Start / Admin Dashboard")],
+                get_bot_commands(),
                 scope=BotCommandScopeChat(chat.id)
             )
         except Exception:
@@ -3459,7 +3486,7 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_startup_announcement(application: Application):
     """
-    Sends startup notification to Admin private DM only on initial deployment or push.
+    Sends startup notification to Admin private DM only on initial deployment, push, or restart.
     COMPLETELY SILENT on routine 24/7 handover sessions (zero restart messages).
     """
     silent_env = os.getenv("SILENT_STARTUP", "").strip().lower() in ("true", "1", "yes")
@@ -3472,20 +3499,28 @@ async def send_startup_announcement(application: Application):
         logger.info("ℹ️ Bot started cleanly in silent 24/7 background mode (no admin spam).")
         return
 
+    try:
+        me = await application.bot.get_me()
+        if me and me.first_name:
+            set_cached_telegram_name(me.first_name)
+    except Exception:
+        pass
+
+    bot_name = get_bot_name()
+    now_local = datetime.now()
+    start_time_str = now_local.strftime("%Y-%m-%d %I:%M:%S %p")
+
     admin_msg = (
-        f"✅ <b>{html.escape(get_bot_name())}</b> is now <b>LIVE</b>\n"
+        f"✅ <b>{html.escape(bot_name)}</b> is now <b>LIVE</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "🟢 <b>Status:</b>    <code>Monitoring OTPs ✅</code>\n"
-        "🔄 <b>Engine:</b>    <code>Zero-Restart Handover</code>\n"
-        "📡 <b>Platform:</b>  <code>Thirdwave IPRN</code>\n"
-        "☁️ <b>Storage:</b>   <code>28h Cloud Memory</code>\n"
+        f"⏰ <b>Start Time:</b> <code>{start_time_str}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "<i>👑 Use /start anytime to open the admin dashboard.</i>"
     )
     for aid in ADMIN_USER_IDS:
         if aid:
             try:
-                await send_with_retry(application.bot, aid, admin_msg)
+                await send_with_retry(application.bot, aid, admin_msg, reply_markup=get_admin_reply_keyboard())
                 logger.info(f"✅ Initial alert sent to admin private chat {aid}")
             except Exception as e:
                 logger.warning(f"Initial alert failed for admin {aid}: {e}")
@@ -4054,8 +4089,16 @@ async def main():
         asyncio.create_task(periodic_db_cleanup_loop())
         asyncio.create_task(periodic_gist_sync_loop())
         try:
-            # 1. COMPLETELY WIPE commands from DEFAULT scope and ALL groups
-            for sc in (BotCommandScopeDefault(), BotCommandScopeAllGroupChats(), BotCommandScopeAllChatAdministrators()):
+            # 1. Fetch & cache Telegram bot name
+            try:
+                me = await application.bot.get_me()
+                if me and me.first_name:
+                    set_cached_telegram_name(me.first_name)
+            except Exception:
+                pass
+
+            # 2. COMPLETELY WIPE commands from ALL groups
+            for sc in (BotCommandScopeAllGroupChats(), BotCommandScopeAllChatAdministrators()):
                 try:
                     await application.bot.delete_my_commands(scope=sc)
                 except Exception:
@@ -4066,20 +4109,21 @@ async def main():
                 except Exception:
                     pass
 
-            # 2. In private DMs: strictly ONLY /start command
-            start_only = [BotCommand("start", "🚀 Start / Admin Dashboard")]
-            await application.bot.set_my_commands(start_only, scope=BotCommandScopeAllPrivateChats())
+            # 3. Register full command list in default & private scopes so the [≡ Menu] button is ALWAYS active
+            bot_cmds = get_bot_commands()
+            await application.bot.set_my_commands(bot_cmds, scope=BotCommandScopeDefault())
+            await application.bot.set_my_commands(bot_cmds, scope=BotCommandScopeAllPrivateChats())
             for aid in ADMIN_USER_IDS:
                 try:
-                    await application.bot.set_my_commands(start_only, scope=BotCommandScopeChat(aid))
-                    await application.bot.set_chat_menu_button(chat_id=aid, menu_button=MenuButtonDefault())
+                    await application.bot.set_my_commands(bot_cmds, scope=BotCommandScopeChat(aid))
+                    await application.bot.set_chat_menu_button(chat_id=aid, menu_button=MenuButtonCommands())
                 except Exception:
                     pass
-            await application.bot.set_chat_menu_button(menu_button=MenuButtonDefault())
-            logger.info("✅ Telegram Bot Menu: MenuButtonDefault active (keyboard icon always visible in search/input bar).")
+            await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+            logger.info("✅ Telegram Bot Command Menu: MenuButtonCommands active (Command Menu [≡ Menu] button always visible on mobile & desktop).")
         except Exception as e:
             logger.warning(f"Error configuring command menu scopes: {e}")
-        logger.info("✅ Thirdwave SMS Wave OTP Bot is fully online and monitoring incoming messages...")
+        logger.info(f"✅ {get_bot_name()} is fully online and monitoring incoming messages...")
 
         # Robust polling starter with automatic conflict recovery
         for attempt in range(1, 6):
