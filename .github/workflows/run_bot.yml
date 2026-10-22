@@ -140,33 +140,6 @@ jobs:
             echo "ℹ️ Fresh database (first run or cache expired)."
           fi
 
-      # ─────────────────────────────────────────────────────────────────
-      # Handover: Now that this runner is 100% prepared and ready to run,
-      # gracefully cancel the older runner so there is ZERO downtime!
-      # ─────────────────────────────────────────────────────────────────
-      - name: Zero-Downtime Handover — Release Previous Bot Runner
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "🔄 Handover: New runner is fully booted, cached, and ready."
-          echo "🛑 Releasing older active runs now to complete seamless takeover..."
-          for st in in_progress queued; do
-            curl -s -H "Authorization: Bearer $GH_TOKEN" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/runs?status=$st&per_page=30" \
-              | python3 -c "
-            import sys, json
-            runs = json.load(sys.stdin).get('workflow_runs', [])
-            for r in runs:
-                if str(r['id']) != '${{ github.run_id }}':
-                    print(r['id'])
-            " | while read r_id; do
-              echo "  🛑 Releasing previous run #$r_id ($st)..."
-              curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
-                "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id/cancel" || true
-            done
-          done
-          echo "✅ Seamless handover complete. New bot starting immediately!"
-
       - name: Run Bot (Auto-Recovery & Crash Protection)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
