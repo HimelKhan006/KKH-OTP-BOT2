@@ -1408,17 +1408,14 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     iso   = parts[1] if len(parts) > 1 else "XX"
     country_name  = get_country_full_name(iso, item)
 
-    # Dynamic country flag & clean name (country flag replaces static 🌍 icon)
-    flag_icon = flag if flag and flag not in ("XX", "🌐", "") else "🌐"
     if iso != "XX" and country_name and country_name != "Global":
-        clean_country = f"{country_name} ({iso})"
+        country_display = f"{flag} <b>{html.escape(country_name)} ({iso})</b>"
     elif country_name and country_name != "Global":
-        clean_country = country_name
+        country_display = f"{flag} <b>{html.escape(country_name)}</b>"
     elif iso != "XX":
-        clean_country = iso
+        country_display = f"{flag} <b>{iso}</b>"
     else:
-        clean_country = "Global"
-        flag_icon = "🌐"
+        country_display = f"{flag} <b>Global</b>"
 
     # Smart service detection
     low_source = raw_source.lower()
@@ -1435,12 +1432,15 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         source = html.escape(raw_source)
 
     # Display number / fallback to country name
-    num_plain     = masked_number if masked_number else clean_country
+    import re as _re
+    num_plain     = masked_number if masked_number else country_name
+    country_plain = _re.sub(r'<[^>]+>', '', country_display).strip()
     source_plain  = html.unescape(source)
-    clean_msg     = raw_message.strip()
 
-    # Fixed-width label strings for monospace alignment (dynamic flag replaces 🌍 only)
-    L_COUNTRY = f"{flag_icon} Country:"
+    clean_msg = raw_message.strip()
+
+    # Fixed-width label strings for monospace alignment (emoji + label padded)
+    L_COUNTRY = "🌍 Country:"
     L_FROM    = "🏷️ From   :"
     L_TO      = "☎️ To     :"
     L_OTP     = "🔑 OTP    :"
@@ -1452,7 +1452,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"<code>"
                 f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{L_COUNTRY} {clean_country}\n"
+                f"{L_COUNTRY} {country_plain}\n"
                 f"{L_FROM} {source_plain}\n"
                 f"{L_TO} {num_plain}\n"
                 f"{L_OTP} {otp_code}"
@@ -1463,7 +1463,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"<code>"
                 f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{L_COUNTRY} {clean_country}\n"
+                f"{L_COUNTRY} {country_plain}\n"
                 f"{L_FROM} {source_plain}\n"
                 f"{L_TO} {num_plain}"
                 f"</code>\n\n"
@@ -1474,7 +1474,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"<code>"
                 f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{L_COUNTRY} {clean_country}\n"
+                f"{L_COUNTRY} {country_plain}\n"
                 f"{L_FROM} {source_plain}\n"
                 f"{L_TO} {num_plain}"
                 f"</code>"
@@ -1488,7 +1488,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"<code>"
                 f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{L_COUNTRY} {clean_country}\n"
+                f"{L_COUNTRY} {country_plain}\n"
                 f"{L_FROM} {source_plain}\n"
                 f"{L_TO} {num_plain}\n"
                 f"{L_OTP} {otp_val}"
@@ -1501,7 +1501,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"<code>"
                 f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{L_COUNTRY} {clean_country}\n"
+                f"{L_COUNTRY} {country_plain}\n"
                 f"{L_FROM} {source_plain}\n"
                 f"{L_TO} {num_plain}"
                 f"</code>"
@@ -2138,7 +2138,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "<code>"
             "📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "🇳🇵 Country: Nepal (NP)\n"
+            "🌍 Country: 🇳🇵 Nepal (NP)\n"
             "🏷️ From   : WhatsApp\n"
             "☎️ To     : +977980****456\n"
             "🔑 OTP    : 492810"
@@ -2153,7 +2153,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "<code>"
             "📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "🇳🇵 Country: Nepal (NP)\n"
+            "🌍 Country: 🇳🇵 Nepal (NP)\n"
             "🏷️ From   : WhatsApp\n"
             "☎️ To     : +977980****456\n"
             "🔑 OTP    : 492810"
