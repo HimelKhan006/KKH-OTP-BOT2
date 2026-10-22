@@ -1440,7 +1440,9 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     clean_msg     = raw_message.strip()
 
     # Fixed-width label strings for monospace alignment (dynamic flag + label padded)
-    L_COUNTRY = f"{flag_icon} Country   :"
+    is_regional_flag = any(0x1F1E6 <= ord(c) <= 0x1F1FF for c in flag_icon)
+    flag_spacer = "  " if is_regional_flag else " "
+    L_COUNTRY = f"{flag_icon}{flag_spacer}Country   :"
     L_FROM    = "🏷️ From      :"
     L_TO      = "☎️ To        :"
     L_OTP     = "🔑 OTP Code  :"
@@ -2138,7 +2140,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "<code>"
             "📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "🇳🇵 Country   :   Nepal (NP)\n"
+            "🇳🇵  Country   :   Nepal (NP)\n"
             "🏷️ From      :   WhatsApp\n"
             "☎️ To        :   +977980****456\n"
             "🔑 OTP Code  :   492810"
@@ -2153,7 +2155,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "<code>"
             "📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "🇳🇵 Country   :   Nepal (NP)\n"
+            "🇳🇵  Country   :   Nepal (NP)\n"
             "🏷️ From      :   WhatsApp\n"
             "☎️ To        :   +977980****456\n"
             "🔑 OTP Code  :   492810"
