@@ -213,7 +213,7 @@ jobs:
           key: bot1-database-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Self-Trigger Next Run (Zero Downtime Restart)
-        if: always()
+        if: success()
         env:
           GH_TOKEN: ${{ github.token }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
