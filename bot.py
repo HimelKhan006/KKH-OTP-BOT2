@@ -1383,9 +1383,9 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"{L_COUNTRY} {country_plain}\n"
-                f"{L_FROM}  {source_plain}\n"
-                f"{L_TO}  {num_plain}\n"
-                f"{L_OTP}  {otp_code}"
+                f"{L_FROM} {source_plain}\n"
+                f"{L_TO} {num_plain}\n"
+                f"{L_OTP} {otp_code}"
                 f"</code>"
             )
         elif clean_msg:
