@@ -58,15 +58,17 @@ def get_bangladesh_now() -> datetime:
     """Returns the current datetime in Bangladesh Standard Time (BST, UTC+6)."""
     return datetime.now(timezone.utc).astimezone(BANGLADESH_TZ)
 
-def format_bangladesh_12h(dt: Optional[datetime] = None) -> str:
-    """Formats datetime in Bangladesh 12-hour format with AM/PM (e.g. '23-10-2026, 03:22:14 AM')."""
+def format_bangladesh_12h(dt: Optional[datetime] = None) -> Tuple[str, str]:
+    """Formats datetime in Bangladesh 12-hour format with AM/PM returning (time_str, date_str)."""
     if dt is None:
         dt = get_bangladesh_now()
     elif dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc).astimezone(BANGLADESH_TZ)
     else:
         dt = dt.astimezone(BANGLADESH_TZ)
-    return dt.strftime("%d-%m-%Y, %I:%M:%S %p")
+    time_str = dt.strftime("%I:%M:%S %p")
+    date_str = dt.strftime("%d-%m-%Y")
+    return time_str, date_str
 
 import httpx
 from telegram import (
@@ -2034,16 +2036,9 @@ def get_admin_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
 def get_bot_commands() -> List[BotCommand]:
-    """Returns the list of commands for the Telegram [≡ Menu] command button."""
+    """Returns ONLY the /start command for the Telegram [≡ Menu] command button."""
     return [
         BotCommand("start", "🚀 Admin Dashboard"),
-        BotCommand("status", "📊 Bot Status & Stats"),
-        BotCommand("format", "📋 SMS Format Configuration"),
-        BotCommand("setname", "✏️ Change Bot Name"),
-        BotCommand("seturl", "🌐 Update API URL"),
-        BotCommand("setkey", "🔑 Update API Key"),
-        BotCommand("groups", "👥 Manage Linked Groups"),
-        BotCommand("restart", "🔄 Restart Bot Engine"),
     ]
 
 async def sync_data_to_secret_db():
@@ -3524,12 +3519,13 @@ async def send_startup_announcement(application: Application):
         pass
 
     bot_name = get_bot_name()
-    start_time_str = format_bangladesh_12h()
+    time_str, date_str = format_bangladesh_12h()
 
     admin_msg = (
         f"✅ <b>{html.escape(bot_name)}</b> is now <b>LIVE</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"⏰ <b>Start Time:</b> <code>{start_time_str}</code>\n"
+        f"⏰ <b>Start Time:</b> <code>{time_str}</code>\n"
+        f"📅 <b>Date:</b>       <code>{date_str}</code>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "<i>👑 Use /start anytime to open the admin dashboard.</i>"
     )
