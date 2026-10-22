@@ -49,7 +49,24 @@ import time
 import argparse
 import hashlib
 from typing import Set, Dict, Any, List, Optional, Tuple
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+# Bangladesh Standard Time (BST = UTC+6)
+BANGLADESH_TZ = timezone(timedelta(hours=6))
+
+def get_bangladesh_now() -> datetime:
+    """Returns the current datetime in Bangladesh Standard Time (BST, UTC+6)."""
+    return datetime.now(timezone.utc).astimezone(BANGLADESH_TZ)
+
+def format_bangladesh_12h(dt: Optional[datetime] = None) -> str:
+    """Formats datetime in Bangladesh 12-hour format with AM/PM (e.g. '23-10-2026, 03:22:14 AM')."""
+    if dt is None:
+        dt = get_bangladesh_now()
+    elif dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc).astimezone(BANGLADESH_TZ)
+    else:
+        dt = dt.astimezone(BANGLADESH_TZ)
+    return dt.strftime("%d-%m-%Y, %I:%M:%S %p")
 
 import httpx
 from telegram import (
@@ -3507,8 +3524,7 @@ async def send_startup_announcement(application: Application):
         pass
 
     bot_name = get_bot_name()
-    now_local = datetime.now()
-    start_time_str = now_local.strftime("%Y-%m-%d %I:%M:%S %p")
+    start_time_str = format_bangladesh_12h()
 
     admin_msg = (
         f"✅ <b>{html.escape(bot_name)}</b> is now <b>LIVE</b>\n"
