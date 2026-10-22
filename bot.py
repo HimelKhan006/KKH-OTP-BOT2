@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-⚡ OTP WAVE - 100% Fully Automatic All-in-One Standalone Telegram Bot
+⚡ Thirdwave SMS Wave OTP Bot - 100% Fully Automatic Standalone Telegram Bot
 ====================================================================
 Single self-contained Python file. No restarts. Always online.
 - Auto-installs dependencies
@@ -425,7 +425,7 @@ GIST_HEADERS = {
 
 class GistStorage:
     def __init__(self, gist_id: str, token: str, filename: str = "thirdwave_seen_messages.json",
-                 description: str = "OTP Wave Bot — 28h persistent storage"):
+                 description: str = "Thirdwave SMS Wave OTP Bot — 28h persistent storage"):
         self.gist_id = gist_id
         self.token = token
         self.filename = filename
@@ -600,7 +600,7 @@ class GistStorage:
 gist_storage = GistStorage(
     GIST_ID, GIST_TOKEN,
     filename="thirdwave_seen_messages.json",
-    description="OTP Wave Bot — 28h persistent storage (auto-managed)"
+    description="Thirdwave SMS Wave OTP Bot — 28h persistent storage (auto-managed)"
 )
 
 # ==========================================
@@ -631,24 +631,90 @@ def init_db():
             );
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_forwarded_at ON processed_otps(forwarded_at);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_processed_otps_num_otp ON processed_otps(number, otp_code);")
         conn.commit()
     logger.info("📦 SQLite database initialized at %s", DB_FILE)
 
-def is_message_seen(message_id: str) -> bool:
-    if not message_id:
-        return False
-    if message_id in seen_message_ids:
+def is_message_duplicate(mid: str, item: Optional[Dict[str, Any]] = None) -> bool:
+    """
+    Ironclad 3-layer duplicate detection:
+    1. Fast in-memory cache (seen_message_ids)
+    2. Primary Key check in SQLite DB (id = ?)
+    3. Content signature check: (same phone number + same OTP code) OR (same phone number + identical SMS body)
+    Guarantees that on bot restarts or API overlaps, no duplicate OTP is EVER sent to Telegram!
+    """
+    if mid and mid in seen_message_ids:
         return True
+
+    raw_num = ""
+    masked_num = ""
+    raw_msg = ""
+    otp_code = ""
+    if item:
+        raw_num = str(item.get("number") or item.get("destinationNumber") or item.get("range_template") or item.get("rangeTemplate") or item.get("dst") or "").strip()
+        if raw_num:
+            masked_num = mask_phone_number(raw_num)
+        raw_msg = str(item.get("sms") or item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "").strip()
+        otp_code = extract_otp_code(raw_msg)
+
+    num_variants = []
+    if raw_num:
+        num_variants.append(raw_num)
+        digits = re.sub(r"\D", "", raw_num)
+        if digits:
+            if digits not in num_variants:
+                num_variants.append(digits)
+            with_plus = f"+{digits}"
+            if with_plus not in num_variants:
+                num_variants.append(with_plus)
+    if masked_num and masked_num not in num_variants:
+        num_variants.append(masked_num)
+
     try:
         with get_db_connection() as conn:
-            cur = conn.execute("SELECT 1 FROM processed_otps WHERE id = ? LIMIT 1;", (message_id,))
-            found = cur.fetchone() is not None
-            if found:
-                seen_message_ids.add(message_id)
-            return found
+            # Check 1: Primary ID match
+            if mid:
+                cur = conn.execute("SELECT 1 FROM processed_otps WHERE id = ? LIMIT 1;", (mid,))
+                if cur.fetchone() is not None:
+                    seen_message_ids.add(mid)
+                    return True
+
+            # Check 2: Phone number variants + OTP code match
+            if otp_code and num_variants:
+                placeholders = ",".join(["?"] * len(num_variants))
+                cur = conn.execute(
+                    f"""SELECT 1 FROM processed_otps 
+                       WHERE number IN ({placeholders}) AND otp_code = ? 
+                       LIMIT 1;""",
+                    (*num_variants, otp_code)
+                )
+                if cur.fetchone() is not None:
+                    if mid:
+                        seen_message_ids.add(mid)
+                    return True
+
+            # Check 3: Phone number variants + identical SMS body match
+            if raw_msg and num_variants:
+                placeholders = ",".join(["?"] * len(num_variants))
+                cur = conn.execute(
+                    f"""SELECT 1 FROM processed_otps 
+                       WHERE number IN ({placeholders}) AND raw_message = ? 
+                       LIMIT 1;""",
+                    (*num_variants, raw_msg)
+                )
+                if cur.fetchone() is not None:
+                    if mid:
+                        seen_message_ids.add(mid)
+                    return True
+
     except Exception as e:
-        logger.error(f"DB check error: {e}")
-        return False
+        logger.error(f"DB duplicate check error: {e}")
+
+    return False
+
+def is_message_seen(message_id: str) -> bool:
+    """Backward compatibility wrapper for is_message_duplicate."""
+    return is_message_duplicate(message_id)
 
 def save_processed_message(item: Dict[str, Any], chat_id: int,
                            country: str = "", masked_num: str = "", otp_code: str = "") -> bool:
@@ -662,14 +728,17 @@ def save_processed_message(item: Dict[str, Any], chat_id: int,
     source       = str(item.get("sender_id") or item.get("sourceAddress") or item.get("source") or item.get("caller") or item.get("sender") or "")
     rate         = str(item.get("rate") or "")
     raw_message  = str(item.get("sms") or item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "")
+    raw_number   = str(item.get("number") or item.get("destinationNumber") or item.get("range_template") or item.get("rangeTemplate") or item.get("dst") or "").strip()
+    stored_num   = raw_number or masked_num
+    otp_val      = otp_code or extract_otp_code(raw_message)
     message_time = str(item.get("received_at") or item.get("receivedAt") or item.get("messageTime") or item.get("createdAt") or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
     try:
         with get_db_connection() as conn:
             conn.execute("""
-                INSERT OR IGNORE INTO processed_otps
+                INSERT OR REPLACE INTO processed_otps
                     (id, source, country, number, otp_code, raw_message, rate, message_time, chat_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
-            """, (mid, source, country, masked_num, otp_code, raw_message, rate, message_time, chat_id))
+            """, (mid, source, country, stored_num, otp_val, raw_message, rate, message_time, chat_id))
             conn.commit()
             return True
     except Exception as e:
@@ -1338,14 +1407,18 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     flag  = parts[0] if parts else "🌐"
     iso   = parts[1] if len(parts) > 1 else "XX"
     country_name  = get_country_full_name(iso, item)
+
+    # Dynamic country flag & clean name (country flag replaces static 🌍 icon)
+    flag_icon = flag if flag and flag not in ("XX", "🌐", "") else "🌐"
     if iso != "XX" and country_name and country_name != "Global":
-        country_display = f"{flag} <b>{html.escape(country_name)} ({iso})</b>"
+        clean_country = f"{country_name} ({iso})"
     elif country_name and country_name != "Global":
-        country_display = f"{flag} <b>{html.escape(country_name)}</b>"
+        clean_country = country_name
     elif iso != "XX":
-        country_display = f"{flag} <b>{iso}</b>"
+        clean_country = iso
     else:
-        country_display = f"{flag} <b>Global</b>"
+        clean_country = "Global"
+        flag_icon = "🌐"
 
     # Smart service detection
     low_source = raw_source.lower()
@@ -1362,18 +1435,15 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         source = html.escape(raw_source)
 
     # Display number / fallback to country name
-    import re as _re
-    num_plain     = masked_number if masked_number else country_name
-    country_plain = _re.sub(r'<[^>]+>', '', country_display).strip()
+    num_plain     = masked_number if masked_number else clean_country
     source_plain  = html.unescape(source)
+    clean_msg     = raw_message.strip()
 
-    clean_msg = raw_message.strip()
-
-    # Fixed-width label strings for monospace alignment (emoji + label padded)
-    L_COUNTRY = "🌍 Country:"
-    L_FROM    = "🏷️ From   :"
-    L_TO      = "☎️ To     :"
-    L_OTP     = "🔑 OTP    :"
+    # Fixed-width label strings for monospace alignment (dynamic flag + label padded)
+    L_COUNTRY = f"{flag_icon} Country   :"
+    L_FROM    = "🏷️ From      :"
+    L_TO      = "☎️ To        :"
+    L_OTP     = "🔑 OTP Code  :"
 
     # ── Short format (default) ───────────────────────────────────────────────
     if sms_format != "long":
@@ -1382,10 +1452,10 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"<code>"
                 f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{L_COUNTRY} {country_plain}\n"
-                f"{L_FROM} {source_plain}\n"
-                f"{L_TO} {num_plain}\n"
-                f"{L_OTP} {otp_code}"
+                f"{L_COUNTRY}   {clean_country}\n"
+                f"{L_FROM}   {source_plain}\n"
+                f"{L_TO}   {num_plain}\n"
+                f"{L_OTP}   {otp_code}"
                 f"</code>"
             )
         elif clean_msg:
@@ -1393,9 +1463,9 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"<code>"
                 f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{L_COUNTRY} {country_plain}\n"
-                f"{L_FROM} {source_plain}\n"
-                f"{L_TO} {num_plain}"
+                f"{L_COUNTRY}   {clean_country}\n"
+                f"{L_FROM}   {source_plain}\n"
+                f"{L_TO}   {num_plain}"
                 f"</code>\n\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
@@ -1404,9 +1474,9 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"<code>"
                 f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{L_COUNTRY} {country_plain}\n"
-                f"{L_FROM} {source_plain}\n"
-                f"{L_TO} {num_plain}"
+                f"{L_COUNTRY}   {clean_country}\n"
+                f"{L_FROM}   {source_plain}\n"
+                f"{L_TO}   {num_plain}"
                 f"</code>"
             )
 
@@ -1418,10 +1488,10 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"<code>"
                 f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{L_COUNTRY} {country_plain}\n"
-                f"{L_FROM} {source_plain}\n"
-                f"{L_TO} {num_plain}\n"
-                f"{L_OTP} {otp_val}"
+                f"{L_COUNTRY}   {clean_country}\n"
+                f"{L_FROM}   {source_plain}\n"
+                f"{L_TO}   {num_plain}\n"
+                f"{L_OTP}   {otp_val}"
                 f"</code>\n\n"
                 f"💬 <b>Full Message:</b>\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
@@ -1431,9 +1501,9 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"<code>"
                 f"📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"{L_COUNTRY} {country_plain}\n"
-                f"{L_FROM} {source_plain}\n"
-                f"{L_TO} {num_plain}"
+                f"{L_COUNTRY}   {clean_country}\n"
+                f"{L_FROM}   {source_plain}\n"
+                f"{L_TO}   {num_plain}"
                 f"</code>"
             )
 
@@ -1626,18 +1696,8 @@ async def run_startup_reconciliation(
         if not mid:
             continue
 
-        # Check DB first (direct query for 100% precision)
-        is_duplicate = False
-        try:
-            with get_db_connection() as conn:
-                cur = conn.execute("SELECT 1 FROM processed_otps WHERE id = ? LIMIT 1;", (mid,))
-                if cur.fetchone() is not None:
-                    is_duplicate = True
-        except Exception as dbe:
-            logger.warning(f"Database duplicate check error for {mid}: {dbe}")
-            is_duplicate = is_message_seen(mid)
-
-        if is_duplicate:
+        # Ironclad duplicate check: ID match, (number + OTP) match, or (number + SMS body) match
+        if is_message_duplicate(mid, item):
             seen_message_ids.add(mid)
             already_in_db_count += 1
             continue
@@ -1711,7 +1771,7 @@ async def poll_incoming_messages(application: Application):
     global total_forwarded_count, _gist_dirty, _is_handover, _handover_epoch
     init_db()
     bot_start_time = datetime.now(timezone.utc).timestamp()
-    logger.info(f"🚀 OTP WAVE polling engine started at epoch {bot_start_time:.0f}.")
+    logger.info(f"🚀 Thirdwave SMS Wave OTP Bot polling engine started at epoch {bot_start_time:.0f}.")
 
     # 1. Ensure Gist exists and load continuous state
     if gist_storage.enabled:
@@ -1816,7 +1876,7 @@ async def poll_incoming_messages(application: Application):
                 new_items = []
                 for m in messages:
                     mid = str(m.get("id") or "").strip()
-                    if not mid or is_message_seen(mid):
+                    if not mid or is_message_duplicate(mid, m):
                         continue
                     # Timestamp check: ignore any SMS older than bot startup time
                     msg_ts = parse_message_timestamp(str(m.get("received_at") or m.get("receivedAt") or m.get("messageTime") or m.get("createdAt") or ""))
@@ -1855,7 +1915,7 @@ def get_default_bot_name() -> str:
     val = data.get("default_bot_name")
     if val and isinstance(val, str) and val.strip():
         return val.strip()[:64]
-    return "OTP Wave Bot"
+    return "Thirdwave SMS Wave OTP Bot"
 
 def get_bot_name() -> str:
     data = load_stored_data()
@@ -2078,10 +2138,10 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "<code>"
             "📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "🌍 Country: 🇳🇵 Nepal (NP)\n"
-            "🏷️ From   : WhatsApp\n"
-            "☎️ To     : +977980****456\n"
-            "🔑 OTP    : 492810"
+            "🇳🇵 Country   :   Nepal (NP)\n"
+            "🏷️ From      :   WhatsApp\n"
+            "☎️ To        :   +977980****456\n"
+            "🔑 OTP Code  :   492810"
             "</code>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Buttons: [ 492810 ] [ Number Bot ]</i>"
@@ -2093,10 +2153,10 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "<code>"
             "📩 𝐒𝐌𝐒 𝐑𝐄𝐂𝐄𝐈𝐕𝐄𝐃\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "🌍 Country: 🇳🇵 Nepal (NP)\n"
-            "🏷️ From   : WhatsApp\n"
-            "☎️ To     : +977980****456\n"
-            "🔑 OTP    : 492810"
+            "🇳🇵 Country   :   Nepal (NP)\n"
+            "🏷️ From      :   WhatsApp\n"
+            "☎️ To        :   +977980****456\n"
+            "🔑 OTP Code  :   492810"
             "</code>\n\n"
             "💬 <b>Full Message:</b>\n"
             "<blockquote expandable>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n"
@@ -3793,7 +3853,7 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
 # ==========================================
 async def run_diagnostics():
     print("\n=======================================================")
-    print("           OTP WAVE SYSTEM DIAGNOSTICS")
+    print("           THIRDWAVE SMS WAVE OTP BOT SYSTEM DIAGNOSTICS")
     print("=======================================================")
 
     # 1. Telegram bot
@@ -3889,8 +3949,44 @@ def validate_config():
         print("\nSet these in your .env file or GitHub Secrets.\n")
         sys.exit(1)
 
+async def trigger_proactive_handover() -> bool:
+    """
+    Proactively dispatches the next GitHub Actions workflow run in advance
+    so the incoming runner boots up, sets up Python, restores DB cache,
+    and installs packages while THIS current bot continues forwarding live OTPs!
+    """
+    repo = os.getenv("GITHUB_REPOSITORY", "").strip()
+    token = os.getenv("GH_TOKEN", "").strip() or os.getenv("GIST_TOKEN", "").strip()
+    if not repo or not token:
+        logger.info("ℹ️ Proactive handover dispatch skipped (no GITHUB_REPOSITORY or GH_TOKEN).")
+        return False
+
+    url = f"https://api.github.com/repos/{repo}/actions/workflows/run_bot.yml/dispatches"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "ThirdwaveSMSWaveOTPBot",
+    }
+    payload = {
+        "ref": "main",
+        "inputs": {"is_handover": "true"},
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as hclient:
+            res = await hclient.post(url, headers=headers, json=payload)
+            if res.status_code in (204, 201, 200):
+                logger.info("🚀 [PROACTIVE HANDOVER] Next runner triggered in advance! Transition will have 0s downtime.")
+                return True
+            else:
+                logger.warning(f"⚠️ Proactive handover dispatch returned HTTP {res.status_code}: {res.text[:100]}")
+    except Exception as e:
+        logger.warning(f"⚠️ Proactive handover dispatch error: {e}")
+    return False
+
 async def main():
-    parser = argparse.ArgumentParser(description="OTP WAVE Bot")
+    parser = argparse.ArgumentParser(description="Thirdwave SMS Wave OTP Bot")
     parser.add_argument("--test", action="store_true", help="Run diagnostics and exit")
     args = parser.parse_args()
 
@@ -3900,7 +3996,7 @@ async def main():
         await run_diagnostics()
         return
 
-    logger.info("⚡ OTP WAVE starting up...")
+    logger.info("⚡ Thirdwave SMS Wave OTP Bot starting up...")
 
     req = HTTPXRequest(connection_pool_size=8)
     application = (
@@ -3998,7 +4094,7 @@ async def main():
             logger.info("✅ Telegram Bot Menu: MenuButtonDefault active (keyboard icon always visible in search/input bar).")
         except Exception as e:
             logger.warning(f"Error configuring command menu scopes: {e}")
-        logger.info("✅ OTP WAVE is fully online and monitoring incoming messages...")
+        logger.info("✅ Thirdwave SMS Wave OTP Bot is fully online and monitoring incoming messages...")
 
         # Robust polling starter with automatic conflict recovery
         for attempt in range(1, 6):
@@ -4018,11 +4114,21 @@ async def main():
         if session_timeout > 0:
             logger.info(f"⏱️ Zero-restart handover timer armed: {session_timeout}s ({session_timeout/3600:.2f}h)")
 
+        _proactive_handover_triggered = False
+
         while True:
             try:
                 now = time.time()
                 elapsed = now - start_time
-                if session_timeout > 0 and elapsed >= (session_timeout - 60):
+
+                # ── Proactive Handover: trigger next runner 4 min before session ends ──
+                if session_timeout > 0 and elapsed >= (session_timeout - 240) and not _proactive_handover_triggered:
+                    _proactive_handover_triggered = True
+                    logger.info("🔄 Proactive handover window reached: waking up next runner in advance now...")
+                    await trigger_proactive_handover()
+
+                # ── Clean Session Exit: 45s before runner hard limit ─────────────────
+                if session_timeout > 0 and elapsed >= (session_timeout - 45):
                     logger.info(f"⏱️ Session limit approaching ({elapsed:.0f}s elapsed of {session_timeout}s).")
                     logger.info("🔄 Pre-timeout analysis: saving workflow state to Gist & SQLite for seamless handover...")
                     try:

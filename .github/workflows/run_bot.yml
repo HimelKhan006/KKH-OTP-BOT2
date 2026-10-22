@@ -17,10 +17,10 @@ on:
     # Backup safety net — fires every 6h if self-trigger ever fails
     - cron: '0 */6 * * *'
 
-# Only ONE bot instance ever runs. New run cancels the old one instantly.
+# Allow new runner to boot up and install packages in parallel before taking over
 concurrency:
   group: otp-wave-bot-single-instance
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   actions: write
@@ -36,28 +36,6 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Cancel Any Other Running or Queued Instances
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "🔍 Cancelling any other active or queued runs..."
-          for st in in_progress queued; do
-            curl -s -H "Authorization: Bearer $GH_TOKEN" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/runs?status=$st&per_page=30" \
-              | python3 -c "
-            import sys, json
-            runs = json.load(sys.stdin).get('workflow_runs', [])
-            for r in runs:
-                if str(r['id']) != '${{ github.run_id }}':
-                    print(r['id'])
-            " | while read r_id; do
-              echo "  🛑 Cancelling older run #$r_id ($st)..."
-              curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
-                "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id/cancel" || true
-            done
-          done
-          echo "✅ Old and queued runs cancelled."
 
       - name: Clear Old Completed Workflow History
         env:
@@ -84,8 +62,11 @@ jobs:
       - name: Restore Persistent Database from Cache
         uses: actions/cache/restore@v4
         with:
-          path: bot1_database.db
-          key: bot1-database-persistent
+          path: |
+            bot1_database.db
+            bot1_database.db-wal
+            bot1_database.db-shm
+          key: bot1-database-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             bot1-database-
 
@@ -137,6 +118,33 @@ jobs:
             echo "ℹ️ Fresh database (first run or cache expired)."
           fi
 
+      # ─────────────────────────────────────────────────────────────────
+      # Handover: Now that this runner is 100% prepared and ready to run,
+      # gracefully cancel the older runner so there is ZERO downtime!
+      # ─────────────────────────────────────────────────────────────────
+      - name: Zero-Downtime Handover — Release Previous Bot Runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "🔄 Handover: New runner is fully booted, cached, and ready."
+          echo "🛑 Releasing older active runs now to complete seamless takeover..."
+          for st in in_progress queued; do
+            curl -s -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs?status=$st&per_page=30" \
+              | python3 -c "
+            import sys, json
+            runs = json.load(sys.stdin).get('workflow_runs', [])
+            for r in runs:
+                if str(r['id']) != '${{ github.run_id }}':
+                    print(r['id'])
+            " | while read r_id; do
+              echo "  🛑 Releasing previous run #$r_id ($st)..."
+              curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id/cancel" || true
+            done
+          done
+          echo "✅ Seamless handover complete. New bot starting immediately!"
+
       - name: Run Bot (Auto-Recovery & Crash Protection)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -146,6 +154,8 @@ jobs:
           SECONDARY_GROUP_CHAT_ID: ${{ secrets.SECONDARY_GROUP_CHAT_ID }}
           POLL_INTERVAL_SECONDS: ${{ secrets.POLL_INTERVAL_SECONDS || '2.5' }}
           ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
           GIST_ID: ${{ secrets.GIST_ID }}
           STARTUP_TYPE: ${{ github.event_name }}
@@ -201,8 +211,11 @@ jobs:
         if: always()
         uses: actions/cache/save@v4
         with:
-          path: bot1_database.db
-          key: bot1-database-persistent
+          path: |
+            bot1_database.db
+            bot1_database.db-wal
+            bot1_database.db-shm
+          key: bot1-database-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Self-Trigger Next Run (Zero Downtime Restart)
         if: always()
