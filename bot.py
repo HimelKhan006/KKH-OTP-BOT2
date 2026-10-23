@@ -2459,7 +2459,7 @@ def build_forwarding_control_view() -> Tuple[str, InlineKeyboardMarkup]:
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Tap below to turn OFF group forwarding:</i>"
         )
-        toggle_btn = InlineKeyboardButton("⏸️ Turn OFF Forwarding", callback_data="fwd_turn_off")
+        toggle_btn = InlineKeyboardButton("⏸️ Turn OFF Forwarding", callback_data="fwd_ask_off")
     else:
         msg = (
             "⚡ <b>OTP Group Forwarding Control</b>\n"
@@ -2471,7 +2471,7 @@ def build_forwarding_control_view() -> Tuple[str, InlineKeyboardMarkup]:
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Tap below to turn ON group forwarding:</i>"
         )
-        toggle_btn = InlineKeyboardButton("🟢 Turn ON Forwarding", callback_data="fwd_turn_on")
+        toggle_btn = InlineKeyboardButton("🟢 Turn ON Forwarding", callback_data="fwd_ask_on")
 
     return msg, InlineKeyboardMarkup([[toggle_btn]])
 
@@ -2488,7 +2488,7 @@ def build_forwarding_updated_view(action: str) -> Tuple[str, InlineKeyboardMarku
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Incoming OTPs continue recording silently in SQLite & 28h history. Groups will not receive forwards until turned back on.</i>"
         )
-        btn = InlineKeyboardButton("🟢 Turn ON Forwarding", callback_data="fwd_turn_on")
+        btn = InlineKeyboardButton("🟢 Turn ON Forwarding", callback_data="fwd_ask_on")
     else:
         msg = (
             "🟢 <b>OTP Forwarding: Turned ON</b>\n"
@@ -2501,7 +2501,7 @@ def build_forwarding_updated_view(action: str) -> Tuple[str, InlineKeyboardMarku
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Live forwarding is active. Every new incoming OTP is delivered to your group(s) in real time.</i>"
         )
-        btn = InlineKeyboardButton("⏸️ Turn OFF Forwarding", callback_data="fwd_turn_off")
+        btn = InlineKeyboardButton("⏸️ Turn OFF Forwarding", callback_data="fwd_ask_off")
     return msg, InlineKeyboardMarkup([[btn]])
 
 async def toggle_forwarding_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3387,7 +3387,47 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         except Exception as e:
             logger.warning(f"Could not edit dashboard message on toggle: {e}")
 
-    elif query.data in ("confirm_fwd_off", "fwd_confirm_off", "fwd_turn_off", "fwd_disable", "fwd_ask_off"):
+    elif query.data in ("fwd_ask_off", "fwd_turn_off"):
+        confirm_kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ Confirm Turn OFF", callback_data="confirm_fwd_off"),
+                InlineKeyboardButton("❌ Cancel", callback_data="cancel_fwd"),
+            ]
+        ])
+        try:
+            await query.edit_message_text(
+                "⚠️ <b>Turn OFF OTP Forwarding</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "Are you sure you want to turn off OTP group forwarding?\n\n"
+                "• Delivery to Telegram groups will be paused.\n"
+                "• Bot will continue recording all incoming OTPs silently into SQLite database & 28h history.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=confirm_kb,
+            )
+        except Exception as e:
+            logger.warning(f"Error displaying fwd_ask_off: {e}")
+
+    elif query.data in ("fwd_ask_on", "fwd_turn_on"):
+        confirm_kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ Confirm Turn ON", callback_data="confirm_fwd_on"),
+                InlineKeyboardButton("❌ Cancel", callback_data="cancel_fwd"),
+            ]
+        ])
+        try:
+            await query.edit_message_text(
+                "⚡ <b>Turn ON OTP Forwarding</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "Are you sure you want to turn on OTP group forwarding?\n\n"
+                "• Delivery to Telegram groups will resume in real-time.\n"
+                "• Zero Spam: Only new OTPs arriving from now on will be forwarded.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=confirm_kb,
+            )
+        except Exception as e:
+            logger.warning(f"Error displaying fwd_ask_on: {e}")
+
+    elif query.data in ("confirm_fwd_off", "fwd_confirm_off", "fwd_disable"):
         set_otp_forwarding_enabled(False)
         asyncio.create_task(sync_data_to_secret_db())
         try:
@@ -3405,7 +3445,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         except Exception as e:
             logger.warning(f"Error handling confirm_fwd_off: {e}")
 
-    elif query.data in ("confirm_fwd_on", "fwd_confirm_on", "fwd_turn_on", "fwd_enable", "fwd_ask_on"):
+    elif query.data in ("confirm_fwd_on", "fwd_confirm_on", "fwd_enable"):
         set_otp_forwarding_enabled(True)
         asyncio.create_task(sync_data_to_secret_db())
         try:
