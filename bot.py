@@ -2469,9 +2469,9 @@ def build_forwarding_control_view() -> Tuple[str, InlineKeyboardMarkup]:
             "• <b>Database & Retention:</b> <code>100% Synced (28h)</code>\n"
             "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Tap below to turn OFF group forwarding:</i>"
+            "<i>Tap below to pause group forwarding:</i>"
         )
-        toggle_btn = InlineKeyboardButton("⏸️ Turn OFF Forwarding", callback_data="fwd_ask_off")
+        toggle_btn = InlineKeyboardButton("⏸️ Pause Forwarding", callback_data="fwd_ask_off")
     else:
         msg = (
             "⚡ <b>OTP Group Forwarding Control</b>\n"
@@ -2481,9 +2481,9 @@ def build_forwarding_control_view() -> Tuple[str, InlineKeyboardMarkup]:
             "• <b>Database & Retention:</b> <code>100% Active (Recording silently)</code>\n"
             "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Tap below to turn ON group forwarding:</i>"
+            "<i>Tap below to resume group forwarding:</i>"
         )
-        toggle_btn = InlineKeyboardButton("🟢 Turn ON Forwarding", callback_data="fwd_ask_on")
+        toggle_btn = InlineKeyboardButton("▶️ Resume Forwarding", callback_data="fwd_ask_on")
 
     return msg, InlineKeyboardMarkup([[toggle_btn]])
 
@@ -2491,19 +2491,19 @@ def build_forwarding_updated_view(action: str) -> Tuple[str, InlineKeyboardMarku
     """Builds professional status update confirmation card after forwarding state is changed."""
     if action == "off":
         msg = (
-            "⏸️ <b>OTP Forwarding: Turned OFF</b>\n"
+            "⏸️ <b>OTP Forwarding: Paused</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "• <b>Status:</b> ⏸️ <code>PAUSED (Silent Mode)</code>\n"
             "• <b>Group Delivery:</b> <code>PAUSED (No messages sent to groups)</code>\n"
             "• <b>Database & Retention:</b> <code>100% Active (Recording silently)</code>\n"
             "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Incoming OTPs continue recording silently in SQLite & 28h history. Groups will not receive forwards until turned back on.</i>"
+            "<i>Incoming OTPs continue recording silently in SQLite & 28h history. Groups will not receive forwards until resumed.</i>"
         )
-        btn = InlineKeyboardButton("🟢 Turn ON Forwarding", callback_data="fwd_ask_on")
+        btn = InlineKeyboardButton("▶️ Resume Forwarding", callback_data="fwd_ask_on")
     else:
         msg = (
-            "🟢 <b>OTP Forwarding: Turned ON</b>\n"
+            "🟢 <b>OTP Forwarding: Resumed</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "• <b>Status:</b> 🟢 <code>ACTIVE (Live Mode)</code>\n"
             "• <b>Group Delivery:</b> <code>ACTIVE (Delivered live to groups)</code>\n"
@@ -2513,7 +2513,7 @@ def build_forwarding_updated_view(action: str) -> Tuple[str, InlineKeyboardMarku
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Live forwarding is active. Every new incoming OTP is delivered to your group(s) in real time.</i>"
         )
-        btn = InlineKeyboardButton("⏸️ Turn OFF Forwarding", callback_data="fwd_ask_off")
+        btn = InlineKeyboardButton("⏸️ Pause Forwarding", callback_data="fwd_ask_off")
     return msg, InlineKeyboardMarkup([[btn]])
 
 async def toggle_forwarding_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2536,9 +2536,9 @@ async def toggle_forwarding_command(update: Update, context: ContextTypes.DEFAUL
         set_otp_forwarding_enabled(not curr)
         asyncio.create_task(sync_data_to_secret_db())
         msg = (
-            "🟢 <b>OTP Forwarding Turned ON</b>\n━━━━━━━━━━━━━━━━━━━━\nLive OTP group forwarding is active."
+            "🟢 <b>OTP Forwarding Resumed</b>\n━━━━━━━━━━━━━━━━━━━━\nLive OTP group forwarding is active."
             if not curr else
-            "⏸️ <b>OTP Forwarding Turned OFF</b>\n━━━━━━━━━━━━━━━━━━━━\nGroup delivery is paused (recording to DB silently)."
+            "⏸️ <b>OTP Forwarding Paused</b>\n━━━━━━━━━━━━━━━━━━━━\nGroup delivery is paused (recording to DB silently)."
         )
         await msg_obj.reply_text(msg, parse_mode=ParseMode.HTML)
         return
@@ -2547,14 +2547,14 @@ async def toggle_forwarding_command(update: Update, context: ContextTypes.DEFAUL
     if is_fwd:
         confirm_kb = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("✅ Confirm Turn OFF", callback_data="confirm_fwd_off"),
+                InlineKeyboardButton("⏸️ Pause Forwarding", callback_data="confirm_fwd_off"),
                 InlineKeyboardButton("❌ Cancel", callback_data="cancel_fwd"),
             ]
         ])
         await msg_obj.reply_text(
-            "⚠️ <b>Turn OFF OTP Forwarding</b>\n"
+            "⏸️ <b>Pause OTP Group Forwarding</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "Are you sure you want to turn off OTP group forwarding?\n\n"
+            "Are you sure you want to pause OTP forwarding to Telegram groups?\n\n"
             "• Delivery to Telegram groups will be paused.\n"
             "• Bot will continue recording all incoming OTPs silently into SQLite database & 28h history.",
             parse_mode=ParseMode.HTML,
@@ -2563,14 +2563,14 @@ async def toggle_forwarding_command(update: Update, context: ContextTypes.DEFAUL
     else:
         confirm_kb = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("✅ Confirm Turn ON", callback_data="confirm_fwd_on"),
+                InlineKeyboardButton("▶️ Resume Forwarding", callback_data="confirm_fwd_on"),
                 InlineKeyboardButton("❌ Cancel", callback_data="cancel_fwd"),
             ]
         ])
         await msg_obj.reply_text(
-            "⚡ <b>Turn ON OTP Forwarding</b>\n"
+            "▶️ <b>Resume OTP Group Forwarding</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "Are you sure you want to turn on OTP group forwarding?\n\n"
+            "Are you sure you want to resume OTP forwarding to Telegram groups?\n\n"
             "• Delivery to Telegram groups will resume in real-time.\n"
             "• Zero Spam: Only new OTPs arriving from now on will be forwarded.",
             parse_mode=ParseMode.HTML,
@@ -3402,14 +3402,14 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif query.data in ("fwd_ask_off", "fwd_turn_off"):
         confirm_kb = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("✅ Confirm Turn OFF", callback_data="confirm_fwd_off"),
+                InlineKeyboardButton("⏸️ Pause Forwarding", callback_data="confirm_fwd_off"),
                 InlineKeyboardButton("❌ Cancel", callback_data="cancel_fwd"),
             ]
         ])
         ask_text = (
-            "⚠️ <b>Turn OFF OTP Forwarding</b>\n"
+            "⏸️ <b>Pause OTP Group Forwarding</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "Are you sure you want to turn off OTP group forwarding?\n\n"
+            "Are you sure you want to pause OTP forwarding to Telegram groups?\n\n"
             "• Delivery to Telegram groups will be paused.\n"
             "• Bot will continue recording all incoming OTPs silently into SQLite database & 28h history."
         )
@@ -3426,14 +3426,14 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif query.data in ("fwd_ask_on", "fwd_turn_on"):
         confirm_kb = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("✅ Confirm Turn ON", callback_data="confirm_fwd_on"),
+                InlineKeyboardButton("▶️ Resume Forwarding", callback_data="confirm_fwd_on"),
                 InlineKeyboardButton("❌ Cancel", callback_data="cancel_fwd"),
             ]
         ])
         ask_text = (
-            "⚡ <b>Turn ON OTP Forwarding</b>\n"
+            "▶️ <b>Resume OTP Group Forwarding</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "Are you sure you want to turn on OTP group forwarding?\n\n"
+            "Are you sure you want to resume OTP forwarding to Telegram groups?\n\n"
             "• Delivery to Telegram groups will resume in real-time.\n"
             "• Zero Spam: Only new OTPs arriving from now on will be forwarded."
         )
@@ -3450,14 +3450,14 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif query.data in ("confirm_fwd_off", "fwd_confirm_off", "fwd_disable"):
         set_otp_forwarding_enabled(False)
         off_text = (
-            "⏸️ <b>OTP Forwarding: Turned OFF</b>\n"
+            "⏸️ <b>OTP Forwarding: Paused</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "• <b>Status:</b> ⏸️ <code>PAUSED (Silent Mode)</code>\n"
             "• <b>Group Delivery:</b> <code>PAUSED (No messages sent to groups)</code>\n"
             "• <b>Database & Retention:</b> <code>100% Active (Recording silently)</code>\n"
             "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Incoming OTPs continue recording silently in SQLite & 28h history. Groups will not receive forwards until turned back on.</i>"
+            "<i>Incoming OTPs continue recording silently in SQLite & 28h history. Groups will not receive forwards until resumed.</i>"
         )
         try:
             await query.edit_message_text(off_text, parse_mode=ParseMode.HTML, reply_markup=None)
@@ -3473,7 +3473,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif query.data in ("confirm_fwd_on", "fwd_confirm_on", "fwd_enable"):
         set_otp_forwarding_enabled(True)
         on_text = (
-            "🟢 <b>OTP Forwarding: Turned ON</b>\n"
+            "🟢 <b>OTP Forwarding: Resumed</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "• <b>Status:</b> 🟢 <code>ACTIVE (Live Mode)</code>\n"
             "• <b>Group Delivery:</b> <code>ACTIVE (Delivered live to groups)</code>\n"
@@ -4709,13 +4709,18 @@ async def trigger_proactive_handover() -> bool:
         return False
 
     candidate_tokens: List[str] = []
-    # Prioritize user's Personal Access Token (GIST_TOKEN) which has full workflow dispatch rights
-    for t in [os.getenv("GIST_TOKEN", "").strip(), os.getenv("GH_TOKEN", "").strip()]:
+    # Check all candidate tokens in order: PAT (Personal Access Token), GIST_TOKEN, GH_TOKEN, GITHUB_TOKEN
+    for t in [
+        os.getenv("PAT", "").strip(),
+        os.getenv("GIST_TOKEN", "").strip(),
+        os.getenv("GH_TOKEN", "").strip(),
+        os.getenv("GITHUB_TOKEN", "").strip(),
+    ]:
         if t and t not in candidate_tokens:
             candidate_tokens.append(t)
 
     if not candidate_tokens:
-        logger.info("ℹ️ Proactive handover dispatch skipped (no GIST_TOKEN or GH_TOKEN).")
+        logger.info("ℹ️ Proactive handover dispatch skipped (no authentication token found).")
         return False
 
     # Save state, checkpoint DB, and record active timestamp BEFORE waking next runner
@@ -4756,6 +4761,11 @@ async def trigger_proactive_handover() -> bool:
                 res = await hclient.post(url, headers=headers, json=payload)
                 if res.status_code in (204, 201, 200):
                     logger.info("🚀 [PROACTIVE HANDOVER] Next runner triggered in advance! Transition will have 0s downtime.")
+                    try:
+                        with open(".handover_dispatched", "w", encoding="utf-8") as hf:
+                            hf.write(str(time.time()))
+                    except Exception:
+                        pass
                     return True
                 else:
                     logger.warning(f"⚠️ Proactive handover with token ({token[:6]}...) returned HTTP {res.status_code}: {res.text[:100]}")
