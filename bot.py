@@ -1433,6 +1433,20 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
 # ==========================================
 # 10. Clean OTP Notification Formatter (No Language)
 # ==========================================
+def wrap_sms_for_card(text: str, width: int = 22) -> str:
+    """Wraps SMS text to a compact line length (<=22 chars) to ensure cards don't stretch horizontally."""
+    if not text:
+        return ""
+    import textwrap
+    lines = []
+    for paragraph in str(text).splitlines():
+        p = paragraph.strip()
+        if p:
+            lines.extend(textwrap.wrap(p, width=width, break_long_words=True))
+        else:
+            lines.append("")
+    return "\n".join(lines)
+
 def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = None) -> tuple:
     """Returns (text, otp_code, raw_message) with a fully professional layout."""
     if not sms_format:
@@ -1498,6 +1512,8 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"🔑 <b>PASSCODE:</b> <code>{otp_code}</code>"
             )
         elif clean_msg:
+            wrapped_sms = wrap_sms_for_card(clean_msg, width=22)
+            escaped_sms = html.escape(wrapped_sms, quote=False)
             full_text = (
                 f"🎟️ <b>VERIFICATION PASS</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -1506,8 +1522,8 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"📱 <b>Number:</b> {num_plain}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"<blockquote expandable>📩 <b>View Full SMS</b>\n"
-                f"\u200b\n\u200b\n"
-                f"{html.escape(clean_msg, quote=False)}</blockquote>"
+                f"\u2800\n\u2800\n\u2800\n"
+                f"{escaped_sms}</blockquote>"
             )
         else:
             full_text = (
@@ -1522,6 +1538,8 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     else:
         otp_display = f"<code>{otp_code}</code>" if otp_code else "<i>N/A</i>"
         if clean_msg:
+            wrapped_sms = wrap_sms_for_card(clean_msg, width=22)
+            escaped_sms = html.escape(wrapped_sms, quote=False)
             full_text = (
                 f"🎟️ <b>VERIFICATION PASS</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -1531,8 +1549,8 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🔑 <b>PASSCODE:</b> {otp_display}\n\n"
                 f"<blockquote expandable>📩 <b>View Full SMS</b>\n"
-                f"\u200b\n\u200b\n"
-                f"{html.escape(clean_msg, quote=False)}</blockquote>"
+                f"\u2800\n\u2800\n\u2800\n"
+                f"{escaped_sms}</blockquote>"
             )
         else:
             full_text = (
@@ -2205,6 +2223,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "<i>Buttons: [ 492810 ] [ Number Bot ]</i>"
         )
     elif preview_mode == "long":
+        sample_wrapped = wrap_sms_for_card("Your WhatsApp verification code is 492-810. Do not share this code with anyone.", width=22)
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
@@ -2215,9 +2234,9 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "📱 <b>Number:</b> +977980****456\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
-            "<blockquote expandable>📩 <b>View Full SMS</b>\n"
-            "\u200b\n\u200b\n"
-            "Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n\n"
+            f"<blockquote expandable>📩 <b>View Full SMS</b>\n"
+            f"\u2800\n\u2800\n\u2800\n"
+            f"{sample_wrapped}</blockquote>\n\n"
             "<i>Buttons: [ 492810 ] [ Number Bot ]</i>"
         )
     else:
