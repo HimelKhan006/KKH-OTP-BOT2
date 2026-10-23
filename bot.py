@@ -678,6 +678,18 @@ gist_storage = GistStorage(
     description="Thirdwave SMS Wave OTP Bot — 28h persistent storage (auto-managed)"
 )
 
+async def sync_data_to_secret_db():
+    """Background helper to asynchronously sync current bot data and settings to persistent Cloud Storage."""
+    try:
+        if "gist_storage" in globals() and gist_storage and gist_storage.enabled:
+            base = client.base_url if "client" in globals() else ""
+            seen = seen_timestamps if "seen_timestamps" in globals() else {}
+            total = total_forwarded_count if "total_forwarded_count" in globals() else 0
+            counts = country_forwarded_counts if "country_forwarded_counts" in globals() else {}
+            await gist_storage.save_state(seen, is_handover=False, total_forwarded=total, country_counts=counts, base_url=base)
+    except Exception as e:
+        logger.warning(f"Cloud DB sync background warning: {e}")
+
 # ==========================================
 # 7. Local SQLite Database Storage
 # ==========================================
@@ -3437,7 +3449,6 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     elif query.data in ("confirm_fwd_off", "fwd_confirm_off", "fwd_disable"):
         set_otp_forwarding_enabled(False)
-        asyncio.create_task(sync_data_to_secret_db())
         off_text = (
             "⏸️ <b>OTP Forwarding: Turned OFF</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
@@ -3460,10 +3471,10 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                     await query.message.reply_text(off_text, parse_mode=ParseMode.HTML, reply_markup=off_kb)
             except Exception as e2:
                 logger.warning(f"Fallback reply for confirm_fwd_off failed: {e2}")
+        asyncio.create_task(sync_data_to_secret_db())
 
     elif query.data in ("confirm_fwd_on", "fwd_confirm_on", "fwd_enable"):
         set_otp_forwarding_enabled(True)
-        asyncio.create_task(sync_data_to_secret_db())
         on_text = (
             "🟢 <b>OTP Forwarding: Turned ON</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
@@ -3487,6 +3498,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                     await query.message.reply_text(on_text, parse_mode=ParseMode.HTML, reply_markup=on_kb)
             except Exception as e2:
                 logger.warning(f"Fallback reply for confirm_fwd_on failed: {e2}")
+        asyncio.create_task(sync_data_to_secret_db())
 
     elif query.data in ("cancel_fwd", "fwd_cancel"):
         is_fwd = is_otp_forwarding_enabled()
