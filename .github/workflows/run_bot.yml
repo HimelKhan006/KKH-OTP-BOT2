@@ -178,14 +178,19 @@ jobs:
             python bot.py
             EXIT_CODE=$?
 
-            if [ $EXIT_CODE -eq 0 ]; then
-              echo "✅ Clean session handover (exit 0)."
-              break
-            fi
-
             if [ $EXIT_CODE -eq 1 ]; then
               echo "❌ Config error. Halting."
               exit 1
+            fi
+
+            if [ $EXIT_CODE -eq 0 ]; then
+              if [ $REMAINING -lt 120 ]; then
+                echo "✅ Session window complete (~5h 25m). Handing over to next runner."
+                break
+              fi
+              echo "🔄 Admin restart triggered: rebooting bot process immediately in 2s..."
+              sleep 2
+              continue
             fi
 
             echo "⚠️ [$(date -u +'%Y-%m-%d %H:%M:%S UTC')] Bot stopped (exit: $EXIT_CODE). Restarting in 3s..."
@@ -208,7 +213,7 @@ jobs:
           key: bot1-database-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Self-Trigger Next Run (Zero Downtime Restart)
-        if: success()
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN || github.token }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
