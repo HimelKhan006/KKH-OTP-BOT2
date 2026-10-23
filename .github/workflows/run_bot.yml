@@ -39,7 +39,7 @@ jobs:
 
       - name: Cancel Any Other Running or Queued Instances
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN || github.token }}
         run: |
           echo "🔍 Cancelling any other active or queued runs..."
           for st in in_progress queued; do
@@ -61,24 +61,27 @@ jobs:
 
       - name: Clear Old Completed & Cancelled Workflow History
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN || github.token }}
         run: |
           echo "⏳ Waiting 6s for any cancelled runs to finalize..."
           sleep 6
           echo "🧹 Deleting old completed/cancelled workflow run history..."
-          curl -s -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/runs?per_page=50" \
-            | python3 -c "
-          import sys, json
-          runs = json.load(sys.stdin).get('workflow_runs', [])
-          for r in runs:
-              # Delete any run that is completed/cancelled and NOT the current active run
-              if str(r.get('id')) != '${{ github.run_id }}' and r.get('status') == 'completed':
-                  print(r['id'])
-          " | while read r_id; do
-            echo "  🗑️ Deleting old run #$r_id..."
-            curl -s -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id" || true
+          for attempt in 1 2; do
+            curl -s -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs?per_page=50" \
+              | python3 -c "
+            import sys, json
+            runs = json.load(sys.stdin).get('workflow_runs', [])
+            for r in runs:
+                # Delete any run that is completed/cancelled and NOT the current active run
+                if str(r.get('id')) != '${{ github.run_id }}' and r.get('status') == 'completed':
+                    print(r['id'])
+            " | while read r_id; do
+              echo "  🗑️ Deleting old run #$r_id..."
+              curl -s -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id" || true
+            done
+            sleep 3
           done
           echo "✅ History cleaned."
 
@@ -155,7 +158,7 @@ jobs:
           POLL_INTERVAL_SECONDS: ${{ secrets.POLL_INTERVAL_SECONDS || '2.5' }}
           ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN || github.token }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
           GIST_ID: ${{ secrets.GIST_ID }}
           STARTUP_TYPE: ${{ github.event_name }}
@@ -172,6 +175,27 @@ jobs:
           echo "  DB Path  : $DB_FILE"
           echo "  Session  : 5h 25min (19500s) — GitHub limit: 6h"
           echo "========================================"
+
+          # Continuous background cleaner: deletes completed/cancelled runs every 45s
+          (
+            CLEAN_TOKEN="${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN || github.token }}"
+            while true; do
+              sleep 20
+              curl -s -H "Authorization: Bearer $CLEAN_TOKEN" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/runs?per_page=50" \
+                | python3 -c "
+              import sys, json
+              runs = json.load(sys.stdin).get('workflow_runs', [])
+              for r in runs:
+                  if str(r.get('id')) != '${{ github.run_id }}' and r.get('status') == 'completed':
+                      print(r['id'])
+              " 2>/dev/null | while read r_id; do
+                curl -s -X DELETE -H "Authorization: Bearer $CLEAN_TOKEN" \
+                  "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id" >/dev/null 2>&1 || true
+              done
+              sleep 45
+            done
+          ) &
 
           # 19500s = 5h 25min. Leaves ~33 min for setup + cache save + self-trigger
           END_TIME=$((SECONDS + 19500))
@@ -220,7 +244,7 @@ jobs:
       - name: Self-Trigger Next Run (Zero Downtime Restart)
         if: success()
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN || github.token }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           echo "🔄 Triggering next bot session immediately to avoid downtime..."
