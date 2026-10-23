@@ -715,7 +715,8 @@ def init_db():
             );
         """)
         conn.commit()
-    logger.info("📦 SQLite database initialized at %s", DB_FILE)
+    cleanup_old_messages()
+    logger.info("📦 SQLite database initialized and pruned to today-only records at %s", DB_FILE)
 
 def is_message_duplicate(mid: str, item: Optional[Dict[str, Any]] = None) -> bool:
     """
@@ -815,6 +816,10 @@ def save_processed_message(item: Dict[str, Any], chat_id: int,
     otp_val      = otp_code or extract_otp_code(raw_message)
     message_time = str(item.get("received_at") or item.get("receivedAt") or item.get("messageTime") or item.get("createdAt") or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
     item_ts = parse_message_timestamp(message_time)
+    cutoff_28h = datetime.now(timezone.utc).timestamp() - (28 * 3600)
+    if item_ts > 0 and item_ts < cutoff_28h:
+        # Reject saving any OTP older than 28 hours into the database
+        return False
     if item_ts > 0:
         fwd_time_str = datetime.fromtimestamp(item_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     else:
@@ -833,40 +838,139 @@ def save_processed_message(item: Dict[str, Any], chat_id: int,
     return False
 
 def get_today_start_utc() -> str:
-    """Returns today's 00:00:00 AM (BST = UTC+6) converted to UTC 'YYYY-MM-DD HH:MM:SS' string for database filtering."""
+    """Returns today's 00:00:00 AM (BST = UTC+6) converted to UTC 'YYYY-MM-DD HH:MM:SS' string for today metrics."""
     now_bd = get_bangladesh_now()
     today_start_bd = now_bd.replace(hour=0, minute=0, second=0, microsecond=0)
     today_start_utc = today_start_bd.astimezone(timezone.utc)
     return today_start_utc.strftime("%Y-%m-%d %H:%M:%S")
 
-def get_dashboard_stats_today() -> Tuple[int, Dict[str, int]]:
+def get_latest_processed_timestamp() -> float:
+    """Returns the UNIX epoch timestamp of the newest OTP in SQLite processed_otps, or 0.0."""
+    try:
+        with get_db_connection() as conn:
+            cur = conn.execute("""
+                SELECT forwarded_at, message_time 
+                FROM processed_otps 
+                ORDER BY datetime(forwarded_at) DESC 
+                LIMIT 1;
+            """)
+            row = cur.fetchone()
+            if row:
+                fwd_str = str(row["forwarded_at"] or "")
+                msg_str = str(row["message_time"] or "")
+                ts1 = parse_message_timestamp(fwd_str)
+                ts2 = parse_message_timestamp(msg_str)
+                return max(ts1, ts2)
+    except Exception as e:
+        logger.debug(f"Error getting latest processed timestamp: {e}")
+    return 0.0
+
+def update_last_active_timestamp(epoch: Optional[float] = None):
+    """Persists last active forwarding timestamp to bot_data.json and SQLite bot_settings."""
+    ts = epoch or datetime.now(timezone.utc).timestamp()
+    try:
+        data = load_stored_data()
+        data["last_active_epoch"] = ts
+        save_stored_data(data)
+    except Exception:
+        pass
+    try:
+        with get_db_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO bot_settings (key, value, updated_at) VALUES ('last_active_epoch', ?, CURRENT_TIMESTAMP);",
+                (str(ts),)
+            )
+            conn.commit()
+    except Exception:
+        pass
+
+def get_previous_session_last_epoch(gist_state: Optional[Dict[str, Any]] = None) -> float:
     """
-    Computes exact TODAY-ONLY statistics directly from active database records:
-    - total active OTPs received today (BST calendar day)
-    - per-country OTP counts received today
-    Cleans up old records from previous days so receiving history strictly displays today's data only.
+    Finds the exact timestamp when the previous bot session was last active.
+    Combines:
+    1. Latest OTP timestamp in SQLite database
+    2. last_active_epoch stored in SQLite bot_settings
+    3. last_active_epoch in bot_data.json
+    4. handover_epoch / last_active_epoch from Gist cloud state
     """
-    cleanup_old_messages()
-    today_str = get_today_start_utc()
-    total_count = 0
+    candidates = []
+    
+    # 1. Latest OTP recorded in database
+    db_ts = get_latest_processed_timestamp()
+    if db_ts > 0:
+        candidates.append(db_ts)
+        
+    # 2. bot_settings table
+    try:
+        with get_db_connection() as conn:
+            cur = conn.execute("SELECT value FROM bot_settings WHERE key = 'last_active_epoch' LIMIT 1;")
+            row = cur.fetchone()
+            if row and row[0]:
+                candidates.append(float(row[0]))
+    except Exception:
+        pass
+        
+    # 3. bot_data.json
+    try:
+        data = load_stored_data()
+        val = data.get("last_active_epoch")
+        if val:
+            candidates.append(float(val))
+    except Exception:
+        pass
+        
+    # 4. Gist state handover_epoch / last_active_epoch
+    if gist_state and isinstance(gist_state, dict):
+        ge = float(gist_state.get("handover_epoch") or 0.0)
+        if ge > 0:
+            candidates.append(ge)
+        la = float(gist_state.get("last_active_epoch") or 0.0)
+        if la > 0:
+            candidates.append(la)
+            
+    return max(candidates) if candidates else 0.0
+
+def get_dashboard_stats(max_age_hours: int = 28) -> Tuple[int, int, Dict[str, int]]:
+    """
+    Computes exact statistics directly from active database records:
+    - total active OTPs forwarded today (BST calendar day)
+    - total active OTPs in the 28-hour retention window
+    - per-country OTP counts in the 28-hour retention window
+    """
+    cleanup_old_messages(max_age_hours=max_age_hours)
+    cutoff_epoch = datetime.now(timezone.utc).timestamp() - (max_age_hours * 3600)
+    cutoff_iso = datetime.fromtimestamp(cutoff_epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    today_start_str = get_today_start_utc()
+    total_28h = 0
+    total_today = 0
     country_counts: Dict[str, int] = {}
     try:
         with get_db_connection() as conn:
+            # 28-hour active count
             cur = conn.execute(
-                "SELECT COUNT(*) FROM processed_otps WHERE forwarded_at >= ?;",
-                (today_str,)
+                "SELECT COUNT(*) FROM processed_otps WHERE datetime(forwarded_at) >= datetime(?);",
+                (cutoff_iso,)
             )
             row = cur.fetchone()
-            total_count = row[0] if row else 0
+            total_28h = row[0] if row else 0
 
+            # Today-only count
+            cur = conn.execute(
+                "SELECT COUNT(*) FROM processed_otps WHERE datetime(forwarded_at) >= datetime(?);",
+                (today_start_str,)
+            )
+            row = cur.fetchone()
+            total_today = row[0] if row else 0
+
+            # Per-country breakdown for 28-hour active records
             cur = conn.execute("""
                 SELECT country, COUNT(*) as cnt 
                 FROM processed_otps 
-                WHERE forwarded_at >= ? 
+                WHERE datetime(forwarded_at) >= datetime(?) 
                   AND country IS NOT NULL AND country != '' 
                 GROUP BY country 
                 ORDER BY cnt DESC;
-            """, (today_str,))
+            """, (cutoff_iso,))
             for r in cur.fetchall():
                 c_name = str(r[0]).strip()
                 c_cnt = int(r[1])
@@ -874,12 +978,17 @@ def get_dashboard_stats_today() -> Tuple[int, Dict[str, int]]:
                     disp = get_country_iso_display({"country": c_name})
                     country_counts[disp] = country_counts.get(disp, 0) + c_cnt
     except Exception as e:
-        logger.warning(f"Error computing today's dashboard stats: {e}")
-    return total_count, country_counts
+        logger.warning(f"Error computing dashboard stats: {e}")
+    return total_today, total_28h, country_counts
+
+def get_dashboard_stats_today() -> Tuple[int, Dict[str, int]]:
+    """Backwards compatibility wrapper returning (today_total, country_counts)."""
+    today_cnt, _, countries = get_dashboard_stats()
+    return today_cnt, countries
 
 def get_total_processed_count() -> int:
-    cnt, _ = get_dashboard_stats_today()
-    return cnt
+    _, total_28h, _ = get_dashboard_stats()
+    return total_28h
 
 # In-memory fast cache for full SMS bodies (supporting popup alerts)
 _SMS_BODY_CACHE: Dict[str, str] = {}
@@ -914,34 +1023,37 @@ def get_cached_sms_message(key: str) -> Optional[str]:
 
 def cleanup_old_messages(max_age_hours: int = 28):
     """
-    Cleans up all expired OTP records from previous days so ONLY today's data is kept:
+    Cleans up expired OTP records older than 28 hours from:
     1. Local SQLite database (`processed_otps` table)
     2. In-memory deduplication cache (`seen_timestamps` & `seen_message_ids`)
-    Ensures the bot database and receiving history show strictly today's OTPs only.
+    Ensures each OTP is cleared individually one-by-one as it reaches 28 hours age.
+    IMPORTANT: Telegram group messages are NEVER deleted or removed.
     """
     try:
-        today_start_str = get_today_start_utc()
-        today_epoch = parse_message_timestamp(today_start_str)
+        now_utc = datetime.now(timezone.utc)
+        cutoff_epoch = now_utc.timestamp() - (max_age_hours * 3600)
+        cutoff_iso = datetime.fromtimestamp(cutoff_epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-        # 1. Prune in-memory cache older than today
-        expired_ids = [mid for mid, ts in list(seen_timestamps.items()) if ts < today_epoch]
+        # 1. Prune in-memory cache older than 28h
+        expired_ids = [mid for mid, ts in list(seen_timestamps.items()) if ts < cutoff_epoch]
         for mid in expired_ids:
             seen_timestamps.pop(mid, None)
             seen_message_ids.discard(mid)
 
-        # 2. Prune local SQLite database of any records older than today
+        # 2. Prune local SQLite database of any records older than 28h
         with get_db_connection() as conn:
             cur = conn.execute(
                 """DELETE FROM processed_otps 
-                   WHERE forwarded_at < ? 
-                      OR (message_time IS NOT NULL AND message_time != '' AND message_time < ?);""",
-                (today_start_str, today_start_str)
+                   WHERE datetime(forwarded_at) < datetime(?) 
+                      OR (message_time IS NOT NULL AND message_time != '' AND datetime(message_time) < datetime(?))
+                      OR (forwarded_at IS NULL AND message_time IS NULL);""",
+                (cutoff_iso, cutoff_iso)
             )
             deleted = cur.rowcount
             conn.commit()
             if deleted > 0 or expired_ids:
                 logger.info(
-                    f"🧹 Cleaned {deleted} old SQLite records & {len(expired_ids)} cache items from previous days. Keeping today's data only."
+                    f"🧹 28h Cleanup: Pruned {deleted} old SQLite records & {len(expired_ids)} cache items older than {max_age_hours}h. (Telegram group messages remain untouched)."
                 )
     except Exception as e:
         logger.warning(f"DB cleanup error: {e}")
@@ -1797,6 +1909,7 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
         save_processed_message(item, gid or 0, country, num, otp)
         country_iso = get_country_iso_display(item)
         country_forwarded_counts[country_iso] = country_forwarded_counts.get(country_iso, 0) + 1
+        update_last_active_timestamp()
         logger.info(f"✅ Forwarded Live OTP (ID: {mid}) to Group [{country_iso}]")
     else:
         logger.error(f"❌ Failed to deliver OTP (ID: {mid})")
@@ -1811,29 +1924,25 @@ async def run_startup_reconciliation(
     seen_message_ids: Set[str],
     seen_timestamps: Dict[str, float],
     bot_start_time: float,
+    gist_state: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, int]:
     """
     Professional Startup Reconciliation Engine:
     - Scans the Thirdwave API traffic ledger across all available pages.
-    - Strictly obeys the Thirdwave API rate limit of 30 req/min (2.1s delay between page fetches).
-    - Checks SQLite database for EVERY message:
-        * If already in DB -> SKIPPED (duplicate guard, never sent again).
-        * If NOT in DB:
-            - Fresh/Recent (<= 15 min): FORWARDED to Telegram group and recorded in DB.
-            - Very Old (> 15 min): STORED in SQLite DB only, NEVER forwarded to group (prevents spam).
-    - Logs a detailed, enterprise-grade audit report on completion.
+    - Strictly matches database records with API to guarantee NO duplicate forwards on session handover or git push.
+    - Detects genuine missed OTPs that arrived during the restart transition gap (<= 120s) and forwards them.
+    - Stores all existing API messages into SQLite database to align DB records with the API without duplicate spam.
+    - Obeys the Thirdwave API rate limit of 30 req/min (2.1s delay between page fetches).
     """
     global total_forwarded_count, _gist_dirty
     now_ts = datetime.now(timezone.utc).timestamp()
-
-    # Configuration constants
-    MISSED_OTP_FORWARD_MAX_AGE = 900   # 15 minutes window: forward fresh missed OTPs to Telegram group
+    last_known_active = get_previous_session_last_epoch(gist_state)
 
     logger.info("=" * 70)
     logger.info("🔄 INITIATING PROFESSIONAL STARTUP RECONCILIATION")
+    logger.info(f"   • Previous Session Active Epoch: {last_known_active:.0f} (gap: {now_ts - last_known_active:.1f}s)")
     logger.info("   • Rate Limit Protection: 30 req/min (2.1s inter-page throttling)")
-    logger.info("   • Fresh Forward Window:  ≤ 15 minutes (sent to Telegram group)")
-    logger.info("   • Stale Storage Policy:  > 15 minutes (saved to SQLite database ONLY)")
+    logger.info("   • Duplicate Guard: Ironclad multi-check (ID, Phone+OTP, Phone+Body, & Active Epoch)")
     logger.info("=" * 70)
 
     # ── STEP 1: Query recent traffic feed from Thirdwave API ───────────────────
@@ -1870,7 +1979,12 @@ async def run_startup_reconciliation(
 
         # Message is NOT in DB -> Evaluate age
         msg_ts = _extract_ts(item)
-        otp_age_secs = (now_ts - msg_ts) if msg_ts > 0 else 999999.0
+        cutoff_28h = now_ts - (28 * 3600)
+        if msg_ts > 0 and msg_ts < cutoff_28h:
+            # Older than 28 hours -> ignore completely
+            seen_message_ids.add(mid)
+            seen_timestamps[mid] = msg_ts
+            continue
 
         country = extract_country_name(str(item.get("range_name") or item.get("rangeName") or item.get("destinationName") or ""))
         raw_num = str(item.get("number") or item.get("destinationNumber") or item.get("range_template") or item.get("rangeTemplate") or item.get("dst") or "")
@@ -1878,8 +1992,22 @@ async def run_startup_reconciliation(
         raw_msg = str(item.get("sms") or item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "")
         otp     = extract_otp_code(raw_msg)
 
-        if otp_age_secs <= MISSED_OTP_FORWARD_MAX_AGE and dest_ids:
-            # ── FRESH MISSED OTP (≤ 15 minutes) -> Forward to Telegram ────────
+        # Check 2: Evaluate whether this message is genuinely MISSED during restart transition
+        # A message is genuinely missed ONLY if:
+        # 1. It arrived AFTER the previous session last forwarded (msg_ts > last_known_active), AND
+        # 2. It arrived recently within the restart transition gap (<= 120s old)
+        is_genuinely_missed = False
+        if last_known_active > 0:
+            if msg_ts > last_known_active and (now_ts - msg_ts) <= 120:
+                is_genuinely_missed = True
+        else:
+            # Fresh initial start or completely wiped cache:
+            # Only forward messages that arrived in the very last 45 seconds
+            if msg_ts > 0 and (now_ts - msg_ts) <= 45:
+                is_genuinely_missed = True
+
+        if is_genuinely_missed and dest_ids:
+            # Deliver genuinely missed OTP
             ok = await _deliver_item(application.bot, item, dest_ids)
             if ok:
                 total_forwarded_count += 1
@@ -1888,20 +2016,20 @@ async def run_startup_reconciliation(
                 seen_timestamps[mid] = now_ts
                 _gist_dirty = True
                 logger.info(
-                    f"📬 [RECOVERY FORWARDED] Missed OTP {mid} ({int(otp_age_secs)}s old) "
+                    f"📬 [RECOVERY FORWARDED] Genuinely missed OTP {mid} ({int(now_ts - msg_ts)}s old) "
                     f"forwarded to Telegram group."
                 )
-                await asyncio.sleep(0.8)
+                await asyncio.sleep(0.5)
         else:
-            # ── VERY OLD MISSED OTP (> 15 minutes) -> Store in DB only ─────────
+            # Already forwarded previously or older than restart gap:
+            # Match database with API by recording into SQLite without re-sending!
             save_processed_message(item, gid, country, num, otp)
             seen_message_ids.add(mid)
-            seen_timestamps[mid] = now_ts
+            seen_timestamps[mid] = msg_ts if msg_ts > 0 else now_ts
             _gist_dirty = True
             stale_archived_count += 1
             logger.info(
-                f"🗄️ [STALE ARCHIVED] Very old missed OTP {mid} ({int(otp_age_secs // 60)}m old) "
-                f"stored in DB only — NOT sent to Telegram group."
+                f"🗄️ [DB MATCHED] Synchronized API message {mid} with database (duplicate avoided)."
             )
 
     # ── STEP 3: Enterprise-grade Audit Report ─────────────────────────────────
@@ -1911,7 +2039,7 @@ async def run_startup_reconciliation(
     logger.info(f"  • Total SMS on API Feed:   {len(all_api_messages)}")
     logger.info(f"  • Already In Database:     {already_in_db_count} (Skipped, duplicate guard)")
     logger.info(f"  • Fresh Missed Forwarded:  {fresh_forwarded_count} (Delivered to group)")
-    logger.info(f"  • Stale Missed Archived:   {stale_archived_count} (Saved to DB only)")
+    logger.info(f"  • Matched with DB Only:    {stale_archived_count} (Saved to DB only, duplicates avoided)")
     logger.info("=" * 70)
 
     if (fresh_forwarded_count > 0 or stale_archived_count > 0) and gist_storage.enabled:
@@ -1939,7 +2067,7 @@ async def poll_incoming_messages(application: Application):
     bot_start_time = datetime.now(timezone.utc).timestamp()
     logger.info(f"🚀 Thirdwave SMS Wave OTP Bot polling engine started at epoch {bot_start_time:.0f}.")
 
-    # 1. Ensure Gist exists and load continuous state
+    gist_state = {}
     if gist_storage.enabled:
         await gist_storage.ensure_gist()
         gist_state = await gist_storage.load_state()
@@ -1948,21 +2076,13 @@ async def poll_incoming_messages(application: Application):
             seen_message_ids.add(k)
             seen_timestamps[k] = ts
 
-        # Initialize active 28-hour rolling stats from Gist/database
-        saved_total = int(gist_state.get("total_forwarded") or 0)
-        saved_countries = gist_state.get("country_counts", {})
-        if isinstance(saved_countries, dict) and saved_countries:
-            country_forwarded_counts.clear()
-            country_forwarded_counts.update(saved_countries)
-        total_forwarded_count = saved_total
-
         # Check if previous session performed a clean zero-restart handover
         if gist_state.get("handover"):
             _is_handover = True
             _handover_epoch = float(gist_state.get("handover_epoch") or 0.0)
             logger.info(
                 f"🔄 Zero-Restart Handover Active: {len(gist_seen)} messages restored, "
-                f"{total_forwarded_count} forwarded previously, last epoch {_handover_epoch:.0f}."
+                f"last epoch {_handover_epoch:.0f}."
             )
 
         # Restore bot configuration settings secretly from cloud database (excluding secrets)
@@ -1983,24 +2103,15 @@ async def poll_incoming_messages(application: Application):
                 except Exception:
                     pass
 
-        # Populate local SQLite DB from cloud memory so database is never empty on restarts
-        try:
-            with get_db_connection() as conn:
-                for k in gist_seen.keys():
-                    conn.execute("INSERT OR IGNORE INTO processed_otps (id) VALUES (?);", (k,))
-                conn.commit()
-        except Exception as e:
-            logger.warning(f"DB sync from Gist warning: {e}")
-        logger.info(f"☁️ Restored {len(gist_seen)} persistent message IDs from GitHub Gist.")
-
-    # 2. Preload seen IDs and seed country stats from local DB (today only)
+    # 2. Preload seen IDs and seed country stats from local DB (28h rolling)
     try:
-        cleanup_old_messages()
-        today_start_str = get_today_start_utc()
+        cleanup_old_messages(max_age_hours=28)
+        cutoff_epoch = datetime.now(timezone.utc).timestamp() - (28 * 3600)
+        cutoff_iso = datetime.fromtimestamp(cutoff_epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         with get_db_connection() as conn:
             for row in conn.execute(
-                "SELECT id, forwarded_at FROM processed_otps WHERE forwarded_at >= ? ORDER BY forwarded_at DESC LIMIT 10000;",
-                (today_start_str,)
+                "SELECT id, forwarded_at FROM processed_otps WHERE datetime(forwarded_at) >= datetime(?) ORDER BY forwarded_at DESC LIMIT 10000;",
+                (cutoff_iso,)
             ):
                 mid = str(row["id"])
                 seen_message_ids.add(mid)
@@ -2008,10 +2119,10 @@ async def poll_incoming_messages(application: Application):
                     fwd_str = str(row["forwarded_at"] or "")
                     t_val = parse_message_timestamp(fwd_str)
                     seen_timestamps[mid] = t_val if t_val > 0 else bot_start_time
-            # Seed active today country counts from database
+            # Seed active country counts from database
             try:
-                active_total, active_countries = get_dashboard_stats_today()
-                total_forwarded_count = active_total
+                today_total, total_28h, active_countries = get_dashboard_stats()
+                total_forwarded_count = today_total
                 country_forwarded_counts.clear()
                 country_forwarded_counts.update(active_countries)
             except Exception as e:
@@ -2031,6 +2142,7 @@ async def poll_incoming_messages(application: Application):
             seen_message_ids=seen_message_ids,
             seen_timestamps=seen_timestamps,
             bot_start_time=bot_start_time,
+            gist_state=gist_state,
         )
     except Exception as e:
         logger.warning(f"Startup reconciliation error: {e}")
@@ -2046,10 +2158,10 @@ async def poll_incoming_messages(application: Application):
                     mid = str(m.get("id") or "").strip()
                     if not mid or is_message_duplicate(mid, m):
                         continue
-                    # Timestamp check: ignore any SMS older than bot startup time or from previous days
+                    # Timestamp check: ignore any SMS older than bot startup time or older than 28 hours
                     msg_ts = parse_message_timestamp(str(m.get("received_at") or m.get("receivedAt") or m.get("messageTime") or m.get("createdAt") or ""))
-                    today_epoch = parse_message_timestamp(get_today_start_utc())
-                    if msg_ts > 0 and (msg_ts < (bot_start_time - 15.0) or msg_ts < today_epoch):
+                    cutoff_28h = datetime.now(timezone.utc).timestamp() - (28 * 3600)
+                    if msg_ts > 0 and (msg_ts < (bot_start_time - 15.0) or msg_ts < cutoff_28h):
                         seen_message_ids.add(mid)
                         seen_timestamps[mid] = msg_ts
                         continue
@@ -2108,7 +2220,7 @@ def get_bot_name() -> str:
 
 def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     group_ids = get_target_group_chat_ids()
-    total_today, country_counts_today = get_dashboard_stats_today()
+    total_today, total_28h, country_counts_28h = get_dashboard_stats()
     group_text = f"{len(group_ids)} Linked Groups ✅" if len(group_ids) > 1 else ("Linked ✅" if group_ids else "Not Linked ⚠️")
 
     # Uptime calculation
@@ -2140,11 +2252,11 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     else:
         link_str = "<i>None configured</i>"
 
-    # Build per-country breakdown (sorted by count desc, top 15) strictly from today's records
+    # Build per-country breakdown (sorted by count desc, top 15) strictly from active 28h records
     country_lines = ""
-    if country_counts_today:
-        sorted_countries = sorted(country_counts_today.items(), key=lambda x: x[1], reverse=True)
-        country_lines = "\n🌍 <b>OTPs by Country (Today):</b>\n"
+    if country_counts_28h:
+        sorted_countries = sorted(country_counts_28h.items(), key=lambda x: x[1], reverse=True)
+        country_lines = "\n🌍 <b>OTPs by Country (28h Rolling):</b>\n"
         for idx, (iso_display, cnt) in enumerate(sorted_countries[:15], 1):
             country_lines += f"  {idx}. {iso_display} — <code>{cnt}</code>\n"
         country_lines += "━━━━━━━━━━━━━━━━━━━━\n"
@@ -2165,7 +2277,7 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"👥 <b>Groups:</b>      <code>{group_text}</code>\n"
         f"📨 <b>OTPs Today:</b>  <code>{total_today} forwarded</code>\n"
-        f"📦 <b>DB Records:</b>  <code>{total_today} (Today)</code>\n"
+        f"📦 <b>DB Records:</b>  <code>{total_28h} (28h rolling)</code>\n"
         f"⚡ <b>Poll Rate:</b>   <code>every {POLL_INTERVAL_SECONDS}s</code>\n"
         f"📋 <b>SMS Format:</b>  <code>{fmt_label}</code>\n"
         f"🔗 <b>Buttons:</b>     {link_str}\n"
@@ -3749,20 +3861,20 @@ async def send_startup_announcement(application: Application):
 
 async def periodic_db_cleanup_loop():
     while True:
-        await asyncio.sleep(60.0)  # runs every 60s to prune old day records continuously
-        cleanup_old_messages()
+        await asyncio.sleep(60.0)  # runs every 60s to prune old 28h records continuously
+        cleanup_old_messages(max_age_hours=28)
 
 async def periodic_gist_sync_loop():
     global _gist_dirty
     while True:
-        await asyncio.sleep(30.0)
+        await asyncio.sleep(15.0)
         if _gist_dirty and gist_storage.enabled:
             _gist_dirty = False
-            active_total, active_countries = get_dashboard_stats_today()
+            today_total, total_28h, active_countries = get_dashboard_stats()
             await gist_storage.save_state(
                 seen_dict=seen_timestamps,
                 is_handover=False,
-                total_forwarded=active_total,
+                total_forwarded=today_total,
                 country_counts=active_countries,
                 base_url=client.base_url,
             )
@@ -4212,6 +4324,26 @@ async def trigger_proactive_handover() -> bool:
         logger.info("ℹ️ Proactive handover dispatch skipped (no GIST_TOKEN or GH_TOKEN).")
         return False
 
+    # Save state, checkpoint DB, and record active timestamp BEFORE waking next runner
+    update_last_active_timestamp()
+    try:
+        with get_db_connection() as conn:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+    except Exception:
+        pass
+    if gist_storage.enabled:
+        try:
+            today_total, total_28h, active_countries = get_dashboard_stats()
+            await gist_storage.save_state(
+                seen_dict=seen_timestamps,
+                is_handover=True,
+                total_forwarded=today_total,
+                country_counts=active_countries,
+                base_url=client.base_url if "client" in globals() else "",
+            )
+        except Exception:
+            pass
+
     url = f"https://api.github.com/repos/{repo}/actions/workflows/run_bot.yml/dispatches"
     payload = {
         "ref": "main",
@@ -4419,6 +4551,7 @@ async def main():
                 if session_timeout > 0 and elapsed >= (session_timeout - 45):
                     logger.info(f"⏱️ Session limit approaching ({elapsed:.0f}s elapsed of {session_timeout}s).")
                     logger.info("🔄 Pre-timeout analysis: saving workflow state to Gist & SQLite for seamless handover...")
+                    update_last_active_timestamp()
                     try:
                         with get_db_connection() as conn:
                             conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
@@ -4426,11 +4559,12 @@ async def main():
                         logger.warning(f"DB checkpoint notice: {e}")
 
                     if gist_storage.enabled:
+                        today_total, total_28h, active_countries = get_dashboard_stats()
                         await gist_storage.save_state(
                             seen_dict=seen_timestamps,
                             is_handover=True,
-                            total_forwarded=total_forwarded_count,
-                            country_counts=country_forwarded_counts,
+                            total_forwarded=today_total,
+                            country_counts=active_countries,
                             base_url=client.base_url,
                         )
                     logger.info("✅ Pre-handover state saved. Exiting cleanly for next runner switch (exit 0)...")
@@ -4451,18 +4585,20 @@ async def main():
             await application.shutdown()
         except Exception:
             pass
+        update_last_active_timestamp()
         try:
             with get_db_connection() as conn:
                 conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
         except Exception:
             pass
         if gist_storage.enabled:
+            today_total, total_28h, active_countries = get_dashboard_stats()
             near_timeout = session_timeout > 0 and (time.time() - start_time) >= (session_timeout - 120)
             await gist_storage.save_state(
                 seen_dict=seen_timestamps,
                 is_handover=near_timeout or _is_handover,
-                total_forwarded=total_forwarded_count,
-                country_counts=country_forwarded_counts,
+                total_forwarded=today_total,
+                country_counts=active_countries,
                 base_url=client.base_url,
             )
 
