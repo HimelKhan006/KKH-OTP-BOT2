@@ -2304,7 +2304,7 @@ async def poll_incoming_messages(application: Application):
                     continue
                 new_items.append(m)
                 seen_message_ids.add(mid)
-                seen_timestamps[mid] = datetime.now(timezone.utc).timestamp()
+                seen_timestamps[mid] = msg_ts if msg_ts > 0 else datetime.now(timezone.utc).timestamp()
                 _gist_dirty = True
 
             if new_items:

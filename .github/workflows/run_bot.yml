@@ -18,10 +18,10 @@ on:
     - cron: '0 */4 * * *'
 
 # Only ONE bot instance ever runs live OTP forwarding.
-# Every new run cancels older instances immediately so updates apply with zero wait time.
+# Pushes apply instantly; handover/scheduled runs transition smoothly.
 concurrency:
   group: otp-wave-bot-single-instance
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 permissions:
   actions: write
