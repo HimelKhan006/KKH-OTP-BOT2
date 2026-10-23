@@ -3394,18 +3394,22 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                 InlineKeyboardButton("❌ Cancel", callback_data="cancel_fwd"),
             ]
         ])
+        ask_text = (
+            "⚠️ <b>Turn OFF OTP Forwarding</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Are you sure you want to turn off OTP group forwarding?\n\n"
+            "• Delivery to Telegram groups will be paused.\n"
+            "• Bot will continue recording all incoming OTPs silently into SQLite database & 28h history."
+        )
         try:
-            await query.edit_message_text(
-                "⚠️ <b>Turn OFF OTP Forwarding</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "Are you sure you want to turn off OTP group forwarding?\n\n"
-                "• Delivery to Telegram groups will be paused.\n"
-                "• Bot will continue recording all incoming OTPs silently into SQLite database & 28h history.",
-                parse_mode=ParseMode.HTML,
-                reply_markup=confirm_kb,
-            )
+            await query.edit_message_text(ask_text, parse_mode=ParseMode.HTML, reply_markup=confirm_kb)
         except Exception as e:
-            logger.warning(f"Error displaying fwd_ask_off: {e}")
+            logger.warning(f"Error displaying fwd_ask_off edit: {e}")
+            try:
+                if query.message:
+                    await query.message.reply_text(ask_text, parse_mode=ParseMode.HTML, reply_markup=confirm_kb)
+            except Exception as e2:
+                logger.warning(f"Fallback reply for fwd_ask_off failed: {e2}")
 
     elif query.data in ("fwd_ask_on", "fwd_turn_on"):
         confirm_kb = InlineKeyboardMarkup([
@@ -3414,69 +3418,100 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                 InlineKeyboardButton("❌ Cancel", callback_data="cancel_fwd"),
             ]
         ])
+        ask_text = (
+            "⚡ <b>Turn ON OTP Forwarding</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Are you sure you want to turn on OTP group forwarding?\n\n"
+            "• Delivery to Telegram groups will resume in real-time.\n"
+            "• Zero Spam: Only new OTPs arriving from now on will be forwarded."
+        )
         try:
-            await query.edit_message_text(
-                "⚡ <b>Turn ON OTP Forwarding</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "Are you sure you want to turn on OTP group forwarding?\n\n"
-                "• Delivery to Telegram groups will resume in real-time.\n"
-                "• Zero Spam: Only new OTPs arriving from now on will be forwarded.",
-                parse_mode=ParseMode.HTML,
-                reply_markup=confirm_kb,
-            )
+            await query.edit_message_text(ask_text, parse_mode=ParseMode.HTML, reply_markup=confirm_kb)
         except Exception as e:
-            logger.warning(f"Error displaying fwd_ask_on: {e}")
+            logger.warning(f"Error displaying fwd_ask_on edit: {e}")
+            try:
+                if query.message:
+                    await query.message.reply_text(ask_text, parse_mode=ParseMode.HTML, reply_markup=confirm_kb)
+            except Exception as e2:
+                logger.warning(f"Fallback reply for fwd_ask_on failed: {e2}")
 
     elif query.data in ("confirm_fwd_off", "fwd_confirm_off", "fwd_disable"):
         set_otp_forwarding_enabled(False)
         asyncio.create_task(sync_data_to_secret_db())
+        off_text = (
+            "⏸️ <b>OTP Forwarding: Turned OFF</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "• <b>Status:</b> ⏸️ <code>PAUSED (Silent Mode)</code>\n"
+            "• <b>Group Delivery:</b> <code>PAUSED (No messages sent to groups)</code>\n"
+            "• <b>Database & Retention:</b> <code>100% Active (Recording silently)</code>\n"
+            "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "<i>Incoming OTPs continue recording silently in SQLite & 28h history. Groups will not receive forwards until turned back on.</i>"
+        )
+        off_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🟢 Turn ON Forwarding", callback_data="fwd_ask_on")]
+        ])
         try:
-            await query.edit_message_text(
-                "⏸️ <b>OTP Forwarding Turned OFF</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "• <b>Delivery Status:</b> ⏸️ <code>PAUSED (Silent Mode)</code>\n"
-                "• <b>Telegram Groups:</b> <code>Delivery Stopped</code>\n"
-                "• <b>Database & Retention:</b> <code>100% Active (Recording Silently)</code>\n"
-                "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "<i>Group forwarding is paused. All incoming OTPs continue recording silently in SQLite database & 28h history.</i>",
-                parse_mode=ParseMode.HTML,
-            )
+            await query.edit_message_text(off_text, parse_mode=ParseMode.HTML, reply_markup=off_kb)
         except Exception as e:
-            logger.warning(f"Error handling confirm_fwd_off: {e}")
+            logger.warning(f"Error handling confirm_fwd_off edit: {e}")
+            try:
+                if query.message:
+                    await query.message.reply_text(off_text, parse_mode=ParseMode.HTML, reply_markup=off_kb)
+            except Exception as e2:
+                logger.warning(f"Fallback reply for confirm_fwd_off failed: {e2}")
 
     elif query.data in ("confirm_fwd_on", "fwd_confirm_on", "fwd_enable"):
         set_otp_forwarding_enabled(True)
         asyncio.create_task(sync_data_to_secret_db())
+        on_text = (
+            "🟢 <b>OTP Forwarding: Turned ON</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "• <b>Status:</b> 🟢 <code>ACTIVE (Live Mode)</code>\n"
+            "• <b>Group Delivery:</b> <code>ACTIVE (Delivered live to groups)</code>\n"
+            "• <b>Database & Retention:</b> <code>100% Synced (28h)</code>\n"
+            "• <b>Zero Spam Shield:</b> <code>Active (Pause OTPs suppressed)</code>\n"
+            "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "<i>Live forwarding is active. Every new incoming OTP is delivered to your group(s) in real time.</i>"
+        )
+        on_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⏸️ Turn OFF Forwarding", callback_data="fwd_ask_off")]
+        ])
         try:
-            await query.edit_message_text(
-                "🟢 <b>OTP Forwarding Turned ON</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "• <b>Delivery Status:</b> 🟢 <code>ACTIVE (Live Mode)</code>\n"
-                "• <b>Telegram Groups:</b> <code>Live Delivery ON</code>\n"
-                "• <b>Database & Retention:</b> <code>100% Synced (28h)</code>\n"
-                "• <b>Zero Spam Shield:</b> <code>Active (Pause OTPs Suppressed)</code>\n"
-                "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "<i>Live group forwarding is active. Every new incoming OTP will be forwarded to your group(s) in real time.</i>",
-                parse_mode=ParseMode.HTML,
-            )
+            await query.edit_message_text(on_text, parse_mode=ParseMode.HTML, reply_markup=on_kb)
         except Exception as e:
-            logger.warning(f"Error handling confirm_fwd_on: {e}")
+            logger.warning(f"Error handling confirm_fwd_on edit: {e}")
+            try:
+                if query.message:
+                    await query.message.reply_text(on_text, parse_mode=ParseMode.HTML, reply_markup=on_kb)
+            except Exception as e2:
+                logger.warning(f"Fallback reply for confirm_fwd_on failed: {e2}")
 
     elif query.data in ("cancel_fwd", "fwd_cancel"):
         is_fwd = is_otp_forwarding_enabled()
-        status_text = "<b>ACTIVE (Live Mode)</b>" if is_fwd else "<b>PAUSED (Silent Mode)</b>"
+        status_text = "🟢 <b>ACTIVE (Live Mode)</b>" if is_fwd else "⏸️ <b>PAUSED (Silent Mode)</b>"
+        next_action_btn = (
+            InlineKeyboardButton("⏸️ Turn OFF Forwarding", callback_data="fwd_ask_off")
+            if is_fwd else
+            InlineKeyboardButton("🟢 Turn ON Forwarding", callback_data="fwd_ask_on")
+        )
+        cancel_text = (
+            "❌ <b>Forwarding Change Cancelled</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Current State:</b> {status_text}\n"
+            "No changes were made to forwarding settings."
+        )
+        cancel_kb = InlineKeyboardMarkup([[next_action_btn]])
         try:
-            await query.edit_message_text(
-                "❌ <b>Forwarding Change Cancelled</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                f"The group forwarding state remains {status_text}.\n"
-                "No changes were made to forwarding settings.",
-                parse_mode=ParseMode.HTML,
-            )
+            await query.edit_message_text(cancel_text, parse_mode=ParseMode.HTML, reply_markup=cancel_kb)
         except Exception as e:
-            logger.warning(f"Error handling cancel_fwd: {e}")
+            logger.warning(f"Error handling cancel_fwd edit: {e}")
+            try:
+                if query.message:
+                    await query.message.reply_text(cancel_text, parse_mode=ParseMode.HTML, reply_markup=cancel_kb)
+            except Exception as e2:
+                logger.warning(f"Fallback reply for cancel_fwd failed: {e2}")
 
     elif query.data == "toggle_forwarding":
         curr = is_otp_forwarding_enabled()
