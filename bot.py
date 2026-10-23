@@ -930,6 +930,42 @@ def get_previous_session_last_epoch(gist_state: Optional[Dict[str, Any]] = None)
             
     return max(candidates) if candidates else 0.0
 
+def is_otp_forwarding_enabled() -> bool:
+    """
+    Returns True if live OTP group forwarding is active,
+    False if turned OFF by admin (silent mode: DB & receiving history only).
+    """
+    data = load_stored_data()
+    val = data.get("otp_forwarding_enabled")
+    if val is not None:
+        return bool(val)
+    try:
+        with get_db_connection() as conn:
+            cur = conn.execute("SELECT value FROM bot_settings WHERE key = 'otp_forwarding_enabled' LIMIT 1;")
+            row = cur.fetchone()
+            if row and row[0] is not None:
+                return str(row[0]).strip().lower() in ("true", "1", "yes", "on")
+    except Exception:
+        pass
+    return True
+
+def set_otp_forwarding_enabled(enabled: bool):
+    """
+    Saves OTP group forwarding toggle state persistently to bot_data.json and SQLite bot_settings.
+    """
+    data = load_stored_data()
+    data["otp_forwarding_enabled"] = bool(enabled)
+    save_stored_data(data)
+    try:
+        with get_db_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO bot_settings (key, value, updated_at) VALUES ('otp_forwarding_enabled', ?, CURRENT_TIMESTAMP);",
+                ("true" if enabled else "false",)
+            )
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"Error persisting forwarding setting: {e}")
+
 def get_dashboard_stats(max_age_hours: int = 28) -> Tuple[int, int, Dict[str, int]]:
     """
     Computes exact statistics directly from active database records:
@@ -1843,14 +1879,48 @@ def _get_otp_dest_ids() -> Set[int]:
     return dest
 
 async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> bool:
-    """Formats and sends one OTP item to the Telegram Group. Returns True if sent successfully."""
-    mid        = str(item.get("id") or "").strip()
-    data       = load_stored_data()
-    sms_format = data.get("sms_format", "long")
+    """
+    Formats and delivers one OTP item to Telegram groups.
+    If OTP Forwarding is turned OFF by admin:
+      - Saves the record into SQLite database (`processed_otps`) and 28h rolling retention
+      - Updates receiving history, today's count, and country statistics
+      - BUT does NOT send any message to Telegram groups!
+    If OTP Forwarding is ON:
+      - Formats and sends live OTP card to Telegram groups.
+    """
+    mid         = str(item.get("id") or "").strip()
+    data        = load_stored_data()
+    sms_format  = data.get("sms_format", "long")
     formatted_text, otp, raw_msg = format_otp_notification(item, sms_format=sms_format)
-    sent_to_any = False
 
-    # Build inline buttons: OTP code button + optional Admin Custom Link buttons (side-by-side)
+    country     = extract_country_name(str(item.get("range_name") or item.get("rangeName") or item.get("destinationName") or ""))
+    raw_num     = str(item.get("number") or item.get("destinationNumber") or item.get("range_template") or item.get("rangeTemplate") or item.get("template") or item.get("dst") or "")
+    num         = mask_phone_number(raw_num)
+    raw_msg_str = str(item.get("sms") or item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "")
+    otp_code    = extract_otp_code(raw_msg_str)
+    gid         = get_linked_group_chat_id()
+    country_iso = get_country_iso_display(item)
+
+    # Fast cache raw SMS for popup
+    _cache_sms_message(mid, raw_msg_str)
+
+    # Check whether live forwarding to groups is enabled or turned OFF
+    forwarding_enabled = is_otp_forwarding_enabled()
+
+    if not forwarding_enabled:
+        # ── Group forwarding is turned OFF by admin (Silent Mode) ──────────────────
+        # Per user requirement: DO NOT forward the OTP to groups!
+        # BUT fully record into the database, receiving history, and 28h retention!
+        save_processed_message(item, gid or 0, country, num, otp_code)
+        country_forwarded_counts[country_iso] = country_forwarded_counts.get(country_iso, 0) + 1
+        update_last_active_timestamp()
+        logger.info(
+            f"🔕 [FORWARDING TURNED OFF] Recorded Live OTP (ID: {mid}) into Database & History [{country_iso}] "
+            f"(Group sending turned OFF by admin)"
+        )
+        return True
+
+    # ── Group forwarding is ON: Deliver to groups ─────────────────────────────
     markup = None
     buttons = []
     try:
@@ -1891,6 +1961,7 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
         logger.warning(f"Error building OTP message buttons: {e}")
         markup = None
 
+    sent_to_any = False
     for cid in dest_ids:
         try:
             ok = await send_with_retry(bot, cid, formatted_text, reply_markup=markup)
@@ -1900,21 +1971,16 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
             logger.warning(f"Delivery error to {cid}: {e}")
 
     if sent_to_any:
-        country  = extract_country_name(str(item.get("range_name") or item.get("rangeName") or item.get("destinationName") or ""))
-        raw_num  = str(item.get("number") or item.get("destinationNumber") or item.get("range_template") or item.get("rangeTemplate") or item.get("template") or item.get("dst") or "")
-        num      = mask_phone_number(raw_num)
-        raw_msg  = str(item.get("sms") or item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "")
-        otp      = extract_otp_code(raw_msg)
-        gid      = get_linked_group_chat_id()
-        save_processed_message(item, gid or 0, country, num, otp)
-        country_iso = get_country_iso_display(item)
+        save_processed_message(item, gid or 0, country, num, otp_code)
         country_forwarded_counts[country_iso] = country_forwarded_counts.get(country_iso, 0) + 1
         update_last_active_timestamp()
         logger.info(f"✅ Forwarded Live OTP (ID: {mid}) to Group [{country_iso}]")
     else:
-        logger.error(f"❌ Failed to deliver OTP (ID: {mid})")
+        # Save to DB so failure doesn't loop infinitely
+        save_processed_message(item, gid or 0, country, num, otp_code)
+        logger.error(f"❌ Failed to deliver OTP (ID: {mid}) to group, saved to DB.")
 
-    return sent_to_any
+    return sent_to_any or True
 
 async def run_startup_reconciliation(
     client: ThirdwaveClient,
@@ -2006,8 +2072,8 @@ async def run_startup_reconciliation(
             if msg_ts > 0 and (now_ts - msg_ts) <= 45:
                 is_genuinely_missed = True
 
-        if is_genuinely_missed and dest_ids:
-            # Deliver genuinely missed OTP
+        if is_genuinely_missed and (dest_ids or not is_otp_forwarding_enabled()):
+            # Deliver genuinely missed OTP (or record silently if forwarding is off)
             ok = await _deliver_item(application.bot, item, dest_ids)
             if ok:
                 total_forwarded_count += 1
@@ -2015,10 +2081,15 @@ async def run_startup_reconciliation(
                 seen_message_ids.add(mid)
                 seen_timestamps[mid] = now_ts
                 _gist_dirty = True
-                logger.info(
-                    f"📬 [RECOVERY FORWARDED] Genuinely missed OTP {mid} ({int(now_ts - msg_ts)}s old) "
-                    f"forwarded to Telegram group."
-                )
+                if is_otp_forwarding_enabled():
+                    logger.info(
+                        f"📬 [RECOVERY FORWARDED] Genuinely missed OTP {mid} ({int(now_ts - msg_ts)}s old) "
+                        f"forwarded to Telegram group."
+                    )
+                else:
+                    logger.info(
+                        f"🔕 [RECOVERY SILENT] Recorded missed OTP {mid} into DB & History (Group forwarding turned OFF)."
+                    )
                 await asyncio.sleep(0.5)
         else:
             # Already forwarded previously or older than restart gap:
@@ -2151,33 +2222,33 @@ async def poll_incoming_messages(application: Application):
     while True:
         try:
             dest_ids = _get_otp_dest_ids()
-            if dest_ids:
-                messages  = await client.fetch_incoming_messages()
-                new_items = []
-                for m in messages:
-                    mid = str(m.get("id") or "").strip()
-                    if not mid or is_message_duplicate(mid, m):
-                        continue
-                    # Timestamp check: ignore any SMS older than bot startup time or older than 28 hours
-                    msg_ts = parse_message_timestamp(str(m.get("received_at") or m.get("receivedAt") or m.get("messageTime") or m.get("createdAt") or ""))
-                    cutoff_28h = datetime.now(timezone.utc).timestamp() - (28 * 3600)
-                    if msg_ts > 0 and (msg_ts < (bot_start_time - 15.0) or msg_ts < cutoff_28h):
-                        seen_message_ids.add(mid)
-                        seen_timestamps[mid] = msg_ts
-                        continue
-                    new_items.append(m)
+            # Fetch incoming traffic continuously to keep database & receiving history 100% updated
+            messages  = await client.fetch_incoming_messages()
+            new_items = []
+            for m in messages:
+                mid = str(m.get("id") or "").strip()
+                if not mid or is_message_duplicate(mid, m):
+                    continue
+                # Timestamp check: ignore any SMS older than bot startup time or older than 28 hours
+                msg_ts = parse_message_timestamp(str(m.get("received_at") or m.get("receivedAt") or m.get("messageTime") or m.get("createdAt") or ""))
+                cutoff_28h = datetime.now(timezone.utc).timestamp() - (28 * 3600)
+                if msg_ts > 0 and (msg_ts < (bot_start_time - 15.0) or msg_ts < cutoff_28h):
                     seen_message_ids.add(mid)
-                    seen_timestamps[mid] = datetime.now(timezone.utc).timestamp()
-                    _gist_dirty = True
+                    seen_timestamps[mid] = msg_ts
+                    continue
+                new_items.append(m)
+                seen_message_ids.add(mid)
+                seen_timestamps[mid] = datetime.now(timezone.utc).timestamp()
+                _gist_dirty = True
 
-                if new_items:
-                    logger.info(f"🔔 {len(new_items)} new SMS/OTP(s) detected!")
-                    for item in reversed(new_items):  # oldest first
-                        ok = await _deliver_item(application.bot, item, dest_ids)
-                        if ok:
-                            total_forwarded_count += 1
-                        # Ultra-fast micro-pause so each OTP is sent as a clearly separate new message
-                        await asyncio.sleep(0.05)
+            if new_items:
+                logger.info(f"🔔 {len(new_items)} new SMS/OTP(s) detected!")
+                for item in reversed(new_items):  # oldest first
+                    ok = await _deliver_item(application.bot, item, dest_ids)
+                    if ok:
+                        total_forwarded_count += 1
+                    # Ultra-fast micro-pause so each OTP is sent as a clearly separate new message
+                    await asyncio.sleep(0.05)
 
         except (TimedOut, NetworkError) as net_err:
             logger.warning(f"⚠️ Network hiccup: {net_err}. Retrying in 2s...")
@@ -2264,6 +2335,10 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     gist_status = f"Encrypted Cloud DB ({GIST_ID[:8]}...) 🔒" if gist_storage.enabled else "Local Storage"
     masked_key = f"{client.api_key[:8]}...{client.api_key[-4:]}" if len(client.api_key) > 12 else (client.api_key or "<i>Missing</i>")
 
+    fwd_active = is_otp_forwarding_enabled()
+    fwd_label = "🟢 ACTIVE (Live Mode)" if fwd_active else "⏸️ PAUSED (Silent Mode • DB & History Only)"
+    bottom_note = "<i>🔔 Real-time forwarding active — zero restarts, always on.</i>" if fwd_active else "<i>🔕 Group forwarding is paused by admin — recording OTPs to DB & history silently.</i>"
+
     msg = (
         f"⚡ <b>{html.escape(active_bot_name)}</b>  •  <code>LIVE & ONLINE</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -2276,57 +2351,114 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
         f"🗄️ <b>Database:</b>   <code>{gist_status}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"👥 <b>Groups:</b>      <code>{group_text}</code>\n"
-        f"📨 <b>OTPs Today:</b>  <code>{total_today} forwarded</code>\n"
+        f"⚡ <b>Forwarding:</b>  <code>{fwd_label}</code>\n"
+        f"📨 <b>OTPs Today:</b>  <code>{total_today} received</code>\n"
         f"📦 <b>DB Records:</b>  <code>{total_28h} (28h rolling)</code>\n"
         f"⚡ <b>Poll Rate:</b>   <code>every {POLL_INTERVAL_SECONDS}s</code>\n"
         f"📋 <b>SMS Format:</b>  <code>{fmt_label}</code>\n"
         f"🔗 <b>Buttons:</b>     {link_str}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"{country_lines}"
-        f"<i>🔔 Real-time forwarding active — zero restarts, always on.</i>"
+        f"{bottom_note}"
+    )
+
+    fwd_toggle_btn = InlineKeyboardButton(
+        "⏸️ Turn OFF Forwarding" if fwd_active else "▶️ Turn ON Forwarding",
+        callback_data="toggle_forwarding"
     )
 
     keyboard = [
-        [InlineKeyboardButton("🔄 Refresh Status", callback_data="refresh_dash")],
+        [fwd_toggle_btn, InlineKeyboardButton("🔄 Refresh Status", callback_data="refresh_dash")],
     ]
     return msg, InlineKeyboardMarkup(keyboard)
 
 def get_admin_reply_keyboard() -> ReplyKeyboardMarkup:
     """
     Bottom persistent reply keyboard for admins.
-    Row 1: 📊 Status | 📋 SMS Format
-    Row 2: 🌐 API URL | 🔑 API Key
-    Row 3: ✏️ Bot Name | 🔗 Link Button
-    Row 4: 👥 Linked Groups | 🔄 Restart
+    Row 1: 📊 Status | ⚡ OTP Forwarding
+    Row 2: 📋 SMS Format | 🔄 Restart
+    Row 3: 🌐 API URL | 🔑 API Key
+    Row 4: ✏️ Bot Name | 🔗 Link Button
+    Row 5: 👥 Linked Groups
     """
     keyboard = [
-        [KeyboardButton("📊 Status"), KeyboardButton("📋 SMS Format")],
+        [KeyboardButton("📊 Status"), KeyboardButton("⚡ OTP Forwarding")],
+        [KeyboardButton("📋 SMS Format"), KeyboardButton("🔄 Restart")],
         [KeyboardButton("🌐 API URL"), KeyboardButton("🔑 API Key")],
         [KeyboardButton("✏️ Bot Name"), KeyboardButton("🔗 Link Button")],
-        [KeyboardButton("👥 Linked Groups"), KeyboardButton("🔄 Restart")],
+        [KeyboardButton("👥 Linked Groups")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
 def get_bot_commands() -> List[BotCommand]:
-    """Returns ONLY the /start command for the Telegram [≡ Menu] command button."""
+    """Returns commands for the Telegram [≡ Menu] command button."""
     return [
         BotCommand("start", "🚀 Admin Dashboard"),
+        BotCommand("forwarding", "⚡ Toggle OTP Forwarding ON/OFF"),
+        BotCommand("status", "📊 View Live System Status"),
     ]
 
-async def sync_data_to_secret_db():
-    """Immediately sync all persistent state and settings secretly to the cloud database."""
-    if "gist_storage" in globals() and gist_storage.enabled:
-        try:
-            await gist_storage.save_state(
-                seen_dict=seen_timestamps,
-                is_handover=_is_handover,
-                total_forwarded=total_forwarded_count,
-                country_counts=country_forwarded_counts,
-                base_url=client.base_url if "client" in globals() else "",
-            )
-            logger.info("🔒 Bot state and settings securely synced to cloud database.")
-        except Exception as e:
-            logger.debug(f"Cloud DB sync notice: {e}")
+def build_forwarding_control_view() -> Tuple[str, InlineKeyboardMarkup]:
+    """Builds interactive configuration view for OTP group forwarding."""
+    is_fwd = is_otp_forwarding_enabled()
+    if is_fwd:
+        status_line = "🟢 <b>ACTIVE (Live Mode)</b>"
+        expl = (
+            "• <b>Group Delivery:</b> <code>ON</code> — Every new incoming OTP is delivered live to your group(s).\n"
+            "• <b>Database & History:</b> <code>100% Synced</code> — Storing records in 28h rolling retention."
+        )
+        toggle_btn = InlineKeyboardButton("⏸️ Turn OFF Forwarding (Silent Mode)", callback_data="fwd_disable")
+    else:
+        status_line = "⏸️ <b>PAUSED (Silent Mode)</b>"
+        expl = (
+            "• <b>Group Delivery:</b> <code>OFF</code> — No OTP messages will be sent to groups.\n"
+            "• <b>Database & History:</b> <code>100% Active</code> — Bot continues polling Thirdwave API and recording every OTP into SQLite database & history."
+        )
+        toggle_btn = InlineKeyboardButton("▶️ Turn ON Forwarding (Live Mode)", callback_data="fwd_enable")
+
+    msg = (
+        "⚡ <b>OTP Group Forwarding Control</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>Current Status:</b> {status_line}\n\n"
+        f"{expl}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "<i>Use the button below to toggle live forwarding on or off at any time:</i>"
+    )
+    kb = [
+        [toggle_btn],
+        [
+            InlineKeyboardButton("📊 View Live Status", callback_data="refresh_dash_msg"),
+        ]
+    ]
+    return msg, InlineKeyboardMarkup(kb)
+
+async def toggle_forwarding_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to toggle OTP forwarding to Telegram groups ON or OFF."""
+    chat = update.effective_chat
+    user = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj:
+        return
+    if not is_user_authorized(user.id if user else 0):
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        return
+    clear_all_admin_states(context)
+
+    args = context.args if context and context.args else []
+    if args:
+        sub = args[0].strip().lower()
+        if sub in ("off", "disable", "pause", "stop", "0"):
+            set_otp_forwarding_enabled(False)
+        elif sub in ("on", "enable", "resume", "start", "1"):
+            set_otp_forwarding_enabled(True)
+        else:
+            set_otp_forwarding_enabled(not is_otp_forwarding_enabled())
+    else:
+        set_otp_forwarding_enabled(not is_otp_forwarding_enabled())
+
+    asyncio.create_task(sync_data_to_secret_db())
+    msg_text, markup = build_forwarding_control_view()
+    await msg_obj.reply_text(msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Directly displays the live system status dashboard without sending a welcome greeting."""
@@ -3147,6 +3279,45 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         except Exception as e:
             logger.warning(f"Could not edit dashboard message on toggle: {e}")
 
+    elif query.data == "toggle_forwarding":
+        curr = is_otp_forwarding_enabled()
+        new_state = not curr
+        set_otp_forwarding_enabled(new_state)
+        asyncio.create_task(sync_data_to_secret_db())
+        alert_msg = (
+            "🟢 OTP Forwarding is now ACTIVE!\nLive OTPs will be delivered to your Telegram group(s)."
+            if new_state else
+            "⏸️ OTP Forwarding is now PAUSED (Silent Mode)!\nOTPs will be recorded in Database & History without sending to groups."
+        )
+        try:
+            await query.answer(alert_msg, show_alert=True)
+        except Exception:
+            pass
+        try:
+            msg_text, reply_markup = build_status_dashboard()
+            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+        except Exception as e:
+            logger.warning(f"Could not edit dashboard message on toggle_forwarding: {e}")
+
+    elif query.data in ("fwd_enable", "fwd_disable"):
+        new_state = (query.data == "fwd_enable")
+        set_otp_forwarding_enabled(new_state)
+        asyncio.create_task(sync_data_to_secret_db())
+        alert_msg = (
+            "🟢 OTP Forwarding is now ACTIVE!\nLive OTPs are being forwarded to groups."
+            if new_state else
+            "⏸️ OTP Forwarding is now PAUSED!\nRecording to DB & history silently."
+        )
+        try:
+            await query.answer(alert_msg, show_alert=True)
+        except Exception:
+            pass
+        try:
+            msg_text, reply_markup = build_forwarding_control_view()
+            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+        except Exception as e:
+            logger.warning(f"Could not edit forwarding view: {e}")
+
     elif query.data == "bot_name_help":
         await query.answer("ℹ️ Bot name is managed by the admin.", show_alert=True)
 
@@ -3897,7 +4068,7 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
     text = (msg_obj.text or "").strip()
 
     # Clear pending prompt states if an admin clicks any reply menu button
-    if text in ("📊 Status", "🔑 API Key", "🌐 API URL", "📋 SMS Format", "✏️ Bot Name", "🔗 Link Button", "👥 Linked Groups", "🔄 Restart"):
+    if text in ("📊 Status", "⚡ OTP Forwarding", "🔑 API Key", "🌐 API URL", "📋 SMS Format", "✏️ Bot Name", "🔗 Link Button", "👥 Linked Groups", "🔄 Restart"):
         clear_all_admin_states(context)
 
     # Cancel command or cancel text
@@ -3916,6 +4087,12 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
 
     if text == "📊 Status":
         await status_command(update, context)
+
+    elif text in ("⚡ OTP Forwarding", "⚡ Forwarding", "Forwarding", "forwarding"):
+        clear_all_admin_states(context)
+        msg_text, markup = build_forwarding_control_view()
+        await msg_obj.reply_text(msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        return
 
     elif text == "🔑 API Key":
         # Show current key info / interactive panel
@@ -4401,14 +4578,18 @@ async def main():
     # The group is exclusively for OTP forwarding. Commands are completely
     # invisible to the group — Telegram never even dispatches them here.
     _private = filters.ChatType.PRIVATE
-    application.add_handler(CommandHandler("start",        start_command,        filters=_private))
-    application.add_handler(CommandHandler("status",       status_command,       filters=_private))
-    application.add_handler(CommandHandler("setkey",       setkey_command,       filters=_private))
-    application.add_handler(CommandHandler("seturl",       seturl_command,       filters=_private))
-    application.add_handler(CommandHandler("toggleformat", toggleformat_command, filters=_private))
-    application.add_handler(CommandHandler("format",       toggleformat_command, filters=_private))
-    application.add_handler(CommandHandler("cancel",       cancel_command,       filters=_private))
-    application.add_handler(CommandHandler("setname",      setname_command,      filters=_private))
+    application.add_handler(CommandHandler("start",         start_command,             filters=_private))
+    application.add_handler(CommandHandler("status",        status_command,            filters=_private))
+    application.add_handler(CommandHandler("toggleforward", toggle_forwarding_command, filters=_private))
+    application.add_handler(CommandHandler("forwarding",    toggle_forwarding_command, filters=_private))
+    application.add_handler(CommandHandler("pause",         toggle_forwarding_command, filters=_private))
+    application.add_handler(CommandHandler("resume",        toggle_forwarding_command, filters=_private))
+    application.add_handler(CommandHandler("setkey",        setkey_command,            filters=_private))
+    application.add_handler(CommandHandler("seturl",        seturl_command,            filters=_private))
+    application.add_handler(CommandHandler("toggleformat",  toggleformat_command,      filters=_private))
+    application.add_handler(CommandHandler("format",        toggleformat_command,      filters=_private))
+    application.add_handler(CommandHandler("cancel",        cancel_command,            filters=_private))
+    application.add_handler(CommandHandler("setname",       setname_command,           filters=_private))
 
     application.add_handler(CommandHandler("setlink",      setlink_command,      filters=_private))
     application.add_handler(CommandHandler("removelink",   removelink_command,   filters=_private))
