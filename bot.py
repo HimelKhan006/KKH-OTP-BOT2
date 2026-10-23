@@ -1488,27 +1488,27 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         if otp_code:
             full_text = (
                 f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"────────────────────────\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}\n"
-                f"────────────────────────\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🔑 <b>PASSCODE:</b> <code>{otp_code}</code>"
             )
         elif clean_msg:
             full_text = (
                 f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"────────────────────────\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}\n"
-                f"────────────────────────\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
         else:
             full_text = (
                 f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"────────────────────────\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}"
@@ -1520,11 +1520,11 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         if clean_msg:
             full_text = (
                 f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"────────────────────────\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}\n"
-                f"────────────────────────\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🔑 <b>PASSCODE:</b> {otp_display}\n\n"
                 f"💬 <b>Message Content:</b>\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
@@ -1532,11 +1532,11 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         else:
             full_text = (
                 f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"────────────────────────\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}\n"
-                f"────────────────────────\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🔑 <b>PASSCODE:</b> {otp_display}"
             )
 
@@ -2191,11 +2191,11 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>📺 Live Preview — Short:</b>\n\n"
             "🎟️ <b>VERIFICATION PASS</b>\n"
-            "────────────────────────\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
             "🏷️ <b>Service:</b> WhatsApp\n"
             "🌍 <b>Country:</b> 🇳🇵 Nepal (NP)\n"
             "📱 <b>Number:</b> +977980****456\n"
-            "────────────────────────\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
             "<i>Buttons: [ 492810 ] [ Number Bot ]</i>"
         )
@@ -2204,11 +2204,11 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
             "🎟️ <b>VERIFICATION PASS</b>\n"
-            "────────────────────────\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
             "🏷️ <b>Service:</b> WhatsApp\n"
             "🌍 <b>Country:</b> 🇳🇵 Nepal (NP)\n"
             "📱 <b>Number:</b> +977980****456\n"
-            "────────────────────────\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
             "💬 <b>Message Content:</b>\n"
             "<blockquote expandable>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n\n"
@@ -3309,7 +3309,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         try:
             await query.edit_message_text(
                 "🔄 <b>Restarting Bot Engine...</b>\n"
-                "────────────────────────\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
                 "⏳ <i>Saving state and rebooting cleanly...</i>\n"
                 "<i>You will receive a confirmation message once online.</i>",
                 parse_mode=ParseMode.HTML
@@ -3323,7 +3323,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         try:
             await query.edit_message_text(
                 "❌ <b>Restart Cancelled</b>\n"
-                "────────────────────────\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
                 "The bot engine continues running normally without interruption.",
                 parse_mode=ParseMode.HTML
             )
@@ -3486,7 +3486,7 @@ async def perform_zero_restart_handover(target_message=None, manual_restart: boo
         try:
             await target_message.edit_text(
                 "🔄 <b>Restarting Bot Engine...</b>\n"
-                "────────────────────────\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
                 "✅ <i>State saved securely. Starting new server session now...</i>",
                 parse_mode=ParseMode.HTML
             )
@@ -3522,7 +3522,7 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     await update.effective_message.reply_text(
         "⚠️ <b>Restart Bot Engine</b>\n"
-        "────────────────────────\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
         "Are you sure you want to reboot the bot engine?\n\n"
         "• State and counters will be securely saved to Cloud memory.\n"
         "• The bot will reboot cleanly and send you a confirmation message once online.",
