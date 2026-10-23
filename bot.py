@@ -1765,9 +1765,8 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
 
 # ==========================================
 # 10. Clean OTP Notification Formatter (No Language)
-# ==========================================
-# 7 Braille blank spaces (\u2800) for exact mathematical horizontal centering inside Telegram's expandable blockquote
-EXPANDABLE_SMS_LABEL = "\u2800" * 7 + "📩 View Full SMS"
+# Symmetrical Braille spacing (\u2800) for exact optical horizontal centering across all devices (Mobile & Desktop)
+EXPANDABLE_SMS_LABEL = "\u2800" * 3 + "📩 View Full SMS" + "\u2800" * 3
 
 def wrap_sms_for_card(text: str, width: int = 22) -> str:
     """Wraps SMS text to a compact line length (<=22 chars) to ensure cards don't stretch horizontally."""
