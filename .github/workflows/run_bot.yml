@@ -107,6 +107,7 @@ jobs:
             bot1_database.db
             bot1_database.db-wal
             bot1_database.db-shm
+            bot_data.json
           key: bot1-database-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             bot1-database-
@@ -253,6 +254,7 @@ jobs:
             bot1_database.db
             bot1_database.db-wal
             bot1_database.db-shm
+            bot_data.json
           key: bot1-database-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Self-Trigger Next Run (Zero Downtime Restart)

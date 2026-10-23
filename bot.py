@@ -166,16 +166,66 @@ logger = logging.getLogger("OTPWAVE")
 # ==========================================
 _STORED_DATA_CACHE: Dict[str, Any] = {}
 
+def _load_settings_from_sqlite() -> dict:
+    try:
+        if os.path.exists(DB_FILE):
+            conn = sqlite3.connect(DB_FILE, timeout=10.0)
+            try:
+                cur = conn.execute("SELECT value FROM bot_settings WHERE key = 'bot_data' LIMIT 1;")
+                row = cur.fetchone()
+                if row and row[0]:
+                    loaded = json.loads(row[0])
+                    if isinstance(loaded, dict) and loaded:
+                        return loaded
+            finally:
+                conn.close()
+    except Exception:
+        pass
+    return {}
+
+def _save_settings_to_sqlite(data: dict):
+    try:
+        conn = sqlite3.connect(DB_FILE, timeout=10.0)
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS bot_settings (
+                    key         TEXT PRIMARY KEY,
+                    value       TEXT,
+                    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            conn.execute(
+                "INSERT OR REPLACE INTO bot_settings (key, value, updated_at) VALUES ('bot_data', ?, datetime('now'));",
+                (json.dumps(data),)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
 def load_stored_data() -> dict:
     global _STORED_DATA_CACHE
-    if not _STORED_DATA_CACHE and os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-                if isinstance(loaded, dict):
-                    _STORED_DATA_CACHE = loaded
-        except Exception:
-            pass
+    if not _STORED_DATA_CACHE:
+        # 1. Check local bot_data.json
+        if os.path.exists(DATA_FILE):
+            try:
+                with open(DATA_FILE, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                    if isinstance(loaded, dict) and loaded:
+                        _STORED_DATA_CACHE = loaded
+            except Exception:
+                pass
+        # 2. Fallback to SQLite persistent database (persisted across runners and restarts)
+        if not _STORED_DATA_CACHE:
+            db_loaded = _load_settings_from_sqlite()
+            if db_loaded:
+                _STORED_DATA_CACHE = db_loaded
+                try:
+                    with open(DATA_FILE, "w", encoding="utf-8") as f:
+                        json.dump(db_loaded, f, indent=2)
+                except Exception:
+                    pass
     return dict(_STORED_DATA_CACHE)
 
 def save_stored_data(data: dict):
@@ -186,6 +236,7 @@ def save_stored_data(data: dict):
             json.dump(data, f, indent=2)
     except Exception as e:
         logger.warning(f"Error saving stored data to {DATA_FILE}: {e}")
+    _save_settings_to_sqlite(data)
 
 def normalize_button_url(raw_url: str) -> Optional[str]:
     """
@@ -656,6 +707,13 @@ def init_db():
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_forwarded_at ON processed_otps(forwarded_at);")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_processed_otps_num_otp ON processed_otps(number, otp_code);")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS bot_settings (
+                key         TEXT PRIMARY KEY,
+                value       TEXT,
+                updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
         conn.commit()
     logger.info("📦 SQLite database initialized at %s", DB_FILE)
 
@@ -1533,7 +1591,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     quote_block = ""
     if clean_msg:
         wrapped_msg = wrap_sms_for_card(clean_msg, width=28)
-        quote_block = f"\n\n<blockquote expandable>⠀\n⠀⠀⠀📩 View Full SMS\n⠀\n⠀\n{html.escape(wrapped_msg, quote=False)}</blockquote>"
+        quote_block = f"\n\n<blockquote expandable>📩 View Full SMS\n⠀\n⠀\n⠀\n{html.escape(wrapped_msg, quote=False)}</blockquote>"
 
     if otp_code:
         full_text = (
@@ -2236,8 +2294,8 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "📱 <b>Number:</b> +977980****456\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
-            f"<blockquote expandable>⠀\n"
-            f"⠀⠀⠀📩 View Full SMS\n"
+            f"<blockquote expandable>📩 View Full SMS\n"
+            f"⠀\n"
             f"⠀\n"
             f"⠀\n"
             f"{sample_wrapped}</blockquote>\n\n"
@@ -4240,21 +4298,30 @@ async def main():
             except Exception:
                 pass
 
-            # 2. COMPLETELY WIPE commands from ALL groups
+            # 2. WIPE commands and menu button from Default and Group scopes completely
+            try:
+                await application.bot.delete_my_commands(scope=BotCommandScopeDefault())
+                await application.bot.set_my_commands([], scope=BotCommandScopeDefault())
+            except Exception:
+                pass
+
             for sc in (BotCommandScopeAllGroupChats(), BotCommandScopeAllChatAdministrators()):
                 try:
                     await application.bot.delete_my_commands(scope=sc)
-                except Exception:
-                    pass
-            for gid in get_target_group_chat_ids():
-                try:
-                    await application.bot.delete_my_commands(scope=BotCommandScopeChat(gid))
+                    await application.bot.set_my_commands([], scope=sc)
                 except Exception:
                     pass
 
-            # 3. Register full command list in default & private scopes so the [≡ Menu] button is ALWAYS active
+            for gid in get_target_group_chat_ids():
+                try:
+                    await application.bot.delete_my_commands(scope=BotCommandScopeChat(gid))
+                    await application.bot.set_my_commands([], scope=BotCommandScopeChat(gid))
+                    await application.bot.set_chat_menu_button(chat_id=gid, menu_button=MenuButtonDefault())
+                except Exception:
+                    pass
+
+            # 3. Register command list and [≡ Menu] button ONLY in private chat / admin scopes
             bot_cmds = get_bot_commands()
-            await application.bot.set_my_commands(bot_cmds, scope=BotCommandScopeDefault())
             await application.bot.set_my_commands(bot_cmds, scope=BotCommandScopeAllPrivateChats())
             for aid in ADMIN_USER_IDS:
                 try:
@@ -4262,8 +4329,7 @@ async def main():
                     await application.bot.set_chat_menu_button(chat_id=aid, menu_button=MenuButtonCommands())
                 except Exception:
                     pass
-            await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
-            logger.info("✅ Telegram Bot Command Menu: MenuButtonCommands active (Command Menu [≡ Menu] button always visible on mobile & desktop).")
+            logger.info("✅ Telegram Bot Command Menu: Private admin scope active; groups wiped (0 commands).")
         except Exception as e:
             logger.warning(f"Error configuring command menu scopes: {e}")
         logger.info(f"✅ {get_bot_name()} is fully online and monitoring incoming messages...")
