@@ -59,19 +59,24 @@ jobs:
           done
           echo "✅ Old and queued runs cancelled."
 
-      - name: Clear Old Completed Workflow History
+      - name: Clear Old Completed & Cancelled Workflow History
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          echo "⏳ Waiting 6s for any cancelled runs to finalize..."
+          sleep 6
           echo "🧹 Deleting old completed/cancelled workflow run history..."
           curl -s -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/runs?status=completed&per_page=20" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs?per_page=50" \
             | python3 -c "
           import sys, json
           runs = json.load(sys.stdin).get('workflow_runs', [])
           for r in runs:
-              print(r['id'])
+              # Delete any run that is completed/cancelled and NOT the current active run
+              if str(r.get('id')) != '${{ github.run_id }}' and r.get('status') == 'completed':
+                  print(r['id'])
           " | while read r_id; do
+            echo "  🗑️ Deleting old run #$r_id..."
             curl -s -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
               "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id" || true
           done
