@@ -2451,68 +2451,65 @@ def build_forwarding_control_view() -> Tuple[str, InlineKeyboardMarkup]:
     if is_fwd:
         status_line = "🟢 <b>ACTIVE (Live Mode)</b>"
         expl = (
-            "• <b>Group Delivery:</b> <code>ON</code> — Every new incoming OTP is delivered live to your group(s).\n"
-            "• <b>Database & History:</b> <code>100% Synced</code> — Storing records in 28h rolling retention."
+            "• <b>Telegram Groups:</b> <code>Live Delivery ON</code>\n"
+            "• <b>Database & Retention:</b> <code>100% Synced (28h)</code>"
         )
-        toggle_btn = InlineKeyboardButton("⏸️ Turn OFF Forwarding (Silent Mode)", callback_data="fwd_ask_off")
+        toggle_btn = InlineKeyboardButton("⏸️ Turn OFF Forwarding", callback_data="fwd_ask_off")
     else:
         status_line = "⏸️ <b>PAUSED (Silent Mode)</b>"
         expl = (
-            "• <b>Group Delivery:</b> <code>OFF</code> — No OTP messages will be sent to groups.\n"
-            "• <b>Database & History:</b> <code>100% Active</code> — Bot continues polling Thirdwave API and recording every OTP into SQLite database & history."
+            "• <b>Telegram Groups:</b> <code>Delivery Stopped</code>\n"
+            "• <b>Database & Retention:</b> <code>100% Active (Recording Silently)</code>"
         )
-        toggle_btn = InlineKeyboardButton("▶️ Turn ON Forwarding (Live Mode)", callback_data="fwd_ask_on")
+        toggle_btn = InlineKeyboardButton("🟢 Turn ON Forwarding", callback_data="fwd_ask_on")
 
     msg = (
-        "⚡ <b>OTP Group Forwarding Control</b>\n"
+        "⚡ <b>OTP Forwarding Control</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"<b>Current Status:</b> {status_line}\n\n"
+        f"<b>Status:</b> {status_line}\n\n"
         f"{expl}\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "<i>Use the button below to change live forwarding state:</i>"
+        "<i>Tap the button below to change forwarding state:</i>"
     )
     kb = [
         [toggle_btn],
-        [
-            InlineKeyboardButton("📊 View Live Status", callback_data="refresh_dash_msg"),
-        ]
     ]
     return msg, InlineKeyboardMarkup(kb)
 
 def build_forwarding_confirm_view(action: str) -> Tuple[str, InlineKeyboardMarkup]:
-    """Builds interactive confirmation dialog for turning forwarding ON or OFF, with Cancel option."""
+    """Builds clean, professional confirmation dialog for toggling forwarding ON or OFF."""
     if action == "off":
-        title = "⚠️ <b>Confirm Turn OFF Forwarding</b>"
-        body = (
-            "Are you sure you want to <b>TURN OFF</b> OTP group forwarding?\n\n"
-            "• <b>Group Delivery:</b> Will be <b>PAUSED</b> (no messages sent to Telegram groups).\n"
-            "• <b>Database & History:</b> Will remain <b>100% ACTIVE</b> (all incoming OTPs recorded silently in SQLite & 28h history).\n"
-            "• <b>Group Safety:</b> Your groups will not receive any OTPs until turned back on."
+        msg = (
+            "⚠️ <b>Turn OFF Group Forwarding?</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Are you sure you want to pause OTP forwarding to groups?\n\n"
+            "• <b>Groups:</b> Forwarding will be <b>paused</b>.\n"
+            "• <b>Database:</b> OTPs continue saving silently in 28h history.\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "<i>Please confirm your choice:</i>"
         )
-        confirm_btn = InlineKeyboardButton("🔴 Yes, Turn OFF Forwarding", callback_data="fwd_confirm_off")
-        cancel_btn = InlineKeyboardButton("❌ Cancel (Keep Active)", callback_data="fwd_cancel")
+        kb = [
+            [
+                InlineKeyboardButton("⏸️ Yes, Turn OFF", callback_data="fwd_confirm_off"),
+                InlineKeyboardButton("❌ Cancel", callback_data="fwd_cancel"),
+            ]
+        ]
     else:
-        title = "⚡ <b>Confirm Turn ON Forwarding</b>"
-        body = (
-            "Are you sure you want to <b>TURN ON</b> live OTP group forwarding?\n\n"
-            "• <b>Group Delivery:</b> Will <b>RESUME</b> live to all linked Telegram groups.\n"
-            "• <b>Duplicate Shield:</b> Only <b>brand-new OTPs</b> arriving from this moment forward will be delivered.\n"
-            "• <b>Zero Spam:</b> OTPs that arrived while paused will <b>NEVER</b> be forwarded."
+        msg = (
+            "⚡ <b>Turn ON Group Forwarding?</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Are you sure you want to resume OTP forwarding to groups?\n\n"
+            "• <b>Groups:</b> Forwarding will <b>resume live</b>.\n"
+            "• <b>Zero Spam:</b> Past OTPs from pause time will not be sent.\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "<i>Please confirm your choice:</i>"
         )
-        confirm_btn = InlineKeyboardButton("🟢 Yes, Turn ON Forwarding", callback_data="fwd_confirm_on")
-        cancel_btn = InlineKeyboardButton("❌ Cancel (Keep Paused)", callback_data="fwd_cancel")
-
-    msg = (
-        f"{title}\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"{body}\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "<i>Please confirm your choice or tap Cancel:</i>"
-    )
-    kb = [
-        [confirm_btn],
-        [cancel_btn],
-    ]
+        kb = [
+            [
+                InlineKeyboardButton("🟢 Yes, Turn ON", callback_data="fwd_confirm_on"),
+                InlineKeyboardButton("❌ Cancel", callback_data="fwd_cancel"),
+            ]
+        ]
     return msg, InlineKeyboardMarkup(kb)
 
 async def toggle_forwarding_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2532,14 +2529,11 @@ async def toggle_forwarding_command(update: Update, context: ContextTypes.DEFAUL
         sub = args[0].strip().lower()
         if sub in ("off", "disable", "pause", "stop", "0"):
             set_otp_forwarding_enabled(False)
+            asyncio.create_task(sync_data_to_secret_db())
         elif sub in ("on", "enable", "resume", "start", "1"):
             set_otp_forwarding_enabled(True)
-        else:
-            set_otp_forwarding_enabled(not is_otp_forwarding_enabled())
-    else:
-        set_otp_forwarding_enabled(not is_otp_forwarding_enabled())
+            asyncio.create_task(sync_data_to_secret_db())
 
-    asyncio.create_task(sync_data_to_secret_db())
     msg_text, markup = build_forwarding_control_view()
     await msg_obj.reply_text(msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
 
