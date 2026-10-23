@@ -1530,6 +1530,12 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
 
     clean_msg = raw_message.strip()
 
+    # Expandable quote block on the card
+    quote_block = ""
+    if clean_msg:
+        wrapped_msg = wrap_sms_for_card(clean_msg, width=28)
+        quote_block = f"\n\n<blockquote expandable>📩 <b>View Full SMS</b>\n\n{html.escape(wrapped_msg, quote=False)}</blockquote>"
+
     if otp_code:
         full_text = (
             f"🎟️ <b>VERIFICATION PASS</b>\n"
@@ -1539,6 +1545,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             f"📱 <b>Number:</b> {num_plain}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"🔑 <b>PASSCODE:</b> <code>{otp_code}</code>"
+            f"{quote_block}"
         )
     elif clean_msg:
         full_text = (
@@ -1547,8 +1554,8 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             f"🏷️ <b>Service:</b> {source_plain}\n"
             f"🌍 <b>Country:</b> {country_plain}\n"
             f"📱 <b>Number:</b> {num_plain}\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🔑 <b>PASSCODE:</b> <i>Tap button below</i>"
+            f"━━━━━━━━━━━━━━━━━━━━"
+            f"{quote_block}"
         )
     else:
         full_text = (
@@ -1658,14 +1665,6 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
             else:
                 for i in range(0, len(custom_btns), 2):
                     buttons.append(custom_btns[i:i+2])
-
-        # Row 2: View Full SMS button (when SMS body exists)
-        if raw_msg and raw_msg.strip():
-            raw_clean = raw_msg.strip()
-            raw_number = str(item.get("number") or item.get("destinationNumber") or item.get("range_template") or item.get("rangeTemplate") or item.get("dst") or "").strip()
-            sms_key = mid if (mid and len(mid) <= 32) else hashlib.md5(f"{raw_number}_{otp}_{raw_clean}".encode()).hexdigest()[:16]
-            _cache_sms_message(sms_key, raw_clean)
-            buttons.append([InlineKeyboardButton("📩 View Full SMS", callback_data=f"sms_{sms_key}")])
 
         if buttons:
             markup = InlineKeyboardMarkup(buttons)
@@ -2210,7 +2209,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         f"• <b>Short</b> {short_active}\n"
         "  Compact card with From / To / OTP highlighted.\n\n"
         f"• <b>Long</b> {long_active}\n"
-        "  Full card with interactive '[ 📩 View Full SMS ]' button.\n"
+        "  Full card with expandable '📩 View Full SMS' on the card.\n"
     )
 
     if preview_mode == "short":
@@ -2227,6 +2226,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "long":
+        sample_wrapped = wrap_sms_for_card("Your WhatsApp verification code is 492-810. Do not share this code with anyone.", width=28)
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
@@ -2237,7 +2237,9 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "📱 <b>Number:</b> +977980****456\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
-            "<i>Buttons: [ 492810 ] [ GET NUMBER ]\n[ 📩 View Full SMS ]</i>"
+            f"<blockquote expandable>📩 <b>View Full SMS</b>\n\n"
+            f"{sample_wrapped}</blockquote>\n\n"
+            "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
     else:
         msg += "\n<i>Choose an option below to set the format or preview it live:</i>"
@@ -2250,11 +2252,11 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         [
             InlineKeyboardButton("📺 Preview Short", callback_data="fmt_preview_short"),
             InlineKeyboardButton("📺 Preview Long", callback_data="fmt_preview_long"),
+        ],
+        [
+            InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")
         ]
     ]
-    if preview_mode == "long":
-        kb.append([InlineKeyboardButton("📩 View Full SMS (Test Popup)", callback_data="sms_preview")])
-    kb.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")])
     return msg, InlineKeyboardMarkup(kb)
 
 def build_api_url_view() -> Tuple[str, InlineKeyboardMarkup]:
