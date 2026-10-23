@@ -2445,11 +2445,9 @@ def get_admin_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
 def get_bot_commands() -> List[BotCommand]:
-    """Returns commands for the Telegram [≡ Menu] command button."""
+    """Returns ONLY the /start command for the Telegram [≡ Menu] command button."""
     return [
         BotCommand("start", "🚀 Admin Dashboard"),
-        BotCommand("forwarding", "⚡ Toggle OTP Forwarding ON/OFF"),
-        BotCommand("status", "📊 View Live System Status"),
     ]
 
 def build_forwarding_control_view() -> Tuple[str, InlineKeyboardMarkup]:
