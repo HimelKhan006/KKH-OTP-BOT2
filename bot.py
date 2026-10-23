@@ -1985,12 +1985,14 @@ async def poll_incoming_messages(application: Application):
         cleanup_old_messages(max_age_hours=28)
         with get_db_connection() as conn:
             for row in conn.execute(
-                "SELECT id FROM processed_otps WHERE forwarded_at >= datetime('now', '-28 hours') ORDER BY forwarded_at DESC LIMIT 10000;"
+                "SELECT id, forwarded_at FROM processed_otps WHERE forwarded_at >= datetime('now', '-28 hours') ORDER BY forwarded_at DESC LIMIT 10000;"
             ):
                 mid = str(row["id"])
                 seen_message_ids.add(mid)
                 if mid not in seen_timestamps:
-                    seen_timestamps[mid] = bot_start_time
+                    fwd_str = str(row["forwarded_at"] or "")
+                    t_val = parse_message_timestamp(fwd_str)
+                    seen_timestamps[mid] = t_val if t_val > 0 else bot_start_time
             # Seed active 28-hour rolling country counts from database
             try:
                 active_total, active_countries = get_dashboard_stats_28h()
