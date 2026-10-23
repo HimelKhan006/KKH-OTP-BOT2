@@ -777,6 +777,37 @@ def get_total_processed_count() -> int:
     except Exception:
         return 0
 
+# In-memory fast cache for full SMS bodies (supporting popup alerts)
+_SMS_BODY_CACHE: Dict[str, str] = {}
+
+def _cache_sms_message(key: str, message: str):
+    global _SMS_BODY_CACHE
+    if not key or not message:
+        return
+    _SMS_BODY_CACHE[key] = str(message)
+    if len(_SMS_BODY_CACHE) > 3000:
+        for k in list(_SMS_BODY_CACHE.keys())[:500]:
+            _SMS_BODY_CACHE.pop(k, None)
+
+def get_cached_sms_message(key: str) -> Optional[str]:
+    global _SMS_BODY_CACHE
+    if not key:
+        return None
+    cached = _SMS_BODY_CACHE.get(key)
+    if cached:
+        return cached
+    try:
+        with get_db_connection() as conn:
+            cur = conn.execute("SELECT raw_message FROM processed_otps WHERE id = ? LIMIT 1;", (key,))
+            row = cur.fetchone()
+            if row and row[0]:
+                msg = str(row[0]).strip()
+                _SMS_BODY_CACHE[key] = msg
+                return msg
+    except Exception:
+        pass
+    return None
+
 def cleanup_old_messages(max_age_hours: int = 28):
     """
     Cleans up expired OTP records older than 28 hours from:
@@ -1499,69 +1530,34 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
 
     clean_msg = raw_message.strip()
 
-    # ── Short format (default) ───────────────────────────────────────────────
-    if sms_format != "long":
-        if otp_code:
-            full_text = (
-                f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🏷️ <b>Service:</b> {source_plain}\n"
-                f"🌍 <b>Country:</b> {country_plain}\n"
-                f"📱 <b>Number:</b> {num_plain}\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🔑 <b>PASSCODE:</b> <code>{otp_code}</code>"
-            )
-        elif clean_msg:
-            wrapped_sms = wrap_sms_for_card(clean_msg, width=22)
-            escaped_sms = html.escape(wrapped_sms, quote=False)
-            full_text = (
-                f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🏷️ <b>Service:</b> {source_plain}\n"
-                f"🌍 <b>Country:</b> {country_plain}\n"
-                f"📱 <b>Number:</b> {num_plain}\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"<blockquote expandable>📩 <b>View Full SMS</b>\n"
-                f"\u2800\n\u2800\n\u2800\n"
-                f"{escaped_sms}</blockquote>"
-            )
-        else:
-            full_text = (
-                f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🏷️ <b>Service:</b> {source_plain}\n"
-                f"🌍 <b>Country:</b> {country_plain}\n"
-                f"📱 <b>Number:</b> {num_plain}"
-            )
-
-    # ── Long / Detailed format ───────────────────────────────────────────────
+    if otp_code:
+        full_text = (
+            f"🎟️ <b>VERIFICATION PASS</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏷️ <b>Service:</b> {source_plain}\n"
+            f"🌍 <b>Country:</b> {country_plain}\n"
+            f"📱 <b>Number:</b> {num_plain}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🔑 <b>PASSCODE:</b> <code>{otp_code}</code>"
+        )
+    elif clean_msg:
+        full_text = (
+            f"🎟️ <b>VERIFICATION PASS</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏷️ <b>Service:</b> {source_plain}\n"
+            f"🌍 <b>Country:</b> {country_plain}\n"
+            f"📱 <b>Number:</b> {num_plain}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🔑 <b>PASSCODE:</b> <i>Tap button below</i>"
+        )
     else:
-        otp_display = f"<code>{otp_code}</code>" if otp_code else "<i>N/A</i>"
-        if clean_msg:
-            wrapped_sms = wrap_sms_for_card(clean_msg, width=22)
-            escaped_sms = html.escape(wrapped_sms, quote=False)
-            full_text = (
-                f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🏷️ <b>Service:</b> {source_plain}\n"
-                f"🌍 <b>Country:</b> {country_plain}\n"
-                f"📱 <b>Number:</b> {num_plain}\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🔑 <b>PASSCODE:</b> {otp_display}\n\n"
-                f"<blockquote expandable>📩 <b>View Full SMS</b>\n"
-                f"\u2800\n\u2800\n\u2800\n"
-                f"{escaped_sms}</blockquote>"
-            )
-        else:
-            full_text = (
-                f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🏷️ <b>Service:</b> {source_plain}\n"
-                f"🌍 <b>Country:</b> {country_plain}\n"
-                f"📱 <b>Number:</b> {num_plain}\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🔑 <b>PASSCODE:</b> {otp_display}"
-            )
+        full_text = (
+            f"🎟️ <b>VERIFICATION PASS</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏷️ <b>Service:</b> {source_plain}\n"
+            f"🌍 <b>Country:</b> {country_plain}\n"
+            f"📱 <b>Number:</b> {num_plain}"
+        )
 
     return full_text, otp_code, raw_message
 
@@ -1662,6 +1658,14 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
             else:
                 for i in range(0, len(custom_btns), 2):
                     buttons.append(custom_btns[i:i+2])
+
+        # Row 2: View Full SMS button (when SMS body exists)
+        if raw_msg and raw_msg.strip():
+            raw_clean = raw_msg.strip()
+            raw_number = str(item.get("number") or item.get("destinationNumber") or item.get("range_template") or item.get("rangeTemplate") or item.get("dst") or "").strip()
+            sms_key = mid if (mid and len(mid) <= 32) else hashlib.md5(f"{raw_number}_{otp}_{raw_clean}".encode()).hexdigest()[:16]
+            _cache_sms_message(sms_key, raw_clean)
+            buttons.append([InlineKeyboardButton("📩 View Full SMS", callback_data=f"sms_{sms_key}")])
 
         if buttons:
             markup = InlineKeyboardMarkup(buttons)
@@ -2204,9 +2208,9 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         f"🟢 <b>Active Mode:</b>   <code>{'Short ⚡' if curr_fmt == 'short' else 'Long 📜'}</code>\n\n"
         "<b>Available Modes:</b>\n"
         f"• <b>Short</b> {short_active}\n"
-        "  Compact card with From / To / OTP highlighted. Ideal for fast reading.\n\n"
+        "  Compact card with From / To / OTP highlighted.\n\n"
         f"• <b>Long</b> {long_active}\n"
-        "  Full card with collapsible '📩 View Full SMS' body. Tap to expand/collapse.\n"
+        "  Full card with interactive '[ 📩 View Full SMS ]' button.\n"
     )
 
     if preview_mode == "short":
@@ -2220,10 +2224,9 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "📱 <b>Number:</b> +977980****456\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
-            "<i>Buttons: [ 492810 ] [ Number Bot ]</i>"
+            "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "long":
-        sample_wrapped = wrap_sms_for_card("Your WhatsApp verification code is 492-810. Do not share this code with anyone.", width=22)
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
@@ -2234,10 +2237,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "📱 <b>Number:</b> +977980****456\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
-            f"<blockquote expandable>📩 <b>View Full SMS</b>\n"
-            f"\u2800\n\u2800\n\u2800\n"
-            f"{sample_wrapped}</blockquote>\n\n"
-            "<i>Buttons: [ 492810 ] [ Number Bot ]</i>"
+            "<i>Buttons: [ 492810 ] [ GET NUMBER ]\n[ 📩 View Full SMS ]</i>"
         )
     else:
         msg += "\n<i>Choose an option below to set the format or preview it live:</i>"
@@ -2250,11 +2250,11 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         [
             InlineKeyboardButton("📺 Preview Short", callback_data="fmt_preview_short"),
             InlineKeyboardButton("📺 Preview Long", callback_data="fmt_preview_long"),
-        ],
-        [
-            InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")
         ]
     ]
+    if preview_mode == "long":
+        kb.append([InlineKeyboardButton("📩 View Full SMS (Test Popup)", callback_data="sms_preview")])
+    kb.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")])
     return msg, InlineKeyboardMarkup(kb)
 
 def build_api_url_view() -> Tuple[str, InlineKeyboardMarkup]:
@@ -2874,6 +2874,24 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     if not query:
         return
+
+    # 1. Public Interactive Action: View Full SMS Popup (accessible to all group/channel members)
+    if query.data and query.data.startswith("sms_"):
+        sms_key = query.data[4:]
+        if sms_key == "preview":
+            await query.answer(
+                "📩 Full SMS Content:\n\nYour WhatsApp verification code is 492-810. Do not share this code with anyone.",
+                show_alert=True
+            )
+            return
+
+        raw_msg = get_cached_sms_message(sms_key)
+        if raw_msg:
+            await query.answer(f"📩 Full SMS Content:\n\n{raw_msg}", show_alert=True)
+        else:
+            await query.answer("📩 Full SMS is not available for this message.", show_alert=True)
+        return
+
     user_id = query.from_user.id if query.from_user else 0
     if not is_user_authorized(user_id):
         await query.answer("⛔ Access Restricted: Admins only.", show_alert=True)
