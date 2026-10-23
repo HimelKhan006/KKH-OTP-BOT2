@@ -2430,17 +2430,17 @@ def get_admin_reply_keyboard() -> ReplyKeyboardMarkup:
     """
     Bottom persistent reply keyboard for admins.
     Row 1: 📊 Status | ⚡ OTP Forwarding
-    Row 2: 📋 SMS Format | 🔄 Restart
+    Row 2: 📋 SMS Format | 👥 Linked Groups
     Row 3: 🌐 API URL | 🔑 API Key
     Row 4: ✏️ Bot Name | 🔗 Link Button
-    Row 5: 👥 Linked Groups
+    Row 5: 🔄 Restart (at the very bottom)
     """
     keyboard = [
         [KeyboardButton("📊 Status"), KeyboardButton("⚡ OTP Forwarding")],
-        [KeyboardButton("📋 SMS Format"), KeyboardButton("🔄 Restart")],
+        [KeyboardButton("📋 SMS Format"), KeyboardButton("👥 Linked Groups")],
         [KeyboardButton("🌐 API URL"), KeyboardButton("🔑 API Key")],
         [KeyboardButton("✏️ Bot Name"), KeyboardButton("🔗 Link Button")],
-        [KeyboardButton("👥 Linked Groups")],
+        [KeyboardButton("🔄 Restart")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
