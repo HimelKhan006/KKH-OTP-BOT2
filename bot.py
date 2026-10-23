@@ -3360,10 +3360,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     # Acknowledge callback unless it has a dedicated toast notification
     if query.data not in (
-        "toggle_format", "confirm_fwd_off", "confirm_fwd_on", "cancel_fwd",
-        "fwd_turn_off", "fwd_turn_on", "fwd_confirm_off", "fwd_disable",
-        "fwd_confirm_on", "fwd_enable", "fwd_ask_off", "fwd_ask_on", "fwd_cancel",
-        "bot_name_help", "link_list", "link_help", "confirm_restart", "cancel_restart"
+        "toggle_format", "bot_name_help", "link_list", "link_help", "confirm_restart", "cancel_restart"
     ):
         try:
             await query.answer()
@@ -3391,7 +3388,6 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             logger.warning(f"Could not edit dashboard message on toggle: {e}")
 
     elif query.data in ("confirm_fwd_off", "fwd_confirm_off", "fwd_turn_off", "fwd_disable", "fwd_ask_off"):
-        await query.answer("Forwarding Turned OFF ⏸️")
         set_otp_forwarding_enabled(False)
         asyncio.create_task(sync_data_to_secret_db())
         try:
@@ -3410,7 +3406,6 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             logger.warning(f"Error handling confirm_fwd_off: {e}")
 
     elif query.data in ("confirm_fwd_on", "fwd_confirm_on", "fwd_turn_on", "fwd_enable", "fwd_ask_on"):
-        await query.answer("Forwarding Turned ON 🟢")
         set_otp_forwarding_enabled(True)
         asyncio.create_task(sync_data_to_secret_db())
         try:
@@ -3430,7 +3425,6 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             logger.warning(f"Error handling confirm_fwd_on: {e}")
 
     elif query.data in ("cancel_fwd", "fwd_cancel"):
-        await query.answer("Cancelled ❌")
         is_fwd = is_otp_forwarding_enabled()
         status_text = "<b>ACTIVE (Live Mode)</b>" if is_fwd else "<b>PAUSED (Silent Mode)</b>"
         try:
@@ -3450,7 +3444,6 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         set_otp_forwarding_enabled(new_state)
         asyncio.create_task(sync_data_to_secret_db())
         action_text = "Turned ON 🟢" if new_state else "Turned OFF ⏸️"
-        await query.answer(f"Forwarding {action_text}")
         status_badge = "🟢 <code>ACTIVE (Live Mode)</code>" if new_state else "⏸️ <code>PAUSED (Silent Mode)</code>"
         delivery_badge = "<code>Live Delivery ON</code>" if new_state else "<code>Delivery Stopped</code>"
         try:
