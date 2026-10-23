@@ -1765,9 +1765,8 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
 
 # ==========================================
 # 10. Clean OTP Notification Formatter (No Language)
-# 3 Braille blank spaces (\u2800 * 3) for exact optical horizontal centering across all devices (Mobile & Desktop)
-# Balanced exactly between the red bar on the left (106px) and the quote/chevron icons on the right (106px)
-EXPANDABLE_SMS_LABEL = "\u2800" * 3 + "📩 View Full SMS"
+# 4 Braille blank spaces (\u2800 * 4) for exact optical horizontal centering across all devices (Mobile & Desktop)
+EXPANDABLE_SMS_LABEL = "\u2800" * 4 + "📩 View Full SMS"
 
 def wrap_sms_for_card(text: str, width: int = 22) -> str:
     """Wraps SMS text to a compact line length (<=22 chars) to ensure cards don't stretch horizontally."""
