@@ -14,14 +14,13 @@ on:
         required: false
         default: 'false'
   schedule:
-    # 4-hour safety net — fires reliably to ensure continuous 24/7 uptime without gaps
+    # 4-hour safety net — fires every 4h if self-trigger ever delays
     - cron: '0 */4 * * *'
 
-# Only ONE bot instance ever runs live OTP forwarding.
-# Pushes apply instantly; handover/scheduled runs transition smoothly.
+# Only ONE bot instance ever runs. New run cancels the old one instantly so updates apply immediately with ZERO delay!
 concurrency:
   group: otp-wave-bot-single-instance
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  cancel-in-progress: true
 
 permissions:
   actions: write
@@ -37,6 +36,60 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Cancel Any Other Running Instances
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALT_TOKEN: ${{ secrets.PAT || secrets.GH_TOKEN || secrets.GIST_TOKEN }}
+        run: |
+          for st in in_progress queued; do
+            curl -s -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs?status=$st&per_page=30" \
+              | python3 -c "
+            import sys, json
+            runs = json.load(sys.stdin).get('workflow_runs', [])
+            for r in runs:
+                if str(r.get('id')) != '${{ github.run_id }}':
+                    print(r['id'])
+            " | while read r_id; do
+              echo "🛑 Cancelling older run #$r_id ($st)..."
+              curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id/cancel" || true
+            done
+          done
+          echo "✅ Old runs cancelled immediately."
+
+      - name: Clear Old Completed Workflow History
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALT_TOKEN: ${{ secrets.PAT || secrets.GH_TOKEN || secrets.GIST_TOKEN }}
+        run: |
+          echo "🧹 Deleting old completed workflow run history..."
+          curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs?per_page=50" \
+            | python3 -c "
+          import sys, json
+          runs = json.load(sys.stdin).get('workflow_runs', [])
+          for r in runs:
+              if str(r.get('id')) != '${{ github.run_id }}' and r.get('status') == 'completed':
+                  print(r['id'])
+          " | while read r_id; do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id")
+
+            if [ "$HTTP_CODE" != "204" ] && [ -n "$ALT_TOKEN" ]; then
+              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+                -H "Authorization: Bearer $ALT_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id")
+            fi
+          done
+          echo "✅ History cleaned."
 
       # ─────────────────────────────────────────────────────────────────
       # Restore the OTP database from cache so the bot knows
@@ -101,64 +154,6 @@ jobs:
           else
             echo "ℹ️ Fresh database (first run or cache expired)."
           fi
-
-      # ─────────────────────────────────────────────────────────────────
-      # Only cancel older instances RIGHT before starting bot.py so
-      # the previous session was actively forwarding during setup/install!
-      # ─────────────────────────────────────────────────────────────────
-      - name: Cancel Any Older Running Instances
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ALT_TOKEN: ${{ secrets.PAT || secrets.GH_TOKEN || secrets.GIST_TOKEN }}
-        run: |
-          for st in in_progress queued; do
-            curl -s -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/runs?status=$st&per_page=30" \
-              | python3 -c "
-            import sys, json
-            runs = json.load(sys.stdin).get('workflow_runs', [])
-            for r in runs:
-                if str(r.get('id')) != '${{ github.run_id }}':
-                    print(r['id'])
-            " | while read r_id; do
-              echo "🛑 Signalling older run #$r_id ($st) to hand over..."
-              curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
-                -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id/cancel" || true
-            done
-          done
-          echo "✅ Ready for zero-downtime execution."
-
-      - name: Clear Old Completed Workflow History
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ALT_TOKEN: ${{ secrets.PAT || secrets.GH_TOKEN || secrets.GIST_TOKEN }}
-        run: |
-          echo "🧹 Cleaning completed workflow run history..."
-          curl -s -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/runs?per_page=50" \
-            | python3 -c "
-          import sys, json
-          runs = json.load(sys.stdin).get('workflow_runs', [])
-          for r in runs:
-              if str(r.get('id')) != '${{ github.run_id }}' and r.get('status') == 'completed':
-                  print(r['id'])
-          " | while read r_id; do
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id")
-
-            if [ "$HTTP_CODE" != "204" ] && [ -n "$ALT_TOKEN" ]; then
-              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
-                -H "Authorization: Bearer $ALT_TOKEN" \
-                -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id")
-            fi
-          done
-          echo "✅ History cleaned."
 
       - name: Run Bot (Auto-Recovery & Crash Protection)
         env:
@@ -291,6 +286,6 @@ jobs:
           if [ "$HTTP_CODE" = "204" ]; then
             echo "✅ Next run triggered! Bot continues with new server session."
           else
-            echo "⚠️ Self-trigger returned HTTP $HTTP_CODE (backup 4h cron will maintain 24/7 continuity)."
+            echo "⚠️ Self-trigger returned HTTP $HTTP_CODE (backup cron will pick up)."
             cat /tmp/dispatch_out.txt 2>/dev/null || true
           fi
