@@ -949,12 +949,38 @@ def is_otp_forwarding_enabled() -> bool:
         pass
     return True
 
+def get_forwarding_resumed_epoch() -> float:
+    """Returns the UNIX epoch timestamp when forwarding was last turned ON, or 0.0."""
+    data = load_stored_data()
+    val = data.get("forwarding_resumed_epoch")
+    if val:
+        try:
+            return float(val)
+        except Exception:
+            pass
+    try:
+        with get_db_connection() as conn:
+            cur = conn.execute("SELECT value FROM bot_settings WHERE key = 'forwarding_resumed_epoch' LIMIT 1;")
+            row = cur.fetchone()
+            if row and row[0]:
+                return float(row[0])
+    except Exception:
+        pass
+    return 0.0
+
 def set_otp_forwarding_enabled(enabled: bool):
     """
     Saves OTP group forwarding toggle state persistently to bot_data.json and SQLite bot_settings.
+    Also records forwarding_resumed_epoch when turned ON so old OTPs from the turned-off window
+    are strictly NEVER forwarded to Telegram groups!
     """
+    now_epoch = datetime.now(timezone.utc).timestamp()
     data = load_stored_data()
     data["otp_forwarding_enabled"] = bool(enabled)
+    if enabled:
+        data["forwarding_resumed_epoch"] = now_epoch
+    else:
+        data["forwarding_paused_epoch"] = now_epoch
     save_stored_data(data)
     try:
         with get_db_connection() as conn:
@@ -962,6 +988,16 @@ def set_otp_forwarding_enabled(enabled: bool):
                 "INSERT OR REPLACE INTO bot_settings (key, value, updated_at) VALUES ('otp_forwarding_enabled', ?, CURRENT_TIMESTAMP);",
                 ("true" if enabled else "false",)
             )
+            if enabled:
+                conn.execute(
+                    "INSERT OR REPLACE INTO bot_settings (key, value, updated_at) VALUES ('forwarding_resumed_epoch', ?, CURRENT_TIMESTAMP);",
+                    (str(now_epoch),)
+                )
+            else:
+                conn.execute(
+                    "INSERT OR REPLACE INTO bot_settings (key, value, updated_at) VALUES ('forwarding_paused_epoch', ?, CURRENT_TIMESTAMP);",
+                    (str(now_epoch),)
+                )
             conn.commit()
     except Exception as e:
         logger.warning(f"Error persisting forwarding setting: {e}")
@@ -1906,6 +1942,24 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
 
     # Check whether live forwarding to groups is enabled or turned OFF
     forwarding_enabled = is_otp_forwarding_enabled()
+
+    # Determine message arrival timestamp
+    raw_time_str = str(item.get("received_at") or item.get("receivedAt") or item.get("messageTime") or item.get("createdAt") or "")
+    msg_ts = parse_message_timestamp(raw_time_str)
+    resumed_epoch = get_forwarding_resumed_epoch()
+
+    # ── GUARANTEE: Never forward old OTPs that arrived while forwarding was turned OFF! ──
+    # If forwarding was resumed, any OTP whose arrival time is BEFORE forwarding was turned ON
+    # is recorded into SQLite & History only, and NEVER sent to the group!
+    if forwarding_enabled and resumed_epoch > 0 and msg_ts > 0 and msg_ts < (resumed_epoch - 3.0):
+        save_processed_message(item, gid or 0, country, num, otp_code)
+        country_forwarded_counts[country_iso] = country_forwarded_counts.get(country_iso, 0) + 1
+        update_last_active_timestamp()
+        logger.info(
+            f"🛡️ [PRE-RESUME OTP BLOCKED] Live OTP {mid} ({country_iso}) arrived during OFF period. "
+            f"Saved to Database & History only (not forwarded to group)."
+        )
+        return True
 
     if not forwarding_enabled:
         # ── Group forwarding is turned OFF by admin (Silent Mode) ──────────────────
