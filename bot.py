@@ -435,6 +435,7 @@ seen_message_ids: Set[str] = set()
 seen_timestamps: Dict[str, float] = {}
 _gist_dirty: bool = False
 _is_handover: bool = os.getenv("IS_HANDOVER", "false").strip().lower() in ("true", "1", "yes")
+_manual_restart: bool = False
 _handover_epoch: float = 0.0
 bot_process_start_time: float = time.time()
 
@@ -553,6 +554,7 @@ class GistStorage:
                                 "country_counts": parsed.get("country_counts", {}),
                                 "base_url": parsed.get("base_url", ""),
                                 "bot_data": parsed.get("bot_data", {}),
+                                "manual_restart": bool(parsed.get("manual_restart", False)),
                             }
                 else:
                     logger.warning(f"Gist load status {res.status_code}: {res.text[:100]}")
@@ -591,6 +593,7 @@ class GistStorage:
                 "country_counts": country_counts or {},
                 "base_url": base_url or "",
                 "bot_data": load_stored_data(),
+                "manual_restart": bool(kwargs.get("manual_restart", False)),
             }
             payload = {
                 "description": self.description,
@@ -774,14 +777,35 @@ def get_total_processed_count() -> int:
     except Exception:
         return 0
 
-def cleanup_old_messages(max_age_days: int = 7):
+def cleanup_old_messages(max_age_hours: int = 28):
+    """
+    Cleans up expired OTP records older than 28 hours from:
+    1. Local SQLite database (`processed_otps` table)
+    2. In-memory deduplication cache (`seen_timestamps` & `seen_message_ids`)
+    IMPORTANT: Telegram group messages are NEVER deleted or modified.
+    Group chat members always retain full forwarded SMS history permanently.
+    """
     try:
+        # 1. Prune in-memory cache
+        cutoff = datetime.now(timezone.utc).timestamp() - (max_age_hours * 3600)
+        expired_ids = [mid for mid, ts in list(seen_timestamps.items()) if ts < cutoff]
+        for mid in expired_ids:
+            seen_timestamps.pop(mid, None)
+            seen_message_ids.discard(mid)
+
+        # 2. Prune local SQLite database
         with get_db_connection() as conn:
-            conn.execute(
+            cur = conn.execute(
                 "DELETE FROM processed_otps WHERE forwarded_at < datetime('now', ?);",
-                (f"-{max_age_days} days",)
+                (f"-{max_age_hours} hours",)
             )
+            deleted = cur.rowcount
             conn.commit()
+            if deleted > 0 or expired_ids:
+                logger.info(
+                    f"🧹 28h Cleanup: Pruned {deleted} SQLite records & {len(expired_ids)} memory cache items older than {max_age_hours} hours. "
+                    f"(Telegram group messages remain untouched)."
+                )
     except Exception as e:
         logger.warning(f"DB cleanup error: {e}")
 
@@ -1464,27 +1488,27 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         if otp_code:
             full_text = (
                 f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"────────────────────────\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}\n"
-                f"────────────────────\n"
+                f"────────────────────────\n"
                 f"🔑 <b>PASSCODE:</b> <code>{otp_code}</code>"
             )
         elif clean_msg:
             full_text = (
                 f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"────────────────────────\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}\n"
-                f"────────────────────\n\n"
+                f"────────────────────────\n\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
         else:
             full_text = (
                 f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"────────────────────────\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}"
@@ -1496,11 +1520,11 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         if clean_msg:
             full_text = (
                 f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"────────────────────────\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}\n"
-                f"────────────────────\n"
+                f"────────────────────────\n"
                 f"🔑 <b>PASSCODE:</b> {otp_display}\n\n"
                 f"💬 <b>Message Content:</b>\n"
                 f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
@@ -1508,11 +1532,11 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         else:
             full_text = (
                 f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"────────────────────────\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}\n"
-                f"────────────────────\n"
+                f"────────────────────────\n"
                 f"🔑 <b>PASSCODE:</b> {otp_display}"
             )
 
@@ -1837,10 +1861,13 @@ async def poll_incoming_messages(application: Application):
             logger.warning(f"DB sync from Gist warning: {e}")
         logger.info(f"☁️ Restored {len(gist_seen)} persistent message IDs from GitHub Gist.")
 
-    # 2. Preload seen IDs and seed country stats from local DB
+    # 2. Preload seen IDs and seed country stats from local DB (28-hour window)
     try:
+        cleanup_old_messages(max_age_hours=28)
         with get_db_connection() as conn:
-            for row in conn.execute("SELECT id FROM processed_otps ORDER BY forwarded_at DESC LIMIT 10000;"):
+            for row in conn.execute(
+                "SELECT id FROM processed_otps WHERE forwarded_at >= datetime('now', '-28 hours') ORDER BY forwarded_at DESC LIMIT 10000;"
+            ):
                 mid = str(row["id"])
                 seen_message_ids.add(mid)
                 if mid not in seen_timestamps:
@@ -2005,7 +2032,7 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"👥 <b>Groups:</b>      <code>{group_text}</code>\n"
         f"📨 <b>OTPs Today:</b>  <code>{total_forwarded_count} forwarded</code>\n"
-        f"📦 <b>DB Records:</b>  <code>{db_count} total</code>\n"
+        f"📦 <b>DB Records:</b>  <code>{db_count} (28h rolling)</code>\n"
         f"⚡ <b>Poll Rate:</b>   <code>every {POLL_INTERVAL_SECONDS}s</code>\n"
         f"📋 <b>SMS Format:</b>  <code>{fmt_label}</code>\n"
         f"🔗 <b>Buttons:</b>     {link_str}\n"
@@ -2164,11 +2191,11 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>📺 Live Preview — Short:</b>\n\n"
             "🎟️ <b>VERIFICATION PASS</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
+            "────────────────────────\n"
             "🏷️ <b>Service:</b> WhatsApp\n"
             "🌍 <b>Country:</b> 🇳🇵 Nepal (NP)\n"
             "📱 <b>Number:</b> +977980****456\n"
-            "────────────────────\n"
+            "────────────────────────\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
             "<i>Buttons: [ 492810 ] [ Number Bot ]</i>"
         )
@@ -2177,11 +2204,11 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
             "🎟️ <b>VERIFICATION PASS</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
+            "────────────────────────\n"
             "🏷️ <b>Service:</b> WhatsApp\n"
             "🌍 <b>Country:</b> 🇳🇵 Nepal (NP)\n"
             "📱 <b>Number:</b> +977980****456\n"
-            "────────────────────\n"
+            "────────────────────────\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
             "💬 <b>Message Content:</b>\n"
             "<blockquote expandable>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n\n"
@@ -3275,19 +3302,22 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer("Restarting engine 🔄")
         try:
             await query.edit_message_text(
-                "⏳ <i>Zero-restart session handover initiated...</i>",
+                "🔄 <b>Restarting Bot Engine...</b>\n"
+                "────────────────────────\n"
+                "⏳ <i>Saving state and rebooting cleanly...</i>\n"
+                "<i>You will receive a confirmation message once online.</i>",
                 parse_mode=ParseMode.HTML
             )
         except Exception:
             pass
-        await perform_zero_restart_handover(query.message)
+        await perform_zero_restart_handover(query.message, manual_restart=True)
 
     elif query.data == "cancel_restart":
         await query.answer("Cancelled")
         try:
             await query.edit_message_text(
                 "❌ <b>Restart Cancelled</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
+                "────────────────────────\n"
                 "The bot engine continues running normally without interruption.",
                 parse_mode=ParseMode.HTML
             )
@@ -3421,22 +3451,12 @@ async def setname_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
     )
 
-async def perform_zero_restart_handover(target_message):
+async def perform_zero_restart_handover(target_message=None, manual_restart: bool = False):
     """Executes the clean zero-restart session handover."""
-    global _is_handover
-    try:
-        msg = await target_message.reply_text(
-            "🔄 <b>Zero-Restart Handover Triggered</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "💾 <i>Flushing SQLite database checkpoint...</i>\n"
-            "☁️ <i>Syncing continuous state to GitHub Gist...</i>\n"
-            "🚀 <i>Triggering clean session handover...</i>",
-            parse_mode=ParseMode.HTML
-        )
-    except Exception:
-        msg = target_message
-
+    global _is_handover, _manual_restart
     _is_handover = True
+    _manual_restart = manual_restart
+
     try:
         with get_db_connection() as conn:
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
@@ -3451,21 +3471,23 @@ async def perform_zero_restart_handover(target_message):
                 total_forwarded=total_forwarded_count,
                 country_counts=country_forwarded_counts,
                 base_url=client.base_url,
+                manual_restart=manual_restart,
             )
         except Exception as e:
             logger.warning(f"Handover Gist save notice: {e}")
 
-    try:
-        await msg.edit_text(
-            "✅ <b>Zero-Restart Handover State Committed!</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "🔄 <i>Session handover completed cleanly. Runner continuing seamlessly.</i>",
-            parse_mode=ParseMode.HTML
-        )
-    except Exception:
-        pass
+    if target_message:
+        try:
+            await target_message.edit_text(
+                "🔄 <b>Restarting Bot Engine...</b>\n"
+                "────────────────────────\n"
+                "✅ <i>State saved securely. Rebooting now...</i>",
+                parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            pass
 
-    logger.info("Admin triggered zero-restart handover. Exiting cleanly (code 0)...")
+    logger.info(f"Handover triggered (manual_restart={manual_restart}). Exiting cleanly (code 0)...")
     sys.exit(0)
 
 async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3477,7 +3499,7 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Direct force restart if argument passed: /restart force
     if context and context.args and context.args[0].lower() in ("force", "yes", "now"):
-        await perform_zero_restart_handover(update.effective_message)
+        await perform_zero_restart_handover(update.effective_message, manual_restart=True)
         return
 
     confirm_kb = InlineKeyboardMarkup([
@@ -3487,29 +3509,50 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     ])
     await update.effective_message.reply_text(
-        "⚠️ <b>Confirm Bot Restart</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "Are you sure you want to trigger a zero-restart session handover?\n\n"
-        "• State & forward counters will be safely saved to Cloud DB.\n"
-        "• The runner will reboot and continue OTP forwarding seamlessly.",
+        "⚠️ <b>Restart Bot Engine</b>\n"
+        "────────────────────────\n"
+        "Are you sure you want to reboot the bot engine?\n\n"
+        "• State and counters will be securely saved to Cloud memory.\n"
+        "• The bot will reboot cleanly and send you a confirmation message once online.",
         parse_mode=ParseMode.HTML,
         reply_markup=confirm_kb,
     )
 
 async def send_startup_announcement(application: Application):
     """
-    Sends startup notification to Admin private DM only on initial deployment, push, or restart.
+    Sends startup notification to Admin private DM only on initial deployment, push, or manual admin restart.
     COMPLETELY SILENT on routine 24/7 handover sessions (zero restart messages).
     """
+    global _manual_restart, _is_handover
     silent_env = os.getenv("SILENT_STARTUP", "").strip().lower() in ("true", "1", "yes")
-    if _is_handover or silent_env:
+    if silent_env:
+        logger.info("🤫 SILENT_STARTUP set: startup notification suppressed.")
+        return
+
+    # If it is a routine 24/7 handover and NOT a manual admin restart, remain silent
+    if _is_handover and not _manual_restart:
         logger.info("🤫 Automated session handover continuation: restart notification suppressed (zero-restart mode).")
         return
 
     admin_alert_enabled = os.getenv("ADMIN_STARTUP_ALERT", "false").strip().lower() in ("true", "1", "yes")
-    if not admin_alert_enabled and STARTUP_TYPE != "push":
+    if not _manual_restart and not admin_alert_enabled and STARTUP_TYPE != "push":
         logger.info("ℹ️ Bot started cleanly in silent 24/7 background mode (no admin spam).")
         return
+
+    # Reset manual_restart flag in Gist so future automated handovers remain silent
+    if _manual_restart and gist_storage.enabled:
+        _manual_restart = False
+        try:
+            await gist_storage.save_state(
+                seen_dict=seen_timestamps,
+                is_handover=_is_handover,
+                total_forwarded=total_forwarded_count,
+                country_counts=country_forwarded_counts,
+                base_url=client.base_url,
+                manual_restart=False,
+            )
+        except Exception as e:
+            logger.debug(f"Clear manual_restart notice: {e}")
 
     try:
         me = await application.bot.get_me()
@@ -3540,8 +3583,8 @@ async def send_startup_announcement(application: Application):
 async def periodic_db_cleanup_loop():
     while True:
         await asyncio.sleep(3600)  # every hour
-        cleanup_old_messages(max_age_days=7)
-        logger.info("🧹 Old OTP records cleaned up (>7 days).")
+        cleanup_old_messages(max_age_hours=28)
+        logger.info("🧹 Old OTP records cleaned up (>28 hours).")
 
 async def periodic_gist_sync_loop():
     global _gist_dirty
@@ -4096,6 +4139,18 @@ async def main():
     try:
         await application.initialize()
         await application.start()
+
+        # Check cloud Gist state at startup to identify manual restarts vs routine handovers
+        if gist_storage.enabled:
+            try:
+                await gist_storage.ensure_gist()
+                gist_state = await gist_storage.load_state()
+                if gist_state.get("manual_restart"):
+                    global _manual_restart
+                    _manual_restart = True
+            except Exception as e:
+                logger.debug(f"Initial Gist check notice: {e}")
+
         asyncio.create_task(send_startup_announcement(application))
         asyncio.create_task(poll_incoming_messages(application))
         asyncio.create_task(periodic_db_cleanup_loop())
