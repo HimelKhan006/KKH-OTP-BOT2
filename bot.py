@@ -2416,13 +2416,8 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
         f"{bottom_note}"
     )
 
-    fwd_toggle_btn = InlineKeyboardButton(
-        "⏸️ Turn OFF Forwarding" if fwd_active else "▶️ Turn ON Forwarding",
-        callback_data="toggle_forwarding"
-    )
-
     keyboard = [
-        [fwd_toggle_btn, InlineKeyboardButton("🔄 Refresh Status", callback_data="refresh_dash")],
+        [InlineKeyboardButton("🔄 Refresh Status", callback_data="refresh_dash")],
     ]
     return msg, InlineKeyboardMarkup(keyboard)
 
@@ -2459,14 +2454,14 @@ def build_forwarding_control_view() -> Tuple[str, InlineKeyboardMarkup]:
             "• <b>Group Delivery:</b> <code>ON</code> — Every new incoming OTP is delivered live to your group(s).\n"
             "• <b>Database & History:</b> <code>100% Synced</code> — Storing records in 28h rolling retention."
         )
-        toggle_btn = InlineKeyboardButton("⏸️ Turn OFF Forwarding (Silent Mode)", callback_data="fwd_disable")
+        toggle_btn = InlineKeyboardButton("⏸️ Turn OFF Forwarding (Silent Mode)", callback_data="fwd_ask_off")
     else:
         status_line = "⏸️ <b>PAUSED (Silent Mode)</b>"
         expl = (
             "• <b>Group Delivery:</b> <code>OFF</code> — No OTP messages will be sent to groups.\n"
             "• <b>Database & History:</b> <code>100% Active</code> — Bot continues polling Thirdwave API and recording every OTP into SQLite database & history."
         )
-        toggle_btn = InlineKeyboardButton("▶️ Turn ON Forwarding (Live Mode)", callback_data="fwd_enable")
+        toggle_btn = InlineKeyboardButton("▶️ Turn ON Forwarding (Live Mode)", callback_data="fwd_ask_on")
 
     msg = (
         "⚡ <b>OTP Group Forwarding Control</b>\n"
@@ -2474,13 +2469,49 @@ def build_forwarding_control_view() -> Tuple[str, InlineKeyboardMarkup]:
         f"<b>Current Status:</b> {status_line}\n\n"
         f"{expl}\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "<i>Use the button below to toggle live forwarding on or off at any time:</i>"
+        "<i>Use the button below to change live forwarding state:</i>"
     )
     kb = [
         [toggle_btn],
         [
             InlineKeyboardButton("📊 View Live Status", callback_data="refresh_dash_msg"),
         ]
+    ]
+    return msg, InlineKeyboardMarkup(kb)
+
+def build_forwarding_confirm_view(action: str) -> Tuple[str, InlineKeyboardMarkup]:
+    """Builds interactive confirmation dialog for turning forwarding ON or OFF, with Cancel option."""
+    if action == "off":
+        title = "⚠️ <b>Confirm Turn OFF Forwarding</b>"
+        body = (
+            "Are you sure you want to <b>TURN OFF</b> OTP group forwarding?\n\n"
+            "• <b>Group Delivery:</b> Will be <b>PAUSED</b> (no messages sent to Telegram groups).\n"
+            "• <b>Database & History:</b> Will remain <b>100% ACTIVE</b> (all incoming OTPs recorded silently in SQLite & 28h history).\n"
+            "• <b>Group Safety:</b> Your groups will not receive any OTPs until turned back on."
+        )
+        confirm_btn = InlineKeyboardButton("🔴 Yes, Turn OFF Forwarding", callback_data="fwd_confirm_off")
+        cancel_btn = InlineKeyboardButton("❌ Cancel (Keep Active)", callback_data="fwd_cancel")
+    else:
+        title = "⚡ <b>Confirm Turn ON Forwarding</b>"
+        body = (
+            "Are you sure you want to <b>TURN ON</b> live OTP group forwarding?\n\n"
+            "• <b>Group Delivery:</b> Will <b>RESUME</b> live to all linked Telegram groups.\n"
+            "• <b>Duplicate Shield:</b> Only <b>brand-new OTPs</b> arriving from this moment forward will be delivered.\n"
+            "• <b>Zero Spam:</b> OTPs that arrived while paused will <b>NEVER</b> be forwarded."
+        )
+        confirm_btn = InlineKeyboardButton("🟢 Yes, Turn ON Forwarding", callback_data="fwd_confirm_on")
+        cancel_btn = InlineKeyboardButton("❌ Cancel (Keep Paused)", callback_data="fwd_cancel")
+
+    msg = (
+        f"{title}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"{body}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "<i>Please confirm your choice or tap Cancel:</i>"
+    )
+    kb = [
+        [confirm_btn],
+        [cancel_btn],
     ]
     return msg, InlineKeyboardMarkup(kb)
 
@@ -3331,44 +3362,53 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         except Exception as e:
             logger.warning(f"Could not edit dashboard message on toggle: {e}")
 
+    elif query.data == "fwd_ask_off":
+        msg_text, markup = build_forwarding_confirm_view("off")
+        try:
+            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        except Exception as e:
+            logger.warning(f"Error displaying fwd_ask_off: {e}")
+
+    elif query.data == "fwd_ask_on":
+        msg_text, markup = build_forwarding_confirm_view("on")
+        try:
+            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        except Exception as e:
+            logger.warning(f"Error displaying fwd_ask_on: {e}")
+
+    elif query.data == "fwd_cancel":
+        msg_text, markup = build_forwarding_control_view()
+        try:
+            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        except Exception as e:
+            logger.warning(f"Error handling fwd_cancel: {e}")
+
+    elif query.data in ("fwd_confirm_off", "fwd_disable"):
+        set_otp_forwarding_enabled(False)
+        asyncio.create_task(sync_data_to_secret_db())
+        msg_text, markup = build_forwarding_control_view()
+        try:
+            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        except Exception as e:
+            logger.warning(f"Error handling fwd_confirm_off: {e}")
+
+    elif query.data in ("fwd_confirm_on", "fwd_enable"):
+        set_otp_forwarding_enabled(True)
+        asyncio.create_task(sync_data_to_secret_db())
+        msg_text, markup = build_forwarding_control_view()
+        try:
+            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+        except Exception as e:
+            logger.warning(f"Error handling fwd_confirm_on: {e}")
+
     elif query.data == "toggle_forwarding":
         curr = is_otp_forwarding_enabled()
-        new_state = not curr
-        set_otp_forwarding_enabled(new_state)
-        asyncio.create_task(sync_data_to_secret_db())
-        alert_msg = (
-            "🟢 OTP Forwarding is now ACTIVE!\nLive OTPs will be delivered to your Telegram group(s)."
-            if new_state else
-            "⏸️ OTP Forwarding is now PAUSED (Silent Mode)!\nOTPs will be recorded in Database & History without sending to groups."
-        )
+        target_action = "off" if curr else "on"
+        msg_text, markup = build_forwarding_confirm_view(target_action)
         try:
-            await query.answer(alert_msg, show_alert=True)
-        except Exception:
-            pass
-        try:
-            msg_text, reply_markup = build_status_dashboard()
-            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
         except Exception as e:
-            logger.warning(f"Could not edit dashboard message on toggle_forwarding: {e}")
-
-    elif query.data in ("fwd_enable", "fwd_disable"):
-        new_state = (query.data == "fwd_enable")
-        set_otp_forwarding_enabled(new_state)
-        asyncio.create_task(sync_data_to_secret_db())
-        alert_msg = (
-            "🟢 OTP Forwarding is now ACTIVE!\nLive OTPs are being forwarded to groups."
-            if new_state else
-            "⏸️ OTP Forwarding is now PAUSED!\nRecording to DB & history silently."
-        )
-        try:
-            await query.answer(alert_msg, show_alert=True)
-        except Exception:
-            pass
-        try:
-            msg_text, reply_markup = build_forwarding_control_view()
-            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
-        except Exception as e:
-            logger.warning(f"Could not edit forwarding view: {e}")
+            logger.warning(f"Error handling toggle_forwarding: {e}")
 
     elif query.data == "bot_name_help":
         await query.answer("ℹ️ Bot name is managed by the admin.", show_alert=True)
