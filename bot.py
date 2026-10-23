@@ -1489,7 +1489,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     if sms_format != "long":
         if otp_code:
             full_text = (
-                f"🎟️ <b>VERIFICATION PASS</b>\n"
+                f"🎟️ <b>OTP PASS RECEIVED</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
@@ -1499,7 +1499,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             )
         elif clean_msg:
             full_text = (
-                f"🎟️ <b>VERIFICATION PASS</b>\n"
+                f"🎟️ <b>OTP PASS RECEIVED</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
@@ -1509,7 +1509,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             )
         else:
             full_text = (
-                f"🎟️ <b>VERIFICATION PASS</b>\n"
+                f"🎟️ <b>OTP PASS RECEIVED</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
@@ -1521,7 +1521,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         otp_display = f"<code>{otp_code}</code>" if otp_code else "<i>N/A</i>"
         if clean_msg:
             full_text = (
-                f"🎟️ <b>VERIFICATION PASS</b>\n"
+                f"🎟️ <b>OTP PASS RECEIVED</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
@@ -1533,7 +1533,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             )
         else:
             full_text = (
-                f"🎟️ <b>VERIFICATION PASS</b>\n"
+                f"🎟️ <b>OTP PASS RECEIVED</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
@@ -2192,7 +2192,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>📺 Live Preview — Short:</b>\n\n"
-            "🎟️ <b>VERIFICATION PASS</b>\n"
+            "🎟️ <b>OTP PASS RECEIVED</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🏷️ <b>Service:</b> WhatsApp\n"
             "🌍 <b>Country:</b> 🇳🇵 Nepal (NP)\n"
@@ -2205,7 +2205,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
-            "🎟️ <b>VERIFICATION PASS</b>\n"
+            "🎟️ <b>OTP PASS RECEIVED</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🏷️ <b>Service:</b> WhatsApp\n"
             "🌍 <b>Country:</b> 🇳🇵 Nepal (NP)\n"
