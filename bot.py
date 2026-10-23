@@ -1523,6 +1523,9 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
 # ==========================================
 # 10. Clean OTP Notification Formatter (No Language)
 # ==========================================
+# 7 Braille blank spaces (\u2800) for exact mathematical horizontal centering inside Telegram's expandable blockquote
+EXPANDABLE_SMS_LABEL = "\u2800" * 7 + "📩 View Full SMS"
+
 def wrap_sms_for_card(text: str, width: int = 22) -> str:
     """Wraps SMS text to a compact line length (<=22 chars) to ensure cards don't stretch horizontally."""
     if not text:
@@ -1591,7 +1594,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     quote_block = ""
     if clean_msg:
         wrapped_msg = wrap_sms_for_card(clean_msg, width=28)
-        quote_block = f"\n\n<blockquote expandable>⠀\n⠀⠀📩 View Full SMS\n⠀\n⠀\n{html.escape(wrapped_msg, quote=False)}</blockquote>"
+        quote_block = f"\n\n<blockquote expandable>⠀\n{EXPANDABLE_SMS_LABEL}\n⠀\n⠀\n{html.escape(wrapped_msg, quote=False)}</blockquote>"
 
     if otp_code:
         full_text = (
@@ -2295,7 +2298,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
             f"<blockquote expandable>⠀\n"
-            f"⠀⠀📩 View Full SMS\n"
+            f"{EXPANDABLE_SMS_LABEL}\n"
             f"⠀\n"
             f"⠀\n"
             f"{sample_wrapped}</blockquote>\n\n"
