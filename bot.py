@@ -2485,8 +2485,7 @@ def build_forwarding_confirm_view(action: str) -> Tuple[str, InlineKeyboardMarku
             "Are you sure you want to pause OTP forwarding to groups?\n\n"
             "• <b>Groups:</b> Forwarding will be <b>paused</b>.\n"
             "• <b>Database:</b> OTPs continue saving silently in 28h history.\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Please confirm your choice:</i>"
+            "━━━━━━━━━━━━━━━━━━━━"
         )
         kb = [
             [
@@ -2501,8 +2500,7 @@ def build_forwarding_confirm_view(action: str) -> Tuple[str, InlineKeyboardMarku
             "Are you sure you want to resume OTP forwarding to groups?\n\n"
             "• <b>Groups:</b> Forwarding will <b>resume live</b>.\n"
             "• <b>Zero Spam:</b> Past OTPs from pause time will not be sent.\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Please confirm your choice:</i>"
+            "━━━━━━━━━━━━━━━━━━━━"
         )
         kb = [
             [
@@ -2511,6 +2509,58 @@ def build_forwarding_confirm_view(action: str) -> Tuple[str, InlineKeyboardMarku
             ]
         ]
     return msg, InlineKeyboardMarkup(kb)
+
+def build_forwarding_updated_view(action: str) -> Tuple[str, InlineKeyboardMarkup]:
+    """Builds professional status update card after forwarding state is changed."""
+    if action == "off":
+        msg = (
+            "✅ <b>OTP Group Forwarding Paused!</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "• <b>Delivery Status:</b> ⏸️ <code>PAUSED (Silent Mode)</code>\n"
+            "• <b>Telegram Groups:</b> <code>Delivery Stopped</code>\n"
+            "• <b>Database & Retention:</b> <code>100% Active (Recording Silently)</code>\n"
+            "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "<i>No OTP messages will be sent to groups. Bot continues polling and recording all incoming OTPs silently into SQLite & 28h history.</i>"
+        )
+        kb = [
+            [InlineKeyboardButton("🟢 Turn ON Forwarding", callback_data="fwd_ask_on")],
+        ]
+    else:
+        msg = (
+            "✅ <b>OTP Group Forwarding Resumed!</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "• <b>Delivery Status:</b> 🟢 <code>ACTIVE (Live Mode)</code>\n"
+            "• <b>Telegram Groups:</b> <code>Live Delivery ON</code>\n"
+            "• <b>Database & Retention:</b> <code>100% Synced (28h)</code>\n"
+            "• <b>Zero Spam Shield:</b> <code>100% Active (Pause OTPs Suppressed)</code>\n"
+            "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "<i>Live forwarding is active. Every new incoming OTP will be forwarded immediately to your linked group(s).</i>"
+        )
+        kb = [
+            [InlineKeyboardButton("⏸️ Turn OFF Forwarding", callback_data="fwd_ask_off")],
+        ]
+    return msg, InlineKeyboardMarkup(kb)
+
+def build_forwarding_cancelled_view() -> Tuple[str, InlineKeyboardMarkup]:
+    """Builds clean view when user cancels a forwarding change."""
+    is_fwd = is_otp_forwarding_enabled()
+    curr_badge = "🟢 <code>ACTIVE (Live Mode)</code>" if is_fwd else "⏸️ <code>PAUSED (Silent Mode)</code>"
+    next_btn = (
+        InlineKeyboardButton("⏸️ Turn OFF Forwarding", callback_data="fwd_ask_off")
+        if is_fwd else
+        InlineKeyboardButton("🟢 Turn ON Forwarding", callback_data="fwd_ask_on")
+    )
+    msg = (
+        "❌ <b>Action Cancelled</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Current State:</b> {curr_badge}\n\n"
+        "No changes were made. All current settings remain active.\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "<i>Tap below if you want to change state:</i>"
+    )
+    return msg, InlineKeyboardMarkup([[next_btn]])
 
 async def toggle_forwarding_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to toggle OTP forwarding to Telegram groups ON or OFF."""
@@ -3330,11 +3380,15 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer("⛔ Access Restricted: Admins only.", show_alert=True)
         return
 
-    # Instantly acknowledge callback to remove the Telegram button loading spinner
-    try:
-        await query.answer()
-    except Exception:
-        pass
+    # Acknowledge callback unless it has a dedicated toast notification
+    if query.data not in (
+        "toggle_format", "fwd_confirm_off", "fwd_disable", "fwd_confirm_on", "fwd_enable",
+        "fwd_cancel", "bot_name_help", "link_list", "link_help", "confirm_restart", "cancel_restart"
+    ):
+        try:
+            await query.answer()
+        except Exception:
+            pass
 
     if query.data == "toggle_format":
         data = load_stored_data()
@@ -3371,7 +3425,11 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             logger.warning(f"Error displaying fwd_ask_on: {e}")
 
     elif query.data == "fwd_cancel":
-        msg_text, markup = build_forwarding_control_view()
+        try:
+            await query.answer("Action Cancelled", show_alert=False)
+        except Exception:
+            pass
+        msg_text, markup = build_forwarding_cancelled_view()
         try:
             await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
         except Exception as e:
@@ -3380,7 +3438,11 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif query.data in ("fwd_confirm_off", "fwd_disable"):
         set_otp_forwarding_enabled(False)
         asyncio.create_task(sync_data_to_secret_db())
-        msg_text, markup = build_forwarding_control_view()
+        try:
+            await query.answer("⏸️ Forwarding Paused!", show_alert=False)
+        except Exception:
+            pass
+        msg_text, markup = build_forwarding_updated_view("off")
         try:
             await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
         except Exception as e:
@@ -3389,7 +3451,11 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif query.data in ("fwd_confirm_on", "fwd_enable"):
         set_otp_forwarding_enabled(True)
         asyncio.create_task(sync_data_to_secret_db())
-        msg_text, markup = build_forwarding_control_view()
+        try:
+            await query.answer("🟢 Forwarding Resumed!", show_alert=False)
+        except Exception:
+            pass
+        msg_text, markup = build_forwarding_updated_view("on")
         try:
             await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
         except Exception as e:
