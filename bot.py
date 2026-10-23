@@ -141,7 +141,7 @@ TELEGRAM_GROUP_CHAT_ID = os.getenv("TELEGRAM_GROUP_CHAT_ID", "").strip()
 SECONDARY_GROUP_CHAT_ID = os.getenv("SECONDARY_GROUP_CHAT_ID", os.getenv("TELEGRAM_SECONDARY_GROUP_CHAT_ID", "")).strip()
 MIN_FORWARDING_GROUPS: int = 1
 MAX_FORWARDING_GROUPS: int = 10
-POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "2.5"))
+POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "1.5"))
 STARTUP_TYPE          = os.getenv("STARTUP_TYPE", "workflow_dispatch").strip().lower()
 
 _admin_raw    = os.getenv("ADMIN_USER_IDS", "").strip()
@@ -1931,17 +1931,17 @@ async def poll_incoming_messages(application: Application):
                         ok = await _deliver_item(application.bot, item, dest_ids)
                         if ok:
                             total_forwarded_count += 1
-                        # Small delay so each OTP is sent as a clearly separate new message
-                        await asyncio.sleep(1.0)
+                        # Ultra-fast micro-pause so each OTP is sent as a clearly separate new message
+                        await asyncio.sleep(0.05)
 
         except (TimedOut, NetworkError) as net_err:
-            logger.warning(f"⚠️ Network hiccup: {net_err}. Retrying in 3s...")
-            await asyncio.sleep(3.0)
+            logger.warning(f"⚠️ Network hiccup: {net_err}. Retrying in 2s...")
+            await asyncio.sleep(2.0)
         except Exception as e:
-            logger.error(f"⚠️ Polling error: {e}. Continuing in 3s...")
-            await asyncio.sleep(3.0)
+            logger.error(f"⚠️ Polling error: {e}. Continuing in 2s...")
+            await asyncio.sleep(2.0)
 
-        await asyncio.sleep(max(2.0, POLL_INTERVAL_SECONDS))
+        await asyncio.sleep(max(0.5, POLL_INTERVAL_SECONDS))
 
 # ==========================================
 # 12. Bot Commands & Admin Control Panel
@@ -2853,6 +2853,12 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     if not is_user_authorized(user_id):
         await query.answer("⛔ Access Restricted: Admins only.", show_alert=True)
         return
+
+    # Instantly acknowledge callback to remove the Telegram button loading spinner
+    try:
+        await query.answer()
+    except Exception:
+        pass
 
     if query.data == "toggle_format":
         data = load_stored_data()
@@ -4073,11 +4079,18 @@ async def main():
 
     logger.info("⚡ Thirdwave SMS Wave OTP Bot starting up...")
 
-    req = HTTPXRequest(connection_pool_size=8)
+    req = HTTPXRequest(
+        connection_pool_size=16,
+        read_timeout=10.0,
+        write_timeout=10.0,
+        connect_timeout=5.0,
+        pool_timeout=2.0,
+    )
     application = (
         Application.builder()
         .token(TELEGRAM_BOT_TOKEN)
         .request(req)
+        .concurrent_updates(True)
         .build()
     )
 

@@ -39,36 +39,60 @@ jobs:
 
       - name: Cancel Any Other Running Instances
         env:
-          GH_TOKEN: ${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
+          ALT_TOKEN: ${{ secrets.GH_TOKEN || secrets.GIST_TOKEN }}
         run: |
-          curl -s -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/runs?status=in_progress&per_page=20" \
-            | python3 -c "
-          import sys, json
-          runs = json.load(sys.stdin).get('workflow_runs', [])
-          for r in runs:
-              if str(r['id']) != '${{ github.run_id }}':
-                  print(r['id'])
-          " | while read r_id; do
-            curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id/cancel" || true
+          for st in in_progress queued; do
+            curl -s -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs?status=$st&per_page=30" \
+              | python3 -c "
+            import sys, json
+            runs = json.load(sys.stdin).get('workflow_runs', [])
+            for r in runs:
+                if str(r.get('id')) != '${{ github.run_id }}':
+                    print(r['id'])
+            " | while read r_id; do
+              echo "🛑 Cancelling older run #$r_id ($st)..."
+              curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id/cancel" || true
+            done
           done
           echo "✅ Old runs cancelled."
 
       - name: Clear Old Completed Workflow History
         env:
-          GH_TOKEN: ${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
+          ALT_TOKEN: ${{ secrets.GH_TOKEN || secrets.GIST_TOKEN }}
         run: |
+          echo "⏳ Waiting 4s for cancelled runs to finalize..."
+          sleep 4
+          echo "🧹 Deleting old completed workflow run history..."
           curl -s -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/runs?status=completed&per_page=20" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs?per_page=50" \
             | python3 -c "
           import sys, json
           runs = json.load(sys.stdin).get('workflow_runs', [])
           for r in runs:
-              print(r['id'])
+              # Delete any run that is NOT the currently running one and is completed
+              if str(r.get('id')) != '${{ github.run_id }}' and r.get('status') == 'completed':
+                  print(r['id'])
           " | while read r_id; do
-            curl -s -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id" || true
+            echo "  🗑️ Deleting old run #$r_id..."
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id")
+
+            if [ "$HTTP_CODE" != "204" ] && [ -n "$ALT_TOKEN" ]; then
+              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+                -H "Authorization: Bearer $ALT_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id")
+            fi
+            echo "     Result: HTTP $HTTP_CODE"
           done
           echo "✅ History cleaned."
 
@@ -142,7 +166,7 @@ jobs:
           THIRDWAVE_BASE_URL: ${{ github.event.inputs.custom_base_url || secrets.THIRDWAVE_BASE_URL || 'https://thirdwave.im' }}
           TELEGRAM_GROUP_CHAT_ID: ${{ secrets.TELEGRAM_GROUP_CHAT_ID }}
           SECONDARY_GROUP_CHAT_ID: ${{ secrets.SECONDARY_GROUP_CHAT_ID }}
-          POLL_INTERVAL_SECONDS: ${{ secrets.POLL_INTERVAL_SECONDS || '2.5' }}
+          POLL_INTERVAL_SECONDS: ${{ secrets.POLL_INTERVAL_SECONDS || '1.5' }}
           ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN || github.token }}
@@ -162,6 +186,30 @@ jobs:
           echo "  DB Path  : $DB_FILE"
           echo "  Session  : 5h 25min (19500s) — GitHub limit: 6h"
           echo "========================================"
+
+          # Continuous background cleaner: deletes completed runs every 60s
+          (
+            CLEAN_TOKEN="${{ github.token }}"
+            CLEAN_ALT="${{ secrets.GH_TOKEN || secrets.GIST_TOKEN }}"
+            while true; do
+              sleep 60
+              curl -s -H "Authorization: Bearer $CLEAN_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/runs?per_page=50" \
+                | python3 -c "
+              import sys, json
+              runs = json.load(sys.stdin).get('workflow_runs', [])
+              for r in runs:
+                  if str(r.get('id')) != '${{ github.run_id }}' and r.get('status') == 'completed':
+                      print(r['id'])
+              " 2>/dev/null | while read r_id; do
+                DEL_RES=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE -H "Authorization: Bearer $CLEAN_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id")
+                if [ "$DEL_RES" != "204" ] && [ -n "$CLEAN_ALT" ]; then
+                  curl -s -X DELETE -H "Authorization: Bearer $CLEAN_ALT" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id" >/dev/null 2>&1 || true
+                fi
+              done
+            done
+          ) &
 
           # 19500s = 5h 25min. Leaves ~33 min for setup + cache save + self-trigger
           END_TIME=$((SECONDS + 19500))
