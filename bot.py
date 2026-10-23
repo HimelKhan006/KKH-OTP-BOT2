@@ -48,6 +48,7 @@ import asyncio
 import time
 import argparse
 import hashlib
+import textwrap
 from typing import Set, Dict, Any, List, Optional, Tuple
 from datetime import datetime, timezone, timedelta
 
@@ -1468,7 +1469,6 @@ def wrap_sms_for_card(text: str, width: int = 22) -> str:
     """Wraps SMS text to a compact line length (<=22 chars) to ensure cards don't stretch horizontally."""
     if not text:
         return ""
-    import textwrap
     lines = []
     for paragraph in str(text).splitlines():
         p = paragraph.strip()
@@ -1523,9 +1523,8 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         source = html.escape(raw_source)
 
     # Display number / fallback to country name
-    import re as _re
     num_plain     = masked_number if masked_number else country_name
-    country_plain = _re.sub(r'<[^>]+>', '', country_display).strip()
+    country_plain = re.sub(r'<[^>]+>', '', country_display).strip()
     source_plain  = html.unescape(source)
 
     clean_msg = raw_message.strip()
