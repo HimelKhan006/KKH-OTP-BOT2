@@ -1437,9 +1437,9 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     """Returns (text, otp_code, raw_message) with a fully professional layout."""
     if not sms_format:
         try:
-            sms_format = load_stored_data().get("sms_format", "long")
+            sms_format = load_stored_data().get("sms_format", "short")
         except Exception:
-            sms_format = "long"
+            sms_format = "short"
     sms_format = str(sms_format).lower().strip()
 
     raw_source    = str(item.get("sender_id") or item.get("sourceAddress") or item.get("source") or item.get("caller") or item.get("sender") or "SMS Service").strip()
@@ -1505,9 +1505,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"<blockquote expandable>📩 <b>View Full SMS</b>\n"
-                f"\u200b\n\u200b\n"
-                f"{html.escape(clean_msg, quote=False)}</blockquote>"
+                f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
         else:
             full_text = (
@@ -1530,9 +1528,8 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"📱 <b>Number:</b> {num_plain}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🔑 <b>PASSCODE:</b> {otp_display}\n\n"
-                f"<blockquote expandable>📩 <b>View Full SMS</b>\n"
-                f"\u200b\n\u200b\n"
-                f"{html.escape(clean_msg, quote=False)}</blockquote>"
+                f"💬 <b>Message Content:</b>\n"
+                f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
             )
         else:
             full_text = (
@@ -1606,7 +1603,7 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
     """Formats and sends one OTP item to the Telegram Group. Returns True if sent successfully."""
     mid        = str(item.get("id") or "").strip()
     data       = load_stored_data()
-    sms_format = data.get("sms_format", "long")
+    sms_format = data.get("sms_format", "short")
     formatted_text, otp, raw_msg = format_otp_notification(item, sms_format=sms_format)
     sent_to_any = False
 
@@ -2002,7 +1999,7 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     # Format & Link button status
     data = load_stored_data()
     active_bot_name = get_bot_name()
-    active_format = data.get("sms_format", "long")
+    active_format = data.get("sms_format", "short")
     fmt_label = "Short (Modern ⚡)" if active_format == "short" else "Long (Detailed 📜)"
 
     custom_buttons = get_custom_link_buttons()
@@ -2175,7 +2172,7 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, InlineKeyboardMarkup]:
     """Builds interactive configuration & live preview panel for SMS delivery format."""
     data = load_stored_data()
-    curr_fmt = data.get("sms_format", "long")
+    curr_fmt = data.get("sms_format", "short")
 
     short_active = "✅ (Active)" if curr_fmt == "short" else "⚪"
     long_active  = "✅ (Active)" if curr_fmt == "long" else "⚪"
@@ -2188,7 +2185,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         f"• <b>Short</b> {short_active}\n"
         "  Compact card with From / To / OTP highlighted. Ideal for fast reading.\n\n"
         f"• <b>Long</b> {long_active}\n"
-        "  Full card with collapsible '📩 View Full SMS' body. Tap to expand/collapse.\n"
+        "  Full card including expandable message body for complete SMS context.\n"
     )
 
     if preview_mode == "short":
@@ -2215,9 +2212,8 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "📱 <b>Number:</b> +977980****456\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
-            "<blockquote expandable>📩 <b>View Full SMS</b>\n"
-            "\u200b\n\u200b\n"
-            "Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n\n"
+            "💬 <b>Message Content:</b>\n"
+            "<blockquote expandable>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n\n"
             "<i>Buttons: [ 492810 ] [ Number Bot ]</i>"
         )
     else:
@@ -2868,7 +2864,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     if query.data == "toggle_format":
         data = load_stored_data()
-        curr = str(data.get("sms_format", "long")).lower().strip()
+        curr = str(data.get("sms_format", "short")).lower().strip()
         new_fmt = "long" if curr == "short" else "short"
         data["sms_format"] = new_fmt
         save_stored_data(data)
