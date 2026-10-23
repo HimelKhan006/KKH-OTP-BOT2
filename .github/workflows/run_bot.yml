@@ -14,8 +14,8 @@ on:
         required: false
         default: 'false'
   schedule:
-    # Backup safety net — fires every 6h if self-trigger ever fails
-    - cron: '0 */6 * * *'
+    # Backup safety net — fires every 5h if self-trigger ever delays
+    - cron: '0 */5 * * *'
 
 # Only ONE bot instance ever runs. New run cancels the old one instantly so updates apply immediately!
 concurrency:
