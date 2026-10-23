@@ -1534,7 +1534,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     quote_block = ""
     if clean_msg:
         wrapped_msg = wrap_sms_for_card(clean_msg, width=28)
-        quote_block = f"\n\n<blockquote expandable>📩 <b>View Full SMS</b>\n⠀\n⠀\n{html.escape(wrapped_msg, quote=False)}</blockquote>"
+        quote_block = f"\n\n<blockquote expandable>📩 <b>View Full SMS</b>\n<tg-spoiler>{html.escape(wrapped_msg, quote=False)}</tg-spoiler></blockquote>"
 
     if otp_code:
         full_text = (
@@ -2238,9 +2238,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
             f"<blockquote expandable>📩 <b>View Full SMS</b>\n"
-            f"⠀\n"
-            f"⠀\n"
-            f"{sample_wrapped}</blockquote>\n\n"
+            f"<tg-spoiler>{sample_wrapped}</tg-spoiler></blockquote>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
     else:
