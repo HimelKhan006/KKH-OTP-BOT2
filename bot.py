@@ -3487,11 +3487,17 @@ async def perform_zero_restart_handover(target_message=None, manual_restart: boo
             await target_message.edit_text(
                 "🔄 <b>Restarting Bot Engine...</b>\n"
                 "────────────────────────\n"
-                "✅ <i>State saved securely. Rebooting now...</i>",
+                "✅ <i>State saved securely. Starting new server session now...</i>",
                 parse_mode=ParseMode.HTML
             )
         except Exception:
             pass
+
+    # Proactively dispatch the new GitHub Actions workflow run session
+    try:
+        await trigger_proactive_handover()
+    except Exception as e:
+        logger.warning(f"Admin restart dispatch notice: {e}")
 
     logger.info(f"Handover triggered (manual_restart={manual_restart}). Exiting cleanly (code 0)...")
     sys.exit(0)

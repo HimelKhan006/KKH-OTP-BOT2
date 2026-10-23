@@ -169,7 +169,7 @@ jobs:
           POLL_INTERVAL_SECONDS: ${{ secrets.POLL_INTERVAL_SECONDS || '1.5' }}
           ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          GH_TOKEN: ${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
           GIST_ID: ${{ secrets.GIST_ID }}
           STARTUP_TYPE: ${{ github.event_name }}
@@ -232,20 +232,15 @@ jobs:
             fi
 
             if [ $EXIT_CODE -eq 0 ]; then
-              if [ $REMAINING -lt 120 ]; then
-                echo "✅ Session window complete (~5h 25m). Handing over to next runner."
-                break
-              fi
-              echo "🔄 Admin restart triggered: rebooting bot process immediately in 2s..."
-              sleep 2
-              continue
+              echo "✅ Clean session handover (exit 0). Handing off to next workflow runner session..."
+              break
             fi
 
             echo "⚠️ [$(date -u +'%Y-%m-%d %H:%M:%S UTC')] Bot stopped (exit: $EXIT_CODE). Restarting in 3s..."
             sleep 3
           done
 
-          echo "⏱️ 5h 25min session complete. Saving database and self-triggering next run..."
+          echo "⏱️ Session complete. Saving database and triggering new runner session..."
 
       # ─────────────────────────────────────────────────────────────────
       # Save the OTP database BEFORE runner is destroyed so next run restores it
@@ -263,8 +258,8 @@ jobs:
       - name: Self-Trigger Next Run (Zero Downtime Restart)
         if: always()
         env:
-          GH_TOKEN: ${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN || github.token }}
-          GIST_TOKEN: ${{ secrets.GIST_TOKEN || secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          ALT_TOKEN: ${{ secrets.GH_TOKEN || secrets.GIST_TOKEN }}
         run: |
           echo "🔄 Triggering next bot session immediately to avoid downtime..."
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
@@ -274,10 +269,10 @@ jobs:
             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/run_bot.yml/dispatches" \
             -d '{"ref":"main","inputs":{"is_handover":"true"}}')
 
-          if [ "$HTTP_CODE" != "204" ] && [ -n "$GIST_TOKEN" ]; then
+          if [ "$HTTP_CODE" != "204" ] && [ -n "$ALT_TOKEN" ]; then
             echo "ℹ️ Retrying with auxiliary token..."
             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-              -H "Authorization: Bearer $GIST_TOKEN" \
+              -H "Authorization: Bearer $ALT_TOKEN" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "https://api.github.com/repos/${{ github.repository }}/actions/workflows/run_bot.yml/dispatches" \
@@ -285,7 +280,7 @@ jobs:
           fi
 
           if [ "$HTTP_CODE" = "204" ]; then
-            echo "✅ Next run triggered! Bot continues without downtime."
+            echo "✅ Next run triggered! Bot continues with new server session."
           else
-            echo "⚠️ Self-trigger returned HTTP $HTTP_CODE (cron will pick up as backup)."
+            echo "⚠️ Self-trigger returned HTTP $HTTP_CODE (backup cron will pick up)."
           fi
