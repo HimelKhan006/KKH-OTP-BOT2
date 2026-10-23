@@ -4090,18 +4090,21 @@ async def trigger_proactive_handover() -> bool:
     and installs packages while THIS current bot continues forwarding live OTPs!
     """
     repo = os.getenv("GITHUB_REPOSITORY", "").strip()
-    token = os.getenv("GH_TOKEN", "").strip() or os.getenv("GIST_TOKEN", "").strip()
-    if not repo or not token:
-        logger.info("ℹ️ Proactive handover dispatch skipped (no GITHUB_REPOSITORY or GH_TOKEN).")
+    if not repo:
+        logger.info("ℹ️ Proactive handover dispatch skipped (no GITHUB_REPOSITORY).")
+        return False
+
+    candidate_tokens: List[str] = []
+    # Prioritize user's Personal Access Token (GIST_TOKEN) which has full workflow dispatch rights
+    for t in [os.getenv("GIST_TOKEN", "").strip(), os.getenv("GH_TOKEN", "").strip()]:
+        if t and t not in candidate_tokens:
+            candidate_tokens.append(t)
+
+    if not candidate_tokens:
+        logger.info("ℹ️ Proactive handover dispatch skipped (no GIST_TOKEN or GH_TOKEN).")
         return False
 
     url = f"https://api.github.com/repos/{repo}/actions/workflows/run_bot.yml/dispatches"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "ThirdwaveSMSWaveOTPBot",
-    }
     payload = {
         "ref": "main",
         "inputs": {"is_handover": "true"},
@@ -4109,12 +4112,19 @@ async def trigger_proactive_handover() -> bool:
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as hclient:
-            res = await hclient.post(url, headers=headers, json=payload)
-            if res.status_code in (204, 201, 200):
-                logger.info("🚀 [PROACTIVE HANDOVER] Next runner triggered in advance! Transition will have 0s downtime.")
-                return True
-            else:
-                logger.warning(f"⚠️ Proactive handover dispatch returned HTTP {res.status_code}: {res.text[:100]}")
+            for token in candidate_tokens:
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "User-Agent": "ThirdwaveSMSWaveOTPBot",
+                }
+                res = await hclient.post(url, headers=headers, json=payload)
+                if res.status_code in (204, 201, 200):
+                    logger.info("🚀 [PROACTIVE HANDOVER] Next runner triggered in advance! Transition will have 0s downtime.")
+                    return True
+                else:
+                    logger.warning(f"⚠️ Proactive handover with token ({token[:6]}...) returned HTTP {res.status_code}: {res.text[:100]}")
     except Exception as e:
         logger.warning(f"⚠️ Proactive handover dispatch error: {e}")
     return False
