@@ -3459,16 +3459,13 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Incoming OTPs continue recording silently in SQLite & 28h history. Groups will not receive forwards until turned back on.</i>"
         )
-        off_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🟢 Turn ON Forwarding", callback_data="fwd_ask_on")]
-        ])
         try:
-            await query.edit_message_text(off_text, parse_mode=ParseMode.HTML, reply_markup=off_kb)
+            await query.edit_message_text(off_text, parse_mode=ParseMode.HTML, reply_markup=None)
         except Exception as e:
             logger.warning(f"Error handling confirm_fwd_off edit: {e}")
             try:
                 if query.message:
-                    await query.message.reply_text(off_text, parse_mode=ParseMode.HTML, reply_markup=off_kb)
+                    await query.message.reply_text(off_text, parse_mode=ParseMode.HTML)
             except Exception as e2:
                 logger.warning(f"Fallback reply for confirm_fwd_off failed: {e2}")
         asyncio.create_task(sync_data_to_secret_db())
@@ -3486,16 +3483,13 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Live forwarding is active. Every new incoming OTP is delivered to your group(s) in real time.</i>"
         )
-        on_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⏸️ Turn OFF Forwarding", callback_data="fwd_ask_off")]
-        ])
         try:
-            await query.edit_message_text(on_text, parse_mode=ParseMode.HTML, reply_markup=on_kb)
+            await query.edit_message_text(on_text, parse_mode=ParseMode.HTML, reply_markup=None)
         except Exception as e:
             logger.warning(f"Error handling confirm_fwd_on edit: {e}")
             try:
                 if query.message:
-                    await query.message.reply_text(on_text, parse_mode=ParseMode.HTML, reply_markup=on_kb)
+                    await query.message.reply_text(on_text, parse_mode=ParseMode.HTML)
             except Exception as e2:
                 logger.warning(f"Fallback reply for confirm_fwd_on failed: {e2}")
         asyncio.create_task(sync_data_to_secret_db())
@@ -3503,25 +3497,19 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif query.data in ("cancel_fwd", "fwd_cancel"):
         is_fwd = is_otp_forwarding_enabled()
         status_text = "🟢 <b>ACTIVE (Live Mode)</b>" if is_fwd else "⏸️ <b>PAUSED (Silent Mode)</b>"
-        next_action_btn = (
-            InlineKeyboardButton("⏸️ Turn OFF Forwarding", callback_data="fwd_ask_off")
-            if is_fwd else
-            InlineKeyboardButton("🟢 Turn ON Forwarding", callback_data="fwd_ask_on")
-        )
         cancel_text = (
             "❌ <b>Forwarding Change Cancelled</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             f"• <b>Current State:</b> {status_text}\n"
             "No changes were made to forwarding settings."
         )
-        cancel_kb = InlineKeyboardMarkup([[next_action_btn]])
         try:
-            await query.edit_message_text(cancel_text, parse_mode=ParseMode.HTML, reply_markup=cancel_kb)
+            await query.edit_message_text(cancel_text, parse_mode=ParseMode.HTML, reply_markup=None)
         except Exception as e:
             logger.warning(f"Error handling cancel_fwd edit: {e}")
             try:
                 if query.message:
-                    await query.message.reply_text(cancel_text, parse_mode=ParseMode.HTML, reply_markup=cancel_kb)
+                    await query.message.reply_text(cancel_text, parse_mode=ParseMode.HTML)
             except Exception as e2:
                 logger.warning(f"Fallback reply for cancel_fwd failed: {e2}")
 
