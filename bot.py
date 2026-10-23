@@ -433,7 +433,6 @@ GIST_ID    = os.getenv("GIST_ID", os.getenv("GITHUB_GIST_ID", "")).strip()
 GIST_TOKEN = os.getenv("GIST_TOKEN", os.getenv("GH_TOKEN", os.getenv("GITHUB_TOKEN", ""))).strip()
 seen_message_ids: Set[str] = set()
 seen_timestamps: Dict[str, float] = {}
-_SMS_MSG_CACHE: Dict[str, str] = {}
 _gist_dirty: bool = False
 _is_handover: bool = os.getenv("IS_HANDOVER", "false").strip().lower() in ("true", "1", "yes")
 _manual_restart: bool = False
@@ -1438,9 +1437,9 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     """Returns (text, otp_code, raw_message) with a fully professional layout."""
     if not sms_format:
         try:
-            sms_format = load_stored_data().get("sms_format", "short")
+            sms_format = load_stored_data().get("sms_format", "long")
         except Exception:
-            sms_format = "short"
+            sms_format = "long"
     sms_format = str(sms_format).lower().strip()
 
     raw_source    = str(item.get("sender_id") or item.get("sourceAddress") or item.get("source") or item.get("caller") or item.get("sender") or "SMS Service").strip()
@@ -1506,7 +1505,9 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
+                f"<blockquote expandable>📩 <b>View Full SMS</b>\n"
+                f"\u200b\n\u200b\n"
+                f"{html.escape(clean_msg, quote=False)}</blockquote>"
             )
         else:
             full_text = (
@@ -1529,8 +1530,9 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
                 f"📱 <b>Number:</b> {num_plain}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🔑 <b>PASSCODE:</b> {otp_display}\n\n"
-                f"💬 <b>Message Content:</b>\n"
-                f"<blockquote expandable>{html.escape(clean_msg, quote=False)}</blockquote>"
+                f"<blockquote expandable>📩 <b>View Full SMS</b>\n"
+                f"\u200b\n\u200b\n"
+                f"{html.escape(clean_msg, quote=False)}</blockquote>"
             )
         else:
             full_text = (
@@ -1603,25 +1605,12 @@ def _get_otp_dest_ids() -> Set[int]:
 async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> bool:
     """Formats and sends one OTP item to the Telegram Group. Returns True if sent successfully."""
     mid        = str(item.get("id") or "").strip()
-    if not mid:
-        raw_num = str(item.get("number") or item.get("destinationNumber") or "")
-        sig = f"{raw_num}_{str(item.get('sms') or '')}_{time.time()}"
-        mid = hashlib.sha256(sig.encode("utf-8")).hexdigest()[:20]
-        item["id"] = mid
-
     data       = load_stored_data()
-    sms_format = data.get("sms_format", "short")
+    sms_format = data.get("sms_format", "long")
     formatted_text, otp, raw_msg = format_otp_notification(item, sms_format=sms_format)
     sent_to_any = False
 
-    clean_msg = raw_msg.strip()
-    if clean_msg and mid:
-        _SMS_MSG_CACHE[mid] = clean_msg
-        if len(_SMS_MSG_CACHE) > 5000:
-            for k in list(_SMS_MSG_CACHE.keys())[:1000]:
-                _SMS_MSG_CACHE.pop(k, None)
-
-    # Build inline buttons: OTP code button + optional Admin Custom Link buttons + Full SMS popup
+    # Build inline buttons: OTP code button + optional Admin Custom Link buttons (side-by-side)
     markup = None
     buttons = []
     try:
@@ -1636,33 +1625,25 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
                     custom_btns.append(InlineKeyboardButton(b_text, url=norm_u))
 
         otp_btn = InlineKeyboardButton(otp, copy_text=CopyTextButton(text=otp)) if otp else None
-        sms_btn = InlineKeyboardButton("📩 View Full SMS", callback_data=f"vsms_{mid}") if clean_msg else None
 
         if otp_btn and custom_btns:
-            # Show OTP button side-by-side with custom link button(s) in row 1
+            # Show OTP button side-by-side with custom link button(s) in the same row!
             if len(custom_btns) <= 2:
+                # 1 OTP + up to 2 custom buttons: all in 1 row side-by-side!
                 buttons.append([otp_btn] + custom_btns)
             else:
+                # 1 OTP + 1st custom button on row 1, rest in pairs below
                 buttons.append([otp_btn, custom_btns[0]])
                 for i in range(1, len(custom_btns), 2):
                     buttons.append(custom_btns[i:i+2])
-            if sms_btn:
-                buttons.append([sms_btn])
         elif otp_btn:
-            if sms_btn:
-                buttons.append([otp_btn, sms_btn])
-            else:
-                buttons.append([otp_btn])
+            buttons.append([otp_btn])
         elif custom_btns:
             if len(custom_btns) <= 3:
                 buttons.append(custom_btns)
             else:
                 for i in range(0, len(custom_btns), 2):
                     buttons.append(custom_btns[i:i+2])
-            if sms_btn:
-                buttons.append([sms_btn])
-        elif sms_btn:
-            buttons.append([sms_btn])
 
         if buttons:
             markup = InlineKeyboardMarkup(buttons)
@@ -2021,7 +2002,7 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     # Format & Link button status
     data = load_stored_data()
     active_bot_name = get_bot_name()
-    active_format = data.get("sms_format", "short")
+    active_format = data.get("sms_format", "long")
     fmt_label = "Short (Modern ⚡)" if active_format == "short" else "Long (Detailed 📜)"
 
     custom_buttons = get_custom_link_buttons()
@@ -2194,7 +2175,7 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, InlineKeyboardMarkup]:
     """Builds interactive configuration & live preview panel for SMS delivery format."""
     data = load_stored_data()
-    curr_fmt = data.get("sms_format", "short")
+    curr_fmt = data.get("sms_format", "long")
 
     short_active = "✅ (Active)" if curr_fmt == "short" else "⚪"
     long_active  = "✅ (Active)" if curr_fmt == "long" else "⚪"
@@ -2205,9 +2186,9 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         f"🟢 <b>Active Mode:</b>   <code>{'Short ⚡' if curr_fmt == 'short' else 'Long 📜'}</code>\n\n"
         "<b>Available Modes:</b>\n"
         f"• <b>Short</b> {short_active}\n"
-        "  Compact card + [ 📩 View Full SMS ] button. Zero quote box, exact short card size.\n\n"
+        "  Compact card with From / To / OTP highlighted. Ideal for fast reading.\n\n"
         f"• <b>Long</b> {long_active}\n"
-        "  Full card including expandable message body for complete SMS context.\n"
+        "  Full card with collapsible '📩 View Full SMS' body. Tap to expand/collapse.\n"
     )
 
     if preview_mode == "short":
@@ -2221,7 +2202,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "📱 <b>Number:</b> +977980****456\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
-            "<i>Buttons: [ 492810 ] [ GET NUMBER ↗ ]\n[ 📩 View Full SMS ]</i>"
+            "<i>Buttons: [ 492810 ] [ Number Bot ]</i>"
         )
     elif preview_mode == "long":
         msg += (
@@ -2234,8 +2215,9 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "📱 <b>Number:</b> +977980****456\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
-            "💬 <b>Message Content:</b>\n"
-            "<blockquote expandable>Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n\n"
+            "<blockquote expandable>📩 <b>View Full SMS</b>\n"
+            "\u200b\n\u200b\n"
+            "Your WhatsApp verification code is 492-810. Do not share this code with anyone.</blockquote>\n\n"
             "<i>Buttons: [ 492810 ] [ Number Bot ]</i>"
         )
     else:
@@ -2873,38 +2855,6 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     if not query:
         return
-
-    # Handle View Full SMS callback query from ANY group member or channel reader
-    if query.data and query.data.startswith("vsms_"):
-        msg_id = query.data[len("vsms_"):].strip()
-        full_msg = _SMS_MSG_CACHE.get(msg_id)
-        if not full_msg:
-            try:
-                with get_db_connection() as conn:
-                    cur = conn.execute("SELECT raw_message FROM processed_otps WHERE id = ? LIMIT 1;", (msg_id,))
-                    row = cur.fetchone()
-                    if row and row[0]:
-                        full_msg = str(row[0]).strip()
-            except Exception as e:
-                logger.warning(f"Error fetching raw_message for vsms_{msg_id}: {e}")
-
-        if full_msg:
-            # Telegram show_alert text limit is 200 characters
-            display_text = full_msg if len(full_msg) <= 200 else (full_msg[:197] + "...")
-            try:
-                await query.answer(display_text, show_alert=True)
-            except Exception:
-                try:
-                    await query.answer("Full message loaded", show_alert=False)
-                except Exception:
-                    pass
-        else:
-            try:
-                await query.answer("ℹ️ Full message not found or expired.", show_alert=True)
-            except Exception:
-                pass
-        return
-
     user_id = query.from_user.id if query.from_user else 0
     if not is_user_authorized(user_id):
         await query.answer("⛔ Access Restricted: Admins only.", show_alert=True)
@@ -2918,7 +2868,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     if query.data == "toggle_format":
         data = load_stored_data()
-        curr = str(data.get("sms_format", "short")).lower().strip()
+        curr = str(data.get("sms_format", "long")).lower().strip()
         new_fmt = "long" if curr == "short" else "short"
         data["sms_format"] = new_fmt
         save_stored_data(data)
