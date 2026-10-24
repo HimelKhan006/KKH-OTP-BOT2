@@ -1767,8 +1767,8 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
 # 10. Clean OTP Notification Formatter (No Language)
 # Professional label matching the card's icon alignment (column 0)
 EXPANDABLE_SMS_LABEL = "📩 <b>View Full SMS:</b>"
-# Centered collapsed hint without icon (8 Braille spaces for optical horizontal centering)
-COLLAPSED_SMS_HINT = "\u2800" * 8 + "<b>Tap to read...</b>"
+# Centered collapsed hint without icon (exact optical balance between left bar and quote mark)
+COLLAPSED_SMS_HINT = "\u2800" * 6 + " " + "<b>Tap to read...</b>"
 
 def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 28) -> str:
     """
