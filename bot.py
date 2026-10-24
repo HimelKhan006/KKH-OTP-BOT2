@@ -1772,6 +1772,7 @@ def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 28) -> str:
     """
     Wraps SMS lines cleanly and highlights ONLY the OTP code inside a copyable <code> tag,
     leaving the rest of the SMS as plain text so tapping copies ONLY the OTP code.
+    Handles exact match, hyphenated variations (e.g. 492-810 vs 492810), and spaced variations.
     """
     if not msg:
         return ""
@@ -1785,12 +1786,21 @@ def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 28) -> str:
     wrapped = "\n".join(lines)
     escaped = html.escape(wrapped, quote=False)
     if otp:
-        esc_otp = html.escape(otp.strip(), quote=False)
+        raw_otp = otp.strip()
+        esc_otp = html.escape(raw_otp, quote=False)
         if esc_otp and esc_otp in escaped:
             escaped = escaped.replace(esc_otp, f"<code>{esc_otp}</code>", 1)
-        elif esc_otp.replace("-", "") in escaped:
-            raw_c = esc_otp.replace("-", "")
-            escaped = escaped.replace(raw_c, f"<code>{raw_c}</code>", 1)
+        else:
+            digits = re.sub(r'\D', '', raw_otp)
+            if digits and len(digits) >= 3:
+                pattern = re.compile(r'\b' + r'[-\s]?'.join(re.escape(d) for d in digits) + r'\b')
+                m = pattern.search(escaped)
+                if m:
+                    matched_str = m.group(0)
+                    escaped = escaped[:m.start()] + f"<code>{matched_str}</code>" + escaped[m.end():]
+                elif esc_otp.replace("-", "") in escaped:
+                    raw_c = esc_otp.replace("-", "")
+                    escaped = escaped.replace(raw_c, f"<code>{raw_c}</code>", 1)
     return escaped
 
 def wrap_sms_for_card(text: str, width: int = 22) -> str:
@@ -2737,7 +2747,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "📱 <b>Number:</b> +977980****456\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
-            f"\n\n{EXPANDABLE_SMS_LABEL}\n"
+            f"{EXPANDABLE_SMS_LABEL}\n"
             f"<blockquote expandable>💬 <b>Tap to read full SMS...</b>\n"
             f"⠀\n"
             f"⠀\n"
