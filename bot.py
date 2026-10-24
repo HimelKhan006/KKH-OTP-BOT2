@@ -1869,9 +1869,9 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
 
     clean_msg = raw_message.strip()
 
-    # Expandable quote block: completely hidden until expanded, with only OTP code copyable
+    # Expandable quote block: only included in Long format
     quote_block = ""
-    if clean_msg:
+    if sms_format != "short" and clean_msg:
         styled_sms = style_sms_with_copyable_otp(clean_msg, otp_code, width=28)
         quote_block = (
             f"\n\n{EXPANDABLE_SMS_LABEL}\n"
@@ -1895,15 +1895,26 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             f"{quote_block}"
         )
     elif clean_msg:
-        full_text = (
-            f"🎟️ <b>VERIFICATION PASS</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🏷️ <b>Service:</b> {source_plain}\n"
-            f"🌍 <b>Country:</b> {country_plain}\n"
-            f"📱 <b>Number:</b> {num_plain}\n"
-            f"━━━━━━━━━━━━━━━━━━━━"
-            f"{quote_block}"
-        )
+        if sms_format == "short":
+            full_text = (
+                f"🎟️ <b>VERIFICATION PASS</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🏷️ <b>Service:</b> {source_plain}\n"
+                f"🌍 <b>Country:</b> {country_plain}\n"
+                f"📱 <b>Number:</b> {num_plain}\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🔑 <b>PASSCODE:</b> <i>See full SMS</i>"
+            )
+        else:
+            full_text = (
+                f"🎟️ <b>VERIFICATION PASS</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🏷️ <b>Service:</b> {source_plain}\n"
+                f"🌍 <b>Country:</b> {country_plain}\n"
+                f"📱 <b>Number:</b> {num_plain}\n"
+                f"━━━━━━━━━━━━━━━━━━━━"
+                f"{quote_block}"
+            )
     else:
         full_text = (
             f"🎟️ <b>VERIFICATION PASS</b>\n"
