@@ -1769,6 +1769,8 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
 EXPANDABLE_SMS_LABEL = "📩 <b>View Full SMS:</b>"
 # Centered collapsed hint without icon (exact optical balance between left bar and quote mark)
 COLLAPSED_SMS_HINT = "\u2800" * 6 + " " + "<b>Tap to read...</b>"
+# Symmetrical card divider (22 characters) to ensure Short & Long format cards have identical horizontal width
+CARD_DIVIDER = "━" * 22
 
 def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 28) -> str:
     """
@@ -1878,7 +1880,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             f"<blockquote expandable>⠀\n"
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"{CARD_DIVIDER}\n"
             f"💬 <b>SMS Content:</b>\n"
             f"{styled_sms}</blockquote>"
         )
@@ -1886,11 +1888,11 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     if otp_code:
         full_text = (
             f"🎟️ <b>VERIFICATION PASS</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"{CARD_DIVIDER}\n"
             f"🏷️ <b>Service:</b> {source_plain}\n"
             f"🌍 <b>Country:</b> {country_plain}\n"
             f"📱 <b>Number:</b> {num_plain}\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"{CARD_DIVIDER}\n"
             f"🔑 <b>PASSCODE:</b> <code>{otp_code}</code>"
             f"{quote_block}"
         )
@@ -1898,27 +1900,27 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         if sms_format == "short":
             full_text = (
                 f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"{CARD_DIVIDER}\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"{CARD_DIVIDER}\n"
                 f"🔑 <b>PASSCODE:</b> <i>See full SMS</i>"
             )
         else:
             full_text = (
                 f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"{CARD_DIVIDER}\n"
                 f"🏷️ <b>Service:</b> {source_plain}\n"
                 f"🌍 <b>Country:</b> {country_plain}\n"
                 f"📱 <b>Number:</b> {num_plain}\n"
-                f"━━━━━━━━━━━━━━━━━━━━"
+                f"{CARD_DIVIDER}"
                 f"{quote_block}"
             )
     else:
         full_text = (
             f"🎟️ <b>VERIFICATION PASS</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"{CARD_DIVIDER}\n"
             f"🏷️ <b>Service:</b> {source_plain}\n"
             f"🌍 <b>Country:</b> {country_plain}\n"
             f"📱 <b>Number:</b> {num_plain}"
@@ -2737,14 +2739,14 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
 
     if preview_mode == "short":
         msg += (
-            "\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Short:</b>\n\n"
             "🎟️ <b>VERIFICATION PASS</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"{CARD_DIVIDER}\n"
             "🏷️ <b>Service:</b> WhatsApp\n"
             "🌍 <b>Country:</b> 🇳🇵 Nepal (NP)\n"
             "📱 <b>Number:</b> +977980****456\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"{CARD_DIVIDER}\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
@@ -2752,20 +2754,20 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         sample_sms = "Your WhatsApp verification code is 492-810. Do not share this code with anyone."
         styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=28)
         msg += (
-            "\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
             "🎟️ <b>VERIFICATION PASS</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"{CARD_DIVIDER}\n"
             "🏷️ <b>Service:</b> WhatsApp\n"
             "🌍 <b>Country:</b> 🇳🇵 Nepal (NP)\n"
             "📱 <b>Number:</b> +977980****456\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"{CARD_DIVIDER}\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
             f"{EXPANDABLE_SMS_LABEL}\n"
             f"<blockquote expandable>⠀\n"
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"{CARD_DIVIDER}\n"
             f"💬 <b>SMS Content:</b>\n"
             f"{styled_sample}</blockquote>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
