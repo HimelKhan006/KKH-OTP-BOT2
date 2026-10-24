@@ -167,26 +167,57 @@ logger = logging.getLogger("OTPWAVE")
 _STORED_DATA_CACHE: Dict[str, Any] = {}
 
 def _load_settings_from_sqlite() -> dict:
+    """
+    Loads all bot configuration settings from the permanent SQLite database (bot_settings table).
+    Reads the base bot_data JSON document and merges all individual key-value rows.
+    """
+    result = {}
     try:
         if os.path.exists(DB_FILE):
-            conn = sqlite3.connect(DB_FILE, timeout=10.0)
+            conn = sqlite3.connect(DB_FILE, timeout=30.0)
+            conn.row_factory = sqlite3.Row
             try:
+                conn.execute("PRAGMA busy_timeout = 30000;")
+                cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bot_settings';")
+                if not cur.fetchone():
+                    return {}
+                # 1. Base configuration document
                 cur = conn.execute("SELECT value FROM bot_settings WHERE key = 'bot_data' LIMIT 1;")
                 row = cur.fetchone()
-                if row and row[0]:
-                    loaded = json.loads(row[0])
-                    if isinstance(loaded, dict) and loaded:
-                        return loaded
+                if row and row["value"]:
+                    try:
+                        parsed = json.loads(row["value"])
+                        if isinstance(parsed, dict):
+                            result.update(parsed)
+                    except Exception:
+                        pass
+                # 2. Overlay all individual key-value rows for real-time fidelity
+                cur = conn.execute("SELECT key, value FROM bot_settings WHERE key != 'bot_data';")
+                for r in cur.fetchall():
+                    k = r["key"]
+                    v = r["value"]
+                    if v is None:
+                        continue
+                    val_str = str(v).strip()
+                    try:
+                        result[k] = json.loads(val_str)
+                    except Exception:
+                        result[k] = val_str
             finally:
                 conn.close()
-    except Exception:
-        pass
-    return {}
+    except Exception as e:
+        logger.warning(f"Error loading settings from SQLite: {e}")
+    return result
 
 def _save_settings_to_sqlite(data: dict):
+    """
+    Saves all bot configuration settings permanently to the SQLite database (bot_settings table).
+    Stores both the consolidated JSON document and individual key-value rows.
+    """
     try:
-        conn = sqlite3.connect(DB_FILE, timeout=10.0)
+        conn = sqlite3.connect(DB_FILE, timeout=30.0)
         try:
+            conn.execute("PRAGMA busy_timeout = 30000;")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS bot_settings (
                     key         TEXT PRIMARY KEY,
@@ -195,40 +226,59 @@ def _save_settings_to_sqlite(data: dict):
                 );
             """)
             conn.execute(
-                "INSERT OR REPLACE INTO bot_settings (key, value, updated_at) VALUES ('bot_data', ?, datetime('now'));",
+                "INSERT OR REPLACE INTO bot_settings (key, value, updated_at) VALUES ('bot_data', ?, CURRENT_TIMESTAMP);",
                 (json.dumps(data),)
             )
+            for k, v in data.items():
+                if v is None:
+                    continue
+                val_str = json.dumps(v) if isinstance(v, (dict, list, bool)) else str(v)
+                conn.execute(
+                    "INSERT OR REPLACE INTO bot_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP);",
+                    (k, val_str)
+                )
             conn.commit()
+            try:
+                conn.execute("PRAGMA wal_checkpoint(PASSIVE);")
+            except Exception:
+                pass
         finally:
             conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Error saving settings to SQLite: {e}")
 
 def load_stored_data() -> dict:
+    """
+    Loads bot settings. SQLite persistent database is ALWAYS authoritative first.
+    Falls back to bot_data.json only for fresh initial boots, and syncs immediately to SQLite.
+    """
     global _STORED_DATA_CACHE
     if not _STORED_DATA_CACHE:
-        # 1. Check local bot_data.json
-        if os.path.exists(DATA_FILE):
+        # 1. Authoritative SQLite database FIRST (persists across git pushes & runner handovers)
+        db_loaded = _load_settings_from_sqlite()
+        if db_loaded:
+            _STORED_DATA_CACHE = db_loaded
+            try:
+                with open(DATA_FILE, "w", encoding="utf-8") as f:
+                    json.dump(db_loaded, f, indent=2)
+            except Exception:
+                pass
+        # 2. Fallback to local bot_data.json if database was empty / new install
+        elif os.path.exists(DATA_FILE):
             try:
                 with open(DATA_FILE, "r", encoding="utf-8") as f:
                     loaded = json.load(f)
                     if isinstance(loaded, dict) and loaded:
                         _STORED_DATA_CACHE = loaded
+                        _save_settings_to_sqlite(loaded)
             except Exception:
                 pass
-        # 2. Fallback to SQLite persistent database (persisted across runners and restarts)
-        if not _STORED_DATA_CACHE:
-            db_loaded = _load_settings_from_sqlite()
-            if db_loaded:
-                _STORED_DATA_CACHE = db_loaded
-                try:
-                    with open(DATA_FILE, "w", encoding="utf-8") as f:
-                        json.dump(db_loaded, f, indent=2)
-                except Exception:
-                    pass
     return dict(_STORED_DATA_CACHE)
 
 def save_stored_data(data: dict):
+    """
+    Persists bot settings to in-memory cache, local JSON file, and permanent SQLite database.
+    """
     global _STORED_DATA_CACHE
     try:
         _STORED_DATA_CACHE = dict(data)
@@ -485,6 +535,7 @@ GIST_ID    = os.getenv("GIST_ID", os.getenv("GITHUB_GIST_ID", "")).strip()
 GIST_TOKEN = os.getenv("GIST_TOKEN", os.getenv("GH_TOKEN", os.getenv("GITHUB_TOKEN", ""))).strip()
 seen_message_ids: Set[str] = set()
 seen_timestamps: Dict[str, float] = {}
+seen_content_signatures: Dict[str, float] = {}
 _gist_dirty: bool = False
 _is_handover: bool = os.getenv("IS_HANDOVER", "false").strip().lower() in ("true", "1", "yes")
 _manual_restart: bool = False
@@ -705,20 +756,68 @@ def init_db():
     with get_db_connection() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS processed_otps (
-                id           TEXT PRIMARY KEY,
-                source       TEXT,
-                country      TEXT,
-                number       TEXT,
-                otp_code     TEXT,
-                raw_message  TEXT,
-                rate         TEXT,
-                message_time TEXT,
-                chat_id      INTEGER,
-                forwarded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                id                 TEXT PRIMARY KEY,
+                source             TEXT,
+                country            TEXT,
+                number             TEXT,
+                otp_code           TEXT,
+                raw_message        TEXT,
+                rate               TEXT,
+                message_time       TEXT,
+                received_at        TEXT,
+                received_at_epoch  REAL,
+                expires_at         TEXT,
+                expires_at_epoch   REAL,
+                chat_id            INTEGER,
+                forwarded_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                status             TEXT DEFAULT 'forwarded'
             );
         """)
+
+        # Automatic schema migration for existing databases
+        existing_cols = {col["name"] for col in conn.execute("PRAGMA table_info(processed_otps);").fetchall()}
+        if "received_at" not in existing_cols:
+            conn.execute("ALTER TABLE processed_otps ADD COLUMN received_at TEXT;")
+        if "received_at_epoch" not in existing_cols:
+            conn.execute("ALTER TABLE processed_otps ADD COLUMN received_at_epoch REAL;")
+        if "expires_at" not in existing_cols:
+            conn.execute("ALTER TABLE processed_otps ADD COLUMN expires_at TEXT;")
+        if "expires_at_epoch" not in existing_cols:
+            conn.execute("ALTER TABLE processed_otps ADD COLUMN expires_at_epoch REAL;")
+        if "status" not in existing_cols:
+            conn.execute("ALTER TABLE processed_otps ADD COLUMN status TEXT DEFAULT 'forwarded';")
+
+        # Backfill any existing records with calculated expiration timing
+        rows_to_backfill = conn.execute(
+            "SELECT id, message_time, forwarded_at FROM processed_otps WHERE expires_at IS NULL OR expires_at_epoch IS NULL;"
+        ).fetchall()
+        for r in rows_to_backfill:
+            mid = r["id"]
+            msg_t = str(r["message_time"] or "")
+            fwd_t = str(r["forwarded_at"] or "")
+            ts = parse_message_timestamp(msg_t) or parse_message_timestamp(fwd_t) or datetime.now(timezone.utc).timestamp()
+            recv_iso = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            exp_epoch = ts + (28 * 3600)
+            exp_iso = datetime.fromtimestamp(exp_epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            conn.execute(
+                """UPDATE processed_otps 
+                   SET received_at = COALESCE(received_at, ?),
+                       received_at_epoch = COALESCE(received_at_epoch, ?),
+                       expires_at = ?,
+                       expires_at_epoch = ?
+                   WHERE id = ?;""",
+                (recv_iso, ts, exp_iso, exp_epoch, mid)
+            )
+
+        # High-performance indexes for instantaneous lookups, deduplication & cleanup
         conn.execute("CREATE INDEX IF NOT EXISTS idx_forwarded_at ON processed_otps(forwarded_at);")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_processed_otps_num_otp ON processed_otps(number, otp_code);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_processed_otps_num_msg ON processed_otps(number, raw_message);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_processed_otps_received_at ON processed_otps(received_at);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_processed_otps_recv_epoch ON processed_otps(received_at_epoch);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_processed_otps_expires_at ON processed_otps(expires_at);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_processed_otps_expires_epoch ON processed_otps(expires_at_epoch);")
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS bot_settings (
                 key         TEXT PRIMARY KEY,
@@ -727,16 +826,23 @@ def init_db():
             );
         """)
         conn.commit()
+        try:
+            conn.execute("PRAGMA wal_checkpoint(PASSIVE);")
+        except Exception:
+            pass
     cleanup_old_messages()
-    logger.info("📦 SQLite database initialized and pruned to today-only records at %s", DB_FILE)
+    logger.info("📦 SQLite database initialized with 28h timing schema & indexes at %s", DB_FILE)
 
 def is_message_duplicate(mid: str, item: Optional[Dict[str, Any]] = None) -> bool:
     """
-    Ironclad 3-layer duplicate detection:
-    1. Fast in-memory cache (seen_message_ids)
-    2. Primary Key check in SQLite DB (id = ?)
-    3. Content signature check: (same phone number + same OTP code) OR (same phone number + identical SMS body)
-    Guarantees that on bot restarts or API overlaps, no duplicate OTP is EVER sent to Telegram!
+    Professional 4-layer duplicate and repeat forwarding guard:
+    1. Fast in-memory message ID cache (seen_message_ids)
+    2. Fast in-memory content signatures (seen_content_signatures: phone+OTP & phone+SMS body)
+    3. Primary Key check in SQLite DB (id = ?)
+    4. SQLite active content signature check:
+       - (same phone number + same OTP code within active 28h window)
+       - (same phone number + identical SMS body within active 28h window)
+    Guarantees that on bot restarts, workflow handovers, or API repeats, NO duplicate OTP is EVER sent!
     """
     if mid and mid in seen_message_ids:
         return True
@@ -745,17 +851,34 @@ def is_message_duplicate(mid: str, item: Optional[Dict[str, Any]] = None) -> boo
     masked_num = ""
     raw_msg = ""
     otp_code = ""
+    digits = ""
     if item:
         raw_num = str(item.get("number") or item.get("destinationNumber") or item.get("range_template") or item.get("rangeTemplate") or item.get("dst") or "").strip()
         if raw_num:
             masked_num = mask_phone_number(raw_num)
+            digits = re.sub(r"\D", "", raw_num)
         raw_msg = str(item.get("sms") or item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "").strip()
         otp_code = extract_otp_code(raw_msg)
+
+    # Layer 2: Fast in-memory content signature check
+    if digits:
+        if otp_code:
+            sig_otp = f"otp:{digits}:{otp_code}"
+            if sig_otp in seen_content_signatures:
+                if mid:
+                    seen_message_ids.add(mid)
+                return True
+        if raw_msg:
+            clean_b = re.sub(r"\s+", " ", raw_msg).strip()
+            sig_body = f"body:{digits}:{clean_b}"
+            if sig_body in seen_content_signatures:
+                if mid:
+                    seen_message_ids.add(mid)
+                return True
 
     num_variants = []
     if raw_num:
         num_variants.append(raw_num)
-        digits = re.sub(r"\D", "", raw_num)
         if digits:
             if digits not in num_variants:
                 num_variants.append(digits)
@@ -766,6 +889,7 @@ def is_message_duplicate(mid: str, item: Optional[Dict[str, Any]] = None) -> boo
         num_variants.append(masked_num)
 
     try:
+        now_epoch = datetime.now(timezone.utc).timestamp()
         with get_db_connection() as conn:
             # Check 1: Primary ID match
             if mid:
@@ -774,32 +898,39 @@ def is_message_duplicate(mid: str, item: Optional[Dict[str, Any]] = None) -> boo
                     seen_message_ids.add(mid)
                     return True
 
-            # Check 2: Phone number variants + OTP code match
+            # Check 2: Phone number variants + OTP code match (active within 28h window)
             if otp_code and num_variants:
                 placeholders = ",".join(["?"] * len(num_variants))
                 cur = conn.execute(
                     f"""SELECT 1 FROM processed_otps 
                        WHERE number IN ({placeholders}) AND otp_code = ? 
+                         AND (expires_at_epoch IS NULL OR expires_at_epoch > ?)
                        LIMIT 1;""",
-                    (*num_variants, otp_code)
+                    (*num_variants, otp_code, now_epoch)
                 )
                 if cur.fetchone() is not None:
                     if mid:
                         seen_message_ids.add(mid)
+                    if digits:
+                        seen_content_signatures[f"otp:{digits}:{otp_code}"] = now_epoch
                     return True
 
-            # Check 3: Phone number variants + identical SMS body match
+            # Check 3: Phone number variants + identical SMS body match (active within 28h window)
             if raw_msg and num_variants:
                 placeholders = ",".join(["?"] * len(num_variants))
                 cur = conn.execute(
                     f"""SELECT 1 FROM processed_otps 
-                       WHERE number IN ({placeholders}) AND raw_message = ? 
+                       WHERE number IN ({placeholders}) AND TRIM(raw_message) = ? 
+                         AND (expires_at_epoch IS NULL OR expires_at_epoch > ?)
                        LIMIT 1;""",
-                    (*num_variants, raw_msg)
+                    (*num_variants, raw_msg, now_epoch)
                 )
                 if cur.fetchone() is not None:
                     if mid:
                         seen_message_ids.add(mid)
+                    if digits:
+                        clean_b = re.sub(r"\s+", " ", raw_msg).strip()
+                        seen_content_signatures[f"body:{digits}:{clean_b}"] = now_epoch
                     return True
 
     except Exception as e:
@@ -812,37 +943,76 @@ def is_message_seen(message_id: str) -> bool:
     return is_message_duplicate(message_id)
 
 def save_processed_message(item: Dict[str, Any], chat_id: int,
-                           country: str = "", masked_num: str = "", otp_code: str = "") -> bool:
+                           country: str = "", masked_num: str = "", otp_code: str = "",
+                           status: str = "forwarded") -> bool:
+    """
+    Saves received SMS to the permanent SQLite database with explicit receiving and 28h expiration timing:
+    - received_at & received_at_epoch: Exact arrival timestamp
+    - expires_at & expires_at_epoch: Expiration timestamp (strictly 28h = 100,800s after arrival)
+    - status: 'forwarded', 'silent_recorded', 'blocked_pre_resume', 'matched_existing'
+    """
     global _gist_dirty
     mid = str(item.get("id") or "").strip()
     if not mid:
         return False
-    seen_message_ids.add(mid)
-    seen_timestamps[mid] = datetime.now(timezone.utc).timestamp()
-    _gist_dirty = True
-    source       = str(item.get("sender_id") or item.get("sourceAddress") or item.get("source") or item.get("caller") or item.get("sender") or "")
-    rate         = str(item.get("rate") or "")
-    raw_message  = str(item.get("sms") or item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "")
+
+    raw_message  = str(item.get("sms") or item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "").strip()
     raw_number   = str(item.get("number") or item.get("destinationNumber") or item.get("range_template") or item.get("rangeTemplate") or item.get("dst") or "").strip()
     stored_num   = raw_number or masked_num
     otp_val      = otp_code or extract_otp_code(raw_message)
-    message_time = str(item.get("received_at") or item.get("receivedAt") or item.get("messageTime") or item.get("createdAt") or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
+    source       = str(item.get("sender_id") or item.get("sourceAddress") or item.get("source") or item.get("caller") or item.get("sender") or "").strip()
+    rate         = str(item.get("rate") or "").strip()
+
+    # Parse arrival time
+    message_time = str(item.get("received_at") or item.get("receivedAt") or item.get("messageTime") or item.get("createdAt") or "").strip()
     item_ts = parse_message_timestamp(message_time)
-    cutoff_28h = datetime.now(timezone.utc).timestamp() - (28 * 3600)
-    if item_ts > 0 and item_ts < cutoff_28h:
-        # Reject saving any OTP older than 28 hours into the database
-        return False
+    now_utc = datetime.now(timezone.utc)
+    now_epoch = now_utc.timestamp()
+
     if item_ts > 0:
-        fwd_time_str = datetime.fromtimestamp(item_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        recv_epoch = item_ts
     else:
-        fwd_time_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        recv_epoch = now_epoch
+        message_time = now_utc.strftime("%Y-%m-%d %H:%M:%S")
+
+    recv_iso = datetime.fromtimestamp(recv_epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+    # Explicit 28-hour expiration timing (100,800 seconds)
+    retention_seconds = 28 * 3600
+    cutoff_28h = now_epoch - retention_seconds
+    if recv_epoch < cutoff_28h:
+        # Reject storing any OTP already older than 28 hours
+        seen_message_ids.add(mid)
+        seen_timestamps[mid] = recv_epoch
+        return False
+
+    expires_epoch = recv_epoch + retention_seconds
+    expires_iso = datetime.fromtimestamp(expires_epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    fwd_time_str = now_utc.strftime("%Y-%m-%d %H:%M:%S")
+
+    # Populate in-memory deduplication tracking
+    seen_message_ids.add(mid)
+    seen_timestamps[mid] = recv_epoch
+    if stored_num:
+        num_digits = re.sub(r"\D", "", stored_num)
+        if num_digits and otp_val:
+            seen_content_signatures[f"otp:{num_digits}:{otp_val}"] = recv_epoch
+        if num_digits and raw_message:
+            clean_b = re.sub(r"\s+", " ", raw_message).strip()
+            seen_content_signatures[f"body:{num_digits}:{clean_b}"] = recv_epoch
+    _gist_dirty = True
+
     try:
         with get_db_connection() as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO processed_otps
-                    (id, source, country, number, otp_code, raw_message, rate, message_time, chat_id, forwarded_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-            """, (mid, source, country, stored_num, otp_val, raw_message, rate, message_time, chat_id, fwd_time_str))
+                    (id, source, country, number, otp_code, raw_message, rate, message_time,
+                     received_at, received_at_epoch, expires_at, expires_at_epoch,
+                     chat_id, forwarded_at, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """, (mid, source, country, stored_num, otp_val, raw_message, rate, message_time,
+                  recv_iso, recv_epoch, expires_iso, expires_epoch,
+                  chat_id, fwd_time_str, status))
             conn.commit()
             return True
     except Exception as e:
@@ -1108,36 +1278,43 @@ def get_cached_sms_message(key: str) -> Optional[str]:
 def cleanup_old_messages(max_age_hours: int = 28):
     """
     Cleans up expired OTP records older than 28 hours from:
-    1. Local SQLite database (`processed_otps` table)
-    2. In-memory deduplication cache (`seen_timestamps` & `seen_message_ids`)
-    Ensures each OTP is cleared individually one-by-one as it reaches 28 hours age.
-    IMPORTANT: Telegram group messages are NEVER deleted or removed.
+    1. Local SQLite database (`processed_otps` table) using exact expires_at_epoch & expires_at.
+    2. In-memory deduplication caches (`seen_timestamps`, `seen_message_ids`, `seen_content_signatures`).
+    Ensures each OTP is cleared individually one-by-one as its exact 28-hour expiration arrives.
+    IMPORTANT: Telegram group messages are NEVER deleted or touched.
     """
     try:
         now_utc = datetime.now(timezone.utc)
-        cutoff_epoch = now_utc.timestamp() - (max_age_hours * 3600)
+        now_epoch = now_utc.timestamp()
+        now_iso = now_utc.strftime("%Y-%m-%d %H:%M:%S")
+        cutoff_epoch = now_epoch - (max_age_hours * 3600)
         cutoff_iso = datetime.fromtimestamp(cutoff_epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-        # 1. Prune in-memory cache older than 28h
+        # 1. Prune in-memory caches older than 28h
         expired_ids = [mid for mid, ts in list(seen_timestamps.items()) if ts < cutoff_epoch]
         for mid in expired_ids:
             seen_timestamps.pop(mid, None)
             seen_message_ids.discard(mid)
 
-        # 2. Prune local SQLite database of any records older than 28h
+        expired_sigs = [sig for sig, ts in list(seen_content_signatures.items()) if ts < cutoff_epoch]
+        for sig in expired_sigs:
+            seen_content_signatures.pop(sig, None)
+
+        # 2. Prune local SQLite database of any records older than 28 hours using expires_at_epoch / expires_at
         with get_db_connection() as conn:
             cur = conn.execute(
                 """DELETE FROM processed_otps 
-                   WHERE datetime(forwarded_at) < datetime(?) 
-                      OR (message_time IS NOT NULL AND message_time != '' AND datetime(message_time) < datetime(?))
-                      OR (forwarded_at IS NULL AND message_time IS NULL);""",
-                (cutoff_iso, cutoff_iso)
+                   WHERE (expires_at_epoch IS NOT NULL AND expires_at_epoch <= ?)
+                      OR (expires_at IS NOT NULL AND datetime(expires_at) <= datetime(?))
+                      OR (expires_at IS NULL AND datetime(forwarded_at) < datetime(?))
+                      OR (expires_at IS NULL AND message_time IS NOT NULL AND message_time != '' AND datetime(message_time) < datetime(?));""",
+                (now_epoch, now_iso, cutoff_iso, cutoff_iso)
             )
             deleted = cur.rowcount
             conn.commit()
             if deleted > 0 or expired_ids:
                 logger.info(
-                    f"🧹 28h Cleanup: Pruned {deleted} old SQLite records & {len(expired_ids)} cache items older than {max_age_hours}h. (Telegram group messages remain untouched)."
+                    f"🧹 28h Expiration Cleanup: Deleted {deleted} expired SQLite records & {len(expired_ids)} cache items (older than {max_age_hours}h). Telegram group messages are never deleted."
                 )
     except Exception as e:
         logger.warning(f"DB cleanup error: {e}")
@@ -2021,7 +2198,7 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
     # If forwarding was resumed, any OTP whose arrival time is BEFORE forwarding was turned ON
     # is recorded into SQLite & History only, and NEVER sent to the group!
     if forwarding_enabled and resumed_epoch > 0 and msg_ts > 0 and msg_ts < (resumed_epoch - 3.0):
-        save_processed_message(item, gid or 0, country, num, otp_code)
+        save_processed_message(item, gid or 0, country, num, otp_code, status="blocked_pre_resume")
         country_forwarded_counts[country_iso] = country_forwarded_counts.get(country_iso, 0) + 1
         update_last_active_timestamp()
         logger.info(
@@ -2034,7 +2211,7 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
         # ── Group forwarding is turned OFF by admin (Silent Mode) ──────────────────
         # Per user requirement: DO NOT forward the OTP to groups!
         # BUT fully record into the database, receiving history, and 28h retention!
-        save_processed_message(item, gid or 0, country, num, otp_code)
+        save_processed_message(item, gid or 0, country, num, otp_code, status="silent_recorded")
         country_forwarded_counts[country_iso] = country_forwarded_counts.get(country_iso, 0) + 1
         update_last_active_timestamp()
         logger.info(
@@ -2094,13 +2271,13 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
             logger.warning(f"Delivery error to {cid}: {e}")
 
     if sent_to_any:
-        save_processed_message(item, gid or 0, country, num, otp_code)
+        save_processed_message(item, gid or 0, country, num, otp_code, status="forwarded")
         country_forwarded_counts[country_iso] = country_forwarded_counts.get(country_iso, 0) + 1
         update_last_active_timestamp()
         logger.info(f"✅ Forwarded Live OTP (ID: {mid}) to Group [{country_iso}]")
     else:
         # Save to DB so failure doesn't loop infinitely
-        save_processed_message(item, gid or 0, country, num, otp_code)
+        save_processed_message(item, gid or 0, country, num, otp_code, status="failed_delivery")
         logger.error(f"❌ Failed to deliver OTP (ID: {mid}) to group, saved to DB.")
 
     return sent_to_any or True
@@ -2217,7 +2394,7 @@ async def run_startup_reconciliation(
         else:
             # Already forwarded previously or older than restart gap:
             # Match database with API by recording into SQLite without re-sending!
-            save_processed_message(item, gid, country, num, otp)
+            save_processed_message(item, gid, country, num, otp, status="matched_existing")
             seen_message_ids.add(mid)
             seen_timestamps[mid] = msg_ts if msg_ts > 0 else now_ts
             _gist_dirty = True
@@ -2304,15 +2481,29 @@ async def poll_incoming_messages(application: Application):
         cutoff_iso = datetime.fromtimestamp(cutoff_epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         with get_db_connection() as conn:
             for row in conn.execute(
-                "SELECT id, forwarded_at FROM processed_otps WHERE datetime(forwarded_at) >= datetime(?) ORDER BY forwarded_at DESC LIMIT 10000;",
+                """SELECT id, number, otp_code, raw_message, received_at_epoch, forwarded_at 
+                   FROM processed_otps 
+                   WHERE datetime(forwarded_at) >= datetime(?) 
+                      OR (expires_at_epoch IS NOT NULL AND expires_at_epoch > strftime('%s', 'now'))
+                   ORDER BY forwarded_at DESC LIMIT 10000;""",
                 (cutoff_iso,)
             ):
                 mid = str(row["id"])
                 seen_message_ids.add(mid)
+                fwd_str = str(row["forwarded_at"] or "")
+                t_val = float(row["received_at_epoch"] or 0.0) or parse_message_timestamp(fwd_str) or bot_start_time
                 if mid not in seen_timestamps:
-                    fwd_str = str(row["forwarded_at"] or "")
-                    t_val = parse_message_timestamp(fwd_str)
-                    seen_timestamps[mid] = t_val if t_val > 0 else bot_start_time
+                    seen_timestamps[mid] = t_val
+
+                num_digits = re.sub(r"\D", "", str(row["number"] or ""))
+                otp_c = str(row["otp_code"] or "")
+                raw_m = str(row["raw_message"] or "").strip()
+                if num_digits and otp_c:
+                    seen_content_signatures[f"otp:{num_digits}:{otp_c}"] = t_val
+                if num_digits and raw_m:
+                    clean_b = re.sub(r"\s+", " ", raw_m).strip()
+                    seen_content_signatures[f"body:{num_digits}:{clean_b}"] = t_val
+
             # Seed active country counts from database
             try:
                 today_total, total_28h, active_countries = get_dashboard_stats()
@@ -2321,7 +2512,7 @@ async def poll_incoming_messages(application: Application):
                 country_forwarded_counts.update(active_countries)
             except Exception as e:
                 logger.debug(f"Country seeding note: {e}")
-        logger.info(f"Preloaded {len(seen_message_ids)} total seen message keys from persistent database.")
+        logger.info(f"Preloaded {len(seen_message_ids)} total seen message keys & {len(seen_content_signatures)} signatures from persistent database.")
     except Exception as e:
         logger.warning(f"Preload error: {e}")
 
@@ -2361,7 +2552,17 @@ async def poll_incoming_messages(application: Application):
                     continue
                 new_items.append(m)
                 seen_message_ids.add(mid)
-                seen_timestamps[mid] = msg_ts if msg_ts > 0 else datetime.now(timezone.utc).timestamp()
+                ts_seen = msg_ts if msg_ts > 0 else datetime.now(timezone.utc).timestamp()
+                seen_timestamps[mid] = ts_seen
+                raw_n = str(m.get("number") or m.get("destinationNumber") or m.get("range_template") or m.get("rangeTemplate") or m.get("dst") or "")
+                dig = re.sub(r"\D", "", raw_n)
+                raw_m_text = str(m.get("sms") or m.get("messageBody") or m.get("message") or m.get("text") or m.get("body") or m.get("otp") or "").strip()
+                otp_c = extract_otp_code(raw_m_text)
+                if dig and otp_c:
+                    seen_content_signatures[f"otp:{dig}:{otp_c}"] = ts_seen
+                if dig and raw_m_text:
+                    clean_b = re.sub(r"\s+", " ", raw_m_text).strip()
+                    seen_content_signatures[f"body:{dig}:{clean_b}"] = ts_seen
                 _gist_dirty = True
 
             if new_items:
@@ -4309,9 +4510,18 @@ async def send_startup_announcement(application: Application):
                 logger.warning(f"Initial alert failed for admin {aid}: {e}")
 
 async def periodic_db_cleanup_loop():
+    cleanup_counter = 0
     while True:
         await asyncio.sleep(60.0)  # runs every 60s to prune old 28h records continuously
         cleanup_old_messages(max_age_hours=28)
+        cleanup_counter += 1
+        # Periodically flush SQLite WAL journal to the permanent database file
+        if cleanup_counter % 5 == 0:
+            try:
+                with get_db_connection() as conn:
+                    conn.execute("PRAGMA wal_checkpoint(PASSIVE);")
+            except Exception:
+                pass
 
 async def periodic_gist_sync_loop():
     global _gist_dirty
