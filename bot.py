@@ -1765,8 +1765,33 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
 
 # ==========================================
 # 10. Clean OTP Notification Formatter (No Language)
-# Professional label matching the card's icon alignment (column 0)
-EXPANDABLE_SMS_LABEL = "📩 <b>View Full SMS:</b>"
+# Professional expandable label matching the card's icon alignment
+EXPANDABLE_SMS_LABEL = "📩 <b>View Full SMS</b>"
+
+def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 28) -> str:
+    """
+    Wraps SMS lines cleanly and highlights ONLY the OTP code inside a copyable <code> tag,
+    leaving the rest of the SMS as plain text so tapping copies ONLY the OTP code.
+    """
+    if not msg:
+        return ""
+    lines = []
+    for paragraph in str(msg).splitlines():
+        p = paragraph.strip()
+        if p:
+            lines.extend(textwrap.wrap(p, width=width, break_long_words=True))
+        else:
+            lines.append("")
+    wrapped = "\n".join(lines)
+    escaped = html.escape(wrapped, quote=False)
+    if otp:
+        esc_otp = html.escape(otp.strip(), quote=False)
+        if esc_otp and esc_otp in escaped:
+            escaped = escaped.replace(esc_otp, f"<code>{esc_otp}</code>", 1)
+        elif esc_otp.replace("-", "") in escaped:
+            raw_c = esc_otp.replace("-", "")
+            escaped = escaped.replace(raw_c, f"<code>{raw_c}</code>", 1)
+    return escaped
 
 def wrap_sms_for_card(text: str, width: int = 22) -> str:
     """Wraps SMS text to a compact line length (<=22 chars) to ensure cards don't stretch horizontally."""
@@ -1832,14 +1857,17 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
 
     clean_msg = raw_message.strip()
 
-    # Expandable quote block on the card with professional styling
+    # Expandable quote block: completely hidden until expanded, with only OTP code copyable
     quote_block = ""
     if clean_msg:
-        wrapped_msg = wrap_sms_for_card(clean_msg, width=28)
-        styled_sms = html.escape(wrapped_msg, quote=False)
+        styled_sms = style_sms_with_copyable_otp(clean_msg, otp_code, width=28)
         quote_block = (
-            f"\n\n{EXPANDABLE_SMS_LABEL}\n"
-            f"<blockquote expandable><code>{styled_sms}</code></blockquote>"
+            f"\n\n<blockquote expandable>{EXPANDABLE_SMS_LABEL}\n"
+            f"⠀\n"
+            f"⠀\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"💬 <b>SMS Content:</b>\n"
+            f"{styled_sms}</blockquote>"
         )
 
     if otp_code:
@@ -2697,8 +2725,8 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "long":
-        sample_wrapped = wrap_sms_for_card("Your WhatsApp verification code is 492-810. Do not share this code with anyone.", width=28)
-        styled_sample = html.escape(sample_wrapped, quote=False)
+        sample_sms = "Your WhatsApp verification code is 492-810. Do not share this code with anyone."
+        styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=28)
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
@@ -2709,8 +2737,12 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "📱 <b>Number:</b> +977980****456\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
-            f"{EXPANDABLE_SMS_LABEL}\n"
-            f"<blockquote expandable><code>{styled_sample}</code></blockquote>\n\n"
+            f"<blockquote expandable>{EXPANDABLE_SMS_LABEL}\n"
+            f"⠀\n"
+            f"⠀\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"💬 <b>SMS Content:</b>\n"
+            f"{styled_sample}</blockquote>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
     else:
