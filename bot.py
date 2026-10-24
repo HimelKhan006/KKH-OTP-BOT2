@@ -1765,8 +1765,8 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
 
 # ==========================================
 # 10. Clean OTP Notification Formatter (No Language)
-# Professional expandable label matching the card's icon alignment
-EXPANDABLE_SMS_LABEL = "📩 <b>View Full SMS</b>"
+# Professional label matching the card's icon alignment (column 0)
+EXPANDABLE_SMS_LABEL = "📩 <b>View Full SMS:</b>"
 
 def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 28) -> str:
     """
@@ -1862,11 +1862,11 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     if clean_msg:
         styled_sms = style_sms_with_copyable_otp(clean_msg, otp_code, width=28)
         quote_block = (
-            f"\n\n<blockquote expandable>{EXPANDABLE_SMS_LABEL}\n"
+            f"\n\n{EXPANDABLE_SMS_LABEL}\n"
+            f"<blockquote expandable>💬 <b>Tap to read full SMS...</b>\n"
             f"⠀\n"
             f"⠀\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"💬 <b>SMS Content:</b>\n"
             f"{styled_sms}</blockquote>"
         )
 
@@ -2737,11 +2737,11 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "📱 <b>Number:</b> +977980****456\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🔑 <b>PASSCODE:</b> <code>492810</code>\n\n"
-            f"<blockquote expandable>{EXPANDABLE_SMS_LABEL}\n"
+            f"\n\n{EXPANDABLE_SMS_LABEL}\n"
+            f"<blockquote expandable>💬 <b>Tap to read full SMS...</b>\n"
             f"⠀\n"
             f"⠀\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"💬 <b>SMS Content:</b>\n"
             f"{styled_sample}</blockquote>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
