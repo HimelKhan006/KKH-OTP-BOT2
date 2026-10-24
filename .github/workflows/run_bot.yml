@@ -37,6 +37,22 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # ─────────────────────────────────────────────────────────────────
+      # Restore the OTP database & settings from cache FIRST
+      # BEFORE any cancellation or history cleanup!
+      # ─────────────────────────────────────────────────────────────────
+      - name: Restore Persistent Database from Cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            bot1_database.db
+            bot1_database.db-wal
+            bot1_database.db-shm
+            bot_data.json
+          key: bot1-database-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            bot1-database-
+
       - name: Cancel Any Other Running Instances
         env:
           GH_TOKEN: ${{ github.token }}
@@ -66,16 +82,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ALT_TOKEN: ${{ secrets.PAT || secrets.GH_TOKEN || secrets.GIST_TOKEN }}
         run: |
-          echo "🧹 Deleting old completed workflow run history..."
+          echo "🧹 Deleting old completed workflow run history (retaining recent runs to protect cache keys)..."
           curl -s -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/actions/runs?per_page=50" \
             | python3 -c "
           import sys, json
-          runs = json.load(sys.stdin).get('workflow_runs', [])
-          for r in runs:
-              if str(r.get('id')) != '${{ github.run_id }}' and r.get('status') == 'completed':
-                  print(r['id'])
+          runs = [r for r in json.load(sys.stdin).get('workflow_runs', []) if r.get('status') == 'completed' and str(r.get('id')) != '${{ github.run_id }}']
+          # Retain the 10 most recent completed runs so their cache keys remain active!
+          for r in runs[10:]:
+              print(r['id'])
           " | while read r_id; do
             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
               -H "Authorization: Bearer $GH_TOKEN" \
@@ -90,22 +106,6 @@ jobs:
             fi
           done
           echo "✅ History cleaned."
-
-      # ─────────────────────────────────────────────────────────────────
-      # Restore the OTP database from cache so the bot knows
-      # which OTPs were already sent — prevents re-sending on restart
-      # ─────────────────────────────────────────────────────────────────
-      - name: Restore Persistent Database from Cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            bot1_database.db
-            bot1_database.db-wal
-            bot1_database.db-shm
-            bot_data.json
-          key: bot1-database-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            bot1-database-
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
