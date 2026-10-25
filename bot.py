@@ -1946,8 +1946,10 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
 EXPANDABLE_SMS_LABEL = "📩 <b>View Full SMS:</b>"
 # Centered collapsed hint without icon (calibrated to exact optical center between left bar and quote mark)
 COLLAPSED_SMS_HINT = "\u2800" * 7 + "  " + "<b>Tap to read...</b>"
-# Symmetrical card divider (23 characters) to ensure Short & Long format cards have identical horizontal width (245px)
-CARD_DIVIDER = "━" * 23
+# Symmetrical card divider (20 characters) to ensure cards have uniform width without wrapping on mobile
+CARD_DIVIDER = "━" * 20
+# Shorter divider (16 characters) calibrated for expandable blockquote margins so it never wraps on mobile
+QUOTE_DIVIDER = "━" * 16
 
 def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 28) -> str:
     """
@@ -2057,7 +2059,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             f"<blockquote expandable>⠀\n"
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
-            f"{CARD_DIVIDER}\n"
+            f"{QUOTE_DIVIDER}\n"
             f"💬 <b>SMS Content:</b>\n"
             f"{styled_sms}</blockquote>"
         )
@@ -2968,7 +2970,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             f"<blockquote expandable>⠀\n"
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
-            f"{CARD_DIVIDER}\n"
+            f"{QUOTE_DIVIDER}\n"
             f"💬 <b>SMS Content:</b>\n"
             f"{styled_sample}</blockquote>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
