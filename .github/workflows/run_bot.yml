@@ -211,6 +211,9 @@ jobs:
           # 19500s = 5h 25min. Leaves ~33 min for setup + cache save + self-trigger
           END_TIME=$((SECONDS + 19500))
 
+          # Instantly exit when GitHub sends cancellation signals (SIGTERM/SIGINT)
+          trap "echo '🛑 Immediate cancellation signal received. Halting runner.'; exit 0" SIGTERM SIGINT
+
           while true; do
             REMAINING=$((END_TIME - SECONDS))
 
@@ -230,6 +233,13 @@ jobs:
 
             if [ $EXIT_CODE -eq 0 ]; then
               echo "✅ Clean session handover (exit 0). Handing off to next workflow runner session..."
+              break
+            fi
+
+            # Exit > 128 = killed by GitHub Actions cancel-in-progress (SIGINT=130, SIGTERM=143)
+            # Must exit immediately so the newly pushed workflow run starts with ZERO delay!
+            if [ $EXIT_CODE -gt 128 ]; then
+              echo "🛑 Process terminated by GitHub cancellation ($EXIT_CODE). Exiting loop immediately."
               break
             fi
 
