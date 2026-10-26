@@ -5365,38 +5365,36 @@ async def main():
             except Exception:
                 pass
 
-            # 2. WIPE commands and menu button from Default and Group scopes completely
+            # 2. Lock command list and [≡ Menu] button permanently on Default and Private scopes (Zero flickering)
+            bot_cmds = get_bot_commands()
             try:
-                await application.bot.delete_my_commands(scope=BotCommandScopeDefault())
-                await application.bot.set_my_commands([], scope=BotCommandScopeDefault())
-            except Exception:
-                pass
+                await application.bot.set_my_commands(bot_cmds, scope=BotCommandScopeDefault())
+                await application.bot.set_my_commands(bot_cmds, scope=BotCommandScopeAllPrivateChats())
+                await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+            except Exception as cmd_err:
+                logger.debug(f"Default commands register notice: {cmd_err}")
 
+            # 3. Wipe commands from groups ONLY (groups will have 0 commands and default menu)
             for sc in (BotCommandScopeAllGroupChats(), BotCommandScopeAllChatAdministrators()):
                 try:
-                    await application.bot.delete_my_commands(scope=sc)
                     await application.bot.set_my_commands([], scope=sc)
                 except Exception:
                     pass
 
             for gid in get_target_group_chat_ids():
                 try:
-                    await application.bot.delete_my_commands(scope=BotCommandScopeChat(gid))
                     await application.bot.set_my_commands([], scope=BotCommandScopeChat(gid))
                     await application.bot.set_chat_menu_button(chat_id=gid, menu_button=MenuButtonDefault())
                 except Exception:
                     pass
 
-            # 3. Register command list and [≡ Menu] button ONLY in private chat / admin scopes
-            bot_cmds = get_bot_commands()
-            await application.bot.set_my_commands(bot_cmds, scope=BotCommandScopeAllPrivateChats())
             for aid in ADMIN_USER_IDS:
                 try:
                     await application.bot.set_my_commands(bot_cmds, scope=BotCommandScopeChat(aid))
                     await application.bot.set_chat_menu_button(chat_id=aid, menu_button=MenuButtonCommands())
                 except Exception:
                     pass
-            logger.info("✅ Telegram Bot Command Menu: Private admin scope active; groups wiped (0 commands).")
+            logger.info("✅ Telegram Bot Command Menu: Permanently active in private chat (Zero flickering); groups wiped (0 commands).")
         except Exception as e:
             logger.warning(f"Error configuring command menu scopes: {e}")
         logger.info(f"✅ {get_bot_name()} is fully online and monitoring incoming messages...")
