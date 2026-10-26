@@ -5678,6 +5678,7 @@ async def main():
     # The group is exclusively for OTP forwarding. Commands are completely
     # invisible to the group — Telegram never even dispatches them here.
     # Strictly ONLY /start is registered as a slash command. All other interactions are button-driven.
+    _private = filters.ChatType.PRIVATE
     application.add_handler(CommandHandler("start", start_command, filters=_private))
     application.add_handler(CallbackQueryHandler(admin_callback_handler))
     application.add_handler(MessageHandler(_private & filters.TEXT & ~filters.COMMAND, keyboard_button_handler))
