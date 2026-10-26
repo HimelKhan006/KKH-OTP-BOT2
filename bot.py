@@ -812,7 +812,7 @@ def build_admin_manage_view() -> Tuple[str, InlineKeyboardMarkup]:
         f"💡 <i>Tap any administrator button below to view details or revoke privileges.</i>"
     )
     buttons.append([InlineKeyboardButton("➕ Add New Administrator", callback_data="admin_add_admin_prompt")])
-    buttons.append([InlineKeyboardButton("◀️ Back to Status Dashboard", callback_data="refresh_dash_msg")])
+    buttons.append([InlineKeyboardButton("❌ Close", callback_data="close_admin_manage")])
     return text, InlineKeyboardMarkup(buttons)
 
 async def sync_admins_to_gist():
@@ -3070,27 +3070,7 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
         f"{bottom_note}"
     )
 
-    fwd_toggle_btn = InlineKeyboardButton(
-        "⏸️ Pause Forwarding" if fwd_active else "▶️ Resume Forwarding",
-        callback_data="fwd_ask_off" if fwd_active else "fwd_ask_on"
-    )
     keyboard = [
-        [
-            fwd_toggle_btn,
-            InlineKeyboardButton("👑 Manage Admins", callback_data="admin_manage_admins"),
-        ],
-        [
-            InlineKeyboardButton("🌐 API URL", callback_data="api_url_menu"),
-            InlineKeyboardButton("🔑 API Key", callback_data="api_key_menu"),
-        ],
-        [
-            InlineKeyboardButton("📋 SMS Format", callback_data="sms_format_menu"),
-            InlineKeyboardButton("🔗 Link Buttons", callback_data="link_list"),
-        ],
-        [
-            InlineKeyboardButton("👥 Linked Groups", callback_data="grp_list"),
-            InlineKeyboardButton("✏️ Bot Name", callback_data="bot_name_menu"),
-        ],
         [InlineKeyboardButton("🔄 Refresh Status", callback_data="refresh_dash")],
     ]
     return msg, InlineKeyboardMarkup(keyboard)
@@ -3147,10 +3127,7 @@ def build_forwarding_control_view() -> Tuple[str, InlineKeyboardMarkup]:
         )
         toggle_btn = InlineKeyboardButton("▶️ Resume Forwarding", callback_data="fwd_ask_on")
 
-    return msg, InlineKeyboardMarkup([
-        [toggle_btn],
-        [InlineKeyboardButton("📊 Back to Status Dashboard", callback_data="refresh_dash_msg")],
-    ])
+    return msg, InlineKeyboardMarkup([[toggle_btn]])
 
 def build_forwarding_updated_view(action: str) -> Tuple[str, InlineKeyboardMarkup]:
     """Builds professional status update confirmation card after forwarding state is changed."""
@@ -3179,10 +3156,7 @@ def build_forwarding_updated_view(action: str) -> Tuple[str, InlineKeyboardMarku
             "<i>Live forwarding is active. Every new incoming OTP is delivered to your group(s) in real time.</i>"
         )
         btn = InlineKeyboardButton("⏸️ Pause Forwarding", callback_data="fwd_ask_off")
-    return msg, InlineKeyboardMarkup([
-        [btn],
-        [InlineKeyboardButton("📊 Back to Status Dashboard", callback_data="refresh_dash_msg")],
-    ])
+    return msg, InlineKeyboardMarkup([[btn]])
 
 async def toggle_forwarding_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command with confirmation prompt to toggle OTP group forwarding ON or OFF, matching restart style."""
@@ -4666,6 +4640,23 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                 except Exception:
                     pass
 
+    elif query.data == "close_admin_manage":
+        clear_all_admin_states(context)
+        await query.answer("Closed 🔒")
+        try:
+            await query.edit_message_text(
+                "🔒 <b>Administrator Panel Closed</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "<i>The administrator management panel has been closed safely.</i>\n\n"
+                "💡 <i>Use the <b>👑 Admins</b> menu button or tap below to reopen.</i>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("👑 Reopen Admins", callback_data="admin_manage_admins")]
+                ])
+            )
+        except Exception:
+            pass
+
     elif query.data == "admin_add_admin_prompt":
         context.user_data["awaiting_add_admin"] = True
         context.user_data["prompt_msg_id"] = query.message.message_id
@@ -4706,7 +4697,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         if not is_super:
             buttons.append([InlineKeyboardButton("🗑️ Revoke Administrator Privileges", callback_data=f"admin_rm_admin_{target_id}")])
         buttons.append([InlineKeyboardButton("📋 Back to Admin List", callback_data="admin_manage_admins")])
-        buttons.append([InlineKeyboardButton("📊 Back to Status Dashboard", callback_data="refresh_dash_msg")])
+        buttons.append([InlineKeyboardButton("❌ Close", callback_data="close_admin_manage")])
         await query.edit_message_text(profile_text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
 
     elif query.data == "admin_remove_admin_menu":
@@ -5345,7 +5336,7 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
                     [InlineKeyboardButton(f"👑 Manage ID: {aid}", callback_data=f"admin_inspect_{aid}")],
                     [InlineKeyboardButton("📋 Active Admin List", callback_data="admin_manage_admins")],
                     [InlineKeyboardButton("➕ Add Another Admin", callback_data="admin_add_admin_prompt")],
-                    [InlineKeyboardButton("📊 Status", callback_data="refresh_dash_msg")]
+                    [InlineKeyboardButton("❌ Close", callback_data="close_admin_manage")]
                 ])
 
                 await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, confirm_text, confirm_kb)
