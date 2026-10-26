@@ -3070,8 +3070,27 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
         f"{bottom_note}"
     )
 
+    fwd_toggle_btn = InlineKeyboardButton(
+        "⏸️ Pause Forwarding" if fwd_active else "▶️ Resume Forwarding",
+        callback_data="fwd_ask_off" if fwd_active else "fwd_ask_on"
+    )
     keyboard = [
-        [InlineKeyboardButton("👑 Manage Admins", callback_data="admin_manage_admins")],
+        [
+            fwd_toggle_btn,
+            InlineKeyboardButton("👑 Manage Admins", callback_data="admin_manage_admins"),
+        ],
+        [
+            InlineKeyboardButton("🌐 API URL", callback_data="api_url_menu"),
+            InlineKeyboardButton("🔑 API Key", callback_data="api_key_menu"),
+        ],
+        [
+            InlineKeyboardButton("📋 SMS Format", callback_data="sms_format_menu"),
+            InlineKeyboardButton("🔗 Link Buttons", callback_data="link_list"),
+        ],
+        [
+            InlineKeyboardButton("👥 Linked Groups", callback_data="grp_list"),
+            InlineKeyboardButton("✏️ Bot Name", callback_data="bot_name_menu"),
+        ],
         [InlineKeyboardButton("🔄 Refresh Status", callback_data="refresh_dash")],
     ]
     return msg, InlineKeyboardMarkup(keyboard)
@@ -3128,7 +3147,10 @@ def build_forwarding_control_view() -> Tuple[str, InlineKeyboardMarkup]:
         )
         toggle_btn = InlineKeyboardButton("▶️ Resume Forwarding", callback_data="fwd_ask_on")
 
-    return msg, InlineKeyboardMarkup([[toggle_btn]])
+    return msg, InlineKeyboardMarkup([
+        [toggle_btn],
+        [InlineKeyboardButton("📊 Back to Status Dashboard", callback_data="refresh_dash_msg")],
+    ])
 
 def build_forwarding_updated_view(action: str) -> Tuple[str, InlineKeyboardMarkup]:
     """Builds professional status update confirmation card after forwarding state is changed."""
@@ -3157,7 +3179,10 @@ def build_forwarding_updated_view(action: str) -> Tuple[str, InlineKeyboardMarku
             "<i>Live forwarding is active. Every new incoming OTP is delivered to your group(s) in real time.</i>"
         )
         btn = InlineKeyboardButton("⏸️ Pause Forwarding", callback_data="fwd_ask_off")
-    return msg, InlineKeyboardMarkup([[btn]])
+    return msg, InlineKeyboardMarkup([
+        [btn],
+        [InlineKeyboardButton("📊 Back to Status Dashboard", callback_data="refresh_dash_msg")],
+    ])
 
 async def toggle_forwarding_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command with confirmation prompt to toggle OTP group forwarding ON or OFF, matching restart style."""
