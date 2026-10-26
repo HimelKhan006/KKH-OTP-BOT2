@@ -5677,34 +5677,8 @@ async def main():
     # ── All command & keyboard handlers: PRIVATE chat ONLY ──────────────────
     # The group is exclusively for OTP forwarding. Commands are completely
     # invisible to the group — Telegram never even dispatches them here.
-    _private = filters.ChatType.PRIVATE
-    application.add_handler(CommandHandler("start",         start_command,             filters=_private))
-    application.add_handler(CommandHandler("status",        status_command,            filters=_private))
-    application.add_handler(CommandHandler("toggleforward", toggle_forwarding_command, filters=_private))
-    application.add_handler(CommandHandler("forwarding",    toggle_forwarding_command, filters=_private))
-    application.add_handler(CommandHandler("pause",         toggle_forwarding_command, filters=_private))
-    application.add_handler(CommandHandler("resume",        toggle_forwarding_command, filters=_private))
-    application.add_handler(CommandHandler("setkey",        setkey_command,            filters=_private))
-    application.add_handler(CommandHandler("seturl",        seturl_command,            filters=_private))
-    application.add_handler(CommandHandler("toggleformat",  toggleformat_command,      filters=_private))
-    application.add_handler(CommandHandler("format",        toggleformat_command,      filters=_private))
-    application.add_handler(CommandHandler("cancel",        cancel_command,            filters=_private))
-    application.add_handler(CommandHandler("setname",       setname_command,           filters=_private))
-
-    application.add_handler(CommandHandler("setlink",      setlink_command,      filters=_private))
-    application.add_handler(CommandHandler("removelink",   removelink_command,   filters=_private))
-    application.add_handler(CommandHandler("setbtnname",   setbtnname_command,   filters=_private))
-    application.add_handler(CommandHandler("setbtnurl",    setbtnurl_command,    filters=_private))
-    application.add_handler(CommandHandler("addgroup",     addgroup_command,     filters=_private))
-    application.add_handler(CommandHandler("linkgroup",    addgroup_command,     filters=_private))
-    application.add_handler(CommandHandler("delgroup",     delgroup_command,     filters=_private))
-    application.add_handler(CommandHandler("unlinkgroup",  delgroup_command,     filters=_private))
-    application.add_handler(CommandHandler("groups",       groups_command,       filters=_private))
-    application.add_handler(CommandHandler("listgroups",   groups_command,       filters=_private))
-    application.add_handler(CommandHandler("restart",      restart_command,      filters=_private))
-    application.add_handler(CommandHandler("addadmin",     addadmin_command,     filters=_private))
-    application.add_handler(CommandHandler("removeadmin",  removeadmin_command,  filters=_private))
-    application.add_handler(CommandHandler("admins",       admins_command,       filters=_private))
+    # Strictly ONLY /start is registered as a slash command. All other interactions are button-driven.
+    application.add_handler(CommandHandler("start", start_command, filters=_private))
     application.add_handler(CallbackQueryHandler(admin_callback_handler))
     application.add_handler(MessageHandler(_private & filters.TEXT & ~filters.COMMAND, keyboard_button_handler))
 
