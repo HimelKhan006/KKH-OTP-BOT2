@@ -3284,6 +3284,8 @@ def clear_all_admin_states(context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("awaiting_grp_action", None)
     context.user_data.pop("awaiting_action", None)
     context.user_data.pop("awaiting_add_admin", None)
+    context.user_data.pop("prompt_msg_id", None)
+    context.user_data.pop("prompt_chat_id", None)
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to cancel any pending interactive action."""
@@ -4300,6 +4302,8 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         found = next((b for b in buttons if str(b["id"]) == btn_id), None)
         if found:
             context.user_data["awaiting_btn_action"] = {"action": "rename", "id": found["id"]}
+            context.user_data["prompt_msg_id"] = query.message.message_id
+            context.user_data["prompt_chat_id"] = query.message.chat_id
             await query.answer("Send new name in chat 💬")
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("◀️ Cancel / Back", callback_data=f"link_view_{found['id']}")]
@@ -4320,6 +4324,8 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         found = next((b for b in buttons if str(b["id"]) == btn_id), None)
         if found:
             context.user_data["awaiting_btn_action"] = {"action": "reurl", "id": found["id"]}
+            context.user_data["prompt_msg_id"] = query.message.message_id
+            context.user_data["prompt_chat_id"] = query.message.chat_id
             await query.answer("Send new URL or bot username 💬")
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("◀️ Cancel / Back", callback_data=f"link_view_{found['id']}")]
@@ -4337,6 +4343,8 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     elif query.data == "link_add_prompt":
         context.user_data["awaiting_btn_action"] = {"action": "add"}
+        context.user_data["prompt_msg_id"] = query.message.message_id
+        context.user_data["prompt_chat_id"] = query.message.chat_id
         await query.answer("Send new button details 💬")
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("◀️ Cancel / Back", callback_data="link_list")]
@@ -4458,6 +4466,8 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             return
         clear_all_admin_states(context)
         context.user_data["awaiting_grp_action"] = "add"
+        context.user_data["prompt_msg_id"] = query.message.message_id
+        context.user_data["prompt_chat_id"] = query.message.chat_id
         await query.answer("Send group chat ID 💬")
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")]
@@ -4491,6 +4501,8 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif query.data == "prompt_set_url":
         clear_all_admin_states(context)
         context.user_data["awaiting_api_url"] = True
+        context.user_data["prompt_msg_id"] = query.message.message_id
+        context.user_data["prompt_chat_id"] = query.message.chat_id
         await query.answer("Send new API URL 💬")
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")]
@@ -4525,6 +4537,8 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif query.data == "prompt_set_key":
         clear_all_admin_states(context)
         context.user_data["awaiting_api_key"] = True
+        context.user_data["prompt_msg_id"] = query.message.message_id
+        context.user_data["prompt_chat_id"] = query.message.chat_id
         await query.answer("Send new API Key 💬")
         current_key = client.api_key
         masked_key = f"{current_key[:8]}...{current_key[-4:]}" if len(current_key) > 12 else (current_key or "<i>None</i>")
@@ -4550,6 +4564,8 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif query.data == "prompt_set_bot_name":
         clear_all_admin_states(context)
         context.user_data["awaiting_bot_name"] = True
+        context.user_data["prompt_msg_id"] = query.message.message_id
+        context.user_data["prompt_chat_id"] = query.message.chat_id
         await query.answer("Send new bot name 💬")
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")]
@@ -5130,6 +5146,47 @@ async def periodic_gist_sync_loop():
                 base_url=client.base_url,
             )
 
+async def render_prompt_response(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    prompt_msg_id: Optional[int],
+    user_msg,
+    text: str,
+    reply_markup: Optional[InlineKeyboardMarkup] = None
+):
+    """Deletes admin typed message and edits prompt card in-place (or sends new if edit fails)."""
+    if user_msg:
+        try:
+            await user_msg.delete()
+        except Exception:
+            pass
+
+    edited = False
+    if prompt_msg_id and chat_id:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=prompt_msg_id,
+                text=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=reply_markup
+            )
+            edited = True
+        except Exception as e:
+            if "not modified" in str(e).lower():
+                edited = True
+
+    if not edited and chat_id:
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=reply_markup
+            )
+        except Exception as e:
+            logger.warning(f"Error sending prompt response: {e}")
+
 async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handles bottom reply keyboard button presses from admins (private DM only).
@@ -5230,11 +5287,6 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         prompt_msg_id = context.user_data.pop("prompt_msg_id", None)
         prompt_chat_id = context.user_data.pop("prompt_chat_id", None) or chat.id
 
-        try:
-            await msg_obj.delete()
-        except Exception:
-            pass
-
         clean_text = text.strip()
         if clean_text.isdigit():
             aid = int(clean_text)
@@ -5271,26 +5323,7 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
                     [InlineKeyboardButton("📊 Status", callback_data="refresh_dash_msg")]
                 ])
 
-                edited = False
-                if prompt_msg_id and prompt_chat_id:
-                    try:
-                        await context.bot.edit_message_text(
-                            chat_id=prompt_chat_id,
-                            message_id=prompt_msg_id,
-                            text=confirm_text,
-                            parse_mode=ParseMode.HTML,
-                            reply_markup=confirm_kb
-                        )
-                        edited = True
-                    except Exception:
-                        pass
-                if not edited:
-                    await context.bot.send_message(
-                        chat_id=prompt_chat_id,
-                        text=confirm_text,
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=confirm_kb
-                    )
+                await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, confirm_text, confirm_kb)
                 asyncio.create_task(notify_admin_promoted(context.bot, aid))
             else:
                 fail_text = "❌ <b>Failed to add administrator.</b> Database write error."
@@ -5298,19 +5331,7 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
                     [InlineKeyboardButton("🔄 Try Again", callback_data="admin_add_admin_prompt")],
                     [InlineKeyboardButton("📋 Admin List", callback_data="admin_manage_admins")]
                 ])
-                if prompt_msg_id and prompt_chat_id:
-                    try:
-                        await context.bot.edit_message_text(
-                            chat_id=prompt_chat_id,
-                            message_id=prompt_msg_id,
-                            text=fail_text,
-                            parse_mode=ParseMode.HTML,
-                            reply_markup=fail_kb
-                        )
-                    except Exception:
-                        await context.bot.send_message(chat_id=prompt_chat_id, text=fail_text, parse_mode=ParseMode.HTML, reply_markup=fail_kb)
-                else:
-                    await context.bot.send_message(chat_id=prompt_chat_id, text=fail_text, parse_mode=ParseMode.HTML, reply_markup=fail_kb)
+                await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, fail_text, fail_kb)
         else:
             err_text = (
                 "❌ <b>Invalid Account ID</b>\n"
@@ -5322,70 +5343,64 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
                 [InlineKeyboardButton("🔄 Try Again", callback_data="admin_add_admin_prompt")],
                 [InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_admins")]
             ])
-            if prompt_msg_id and prompt_chat_id:
-                try:
-                    await context.bot.edit_message_text(
-                        chat_id=prompt_chat_id,
-                        message_id=prompt_msg_id,
-                        text=err_text,
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=err_kb
-                    )
-                except Exception:
-                    await context.bot.send_message(chat_id=prompt_chat_id, text=err_text, parse_mode=ParseMode.HTML, reply_markup=err_kb)
-            else:
-                await context.bot.send_message(chat_id=prompt_chat_id, text=err_text, parse_mode=ParseMode.HTML, reply_markup=err_kb)
+            await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, err_text, err_kb)
         return
 
     # Awaiting API URL text input
     if context.user_data.get("awaiting_api_url"):
         context.user_data.pop("awaiting_api_url", None)
+        prompt_msg_id = context.user_data.pop("prompt_msg_id", None)
+        prompt_chat_id = context.user_data.pop("prompt_chat_id", None) or chat.id
         new_url = client.update_base_url(text)
         data = load_stored_data()
         data["thirdwave_base_url"] = new_url
         save_stored_data(data)
         asyncio.create_task(sync_data_to_secret_db())
-        await msg_obj.reply_text(
+        resp_text = (
             f"✅ <b>API Base URL Successfully Updated!</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"• <b>New Active URL:</b> <code>{new_url}</code>\n"
             f"• <b>Endpoint:</b> <code>{new_url}/api/v1/traffic</code>\n"
             f"• <b>Cloud DB:</b> <code>Synced & Encrypted 🔒</code>\n\n"
-            f"The bot is now requesting OTP traffic from this URL in real-time.",
-            parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🌐 API URL Settings", callback_data="api_url_menu")],
-                [InlineKeyboardButton("📊 Status", callback_data="refresh_dash_msg")]
-            ])
+            f"The bot is now requesting OTP traffic from this URL in real-time."
         )
+        resp_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🌐 API URL Settings", callback_data="api_url_menu")],
+            [InlineKeyboardButton("📊 Status", callback_data="refresh_dash_msg")]
+        ])
+        await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, resp_text, resp_kb)
         return
 
     # Awaiting API Key text input
     if context.user_data.get("awaiting_api_key"):
         context.user_data.pop("awaiting_api_key", None)
+        prompt_msg_id = context.user_data.pop("prompt_msg_id", None)
+        prompt_chat_id = context.user_data.pop("prompt_chat_id", None) or chat.id
         new_key = client.update_api_key(text)
         data = load_stored_data()
         data["thirdwave_api_key"] = new_key
         save_stored_data(data)
         asyncio.create_task(sync_data_to_secret_db())
         new_masked = f"{new_key[:8]}...{new_key[-4:]}" if len(new_key) > 12 else new_key
-        await msg_obj.reply_text(
+        resp_text = (
             f"✅ <b>Thirdwave API Key Successfully Updated!</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"• <b>New Active Key:</b> <code>{new_masked}</code>\n"
             f"• <b>Status:</b> <code>Active & Forwarding OTPs ⚡</code>\n"
-            f"• <b>Cloud DB:</b> <code>Synced & Encrypted 🔒</code>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔑 API Key Settings", callback_data="api_key_menu")],
-                [InlineKeyboardButton("📊 Status", callback_data="refresh_dash_msg")]
-            ])
+            f"• <b>Cloud DB:</b> <code>Synced & Encrypted 🔒</code>"
         )
+        resp_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔑 API Key Settings", callback_data="api_key_menu")],
+            [InlineKeyboardButton("📊 Status", callback_data="refresh_dash_msg")]
+        ])
+        await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, resp_text, resp_kb)
         return
 
     # Awaiting Bot Name text input
     if context.user_data.get("awaiting_bot_name"):
         context.user_data.pop("awaiting_bot_name", None)
+        prompt_msg_id = context.user_data.pop("prompt_msg_id", None)
+        prompt_chat_id = context.user_data.pop("prompt_chat_id", None) or chat.id
         new_name = text.strip()[:64]
         default_name = get_default_bot_name()
         if new_name.lower() in ("default", "reset"):
@@ -5402,56 +5417,55 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         save_stored_data(data)
         asyncio.create_task(sync_data_to_secret_db())
 
-        await msg_obj.reply_text(
+        resp_text = (
             f"✅ <b>Bot Name Successfully Updated!</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"• <b>New Name:</b> <code>{html.escape(new_name)}</code>\n"
             f"• <b>Default Name:</b> <code>{html.escape(new_name)} (Saved as permanent default)</code>\n"
             f"• <b>Telegram API:</b> <code>Applied Officially ✅</code>\n"
-            f"• <b>Cloud DB:</b> <code>Saved Secretly to Cloud Store 🔒</code>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✏️ Bot Name Settings", callback_data="bot_name_menu")],
-                [InlineKeyboardButton("📊 Status", callback_data="refresh_dash_msg")]
-            ])
+            f"• <b>Cloud DB:</b> <code>Saved Secretly to Cloud Store 🔒</code>"
         )
+        resp_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✏️ Bot Name Settings", callback_data="bot_name_menu")],
+            [InlineKeyboardButton("📊 Status", callback_data="refresh_dash_msg")]
+        ])
+        await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, resp_text, resp_kb)
         return
 
     # Check if admin is linking a group
     if context.user_data.get("awaiting_grp_action") == "add":
+        context.user_data.pop("awaiting_grp_action", None)
+        prompt_msg_id = context.user_data.pop("prompt_msg_id", None)
+        prompt_chat_id = context.user_data.pop("prompt_chat_id", None) or chat.id
         try:
             new_gid = int(text)
             all_current = get_target_group_chat_ids()
             if len(all_current) >= MAX_FORWARDING_GROUPS:
-                context.user_data.pop("awaiting_grp_action", None)
                 msg_text, markup = build_groups_list_view()
-                await msg_obj.reply_text(
+                limit_text = (
                     f"⚠️ <b>Maximum Group Limit Reached</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"You already have <b>{len(all_current)} / {MAX_FORWARDING_GROUPS} active groups</b>.\n"
                     f"The system allows a minimum of 1 and maximum of 10 groups.\n"
-                    f"Please remove an existing group before adding a new one.",
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=markup
+                    f"Please remove an existing group before adding a new one."
                 )
+                await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, limit_text, markup)
                 return
 
             if new_gid in all_current:
-                context.user_data.pop("awaiting_grp_action", None)
                 msg_text, markup = build_groups_list_view()
-                await msg_obj.reply_text(
+                already_text = (
                     f"ℹ️ <b>Group Already Linked</b>\n"
-                    f"Group <code>{new_gid}</code> is already in the forwarding pool.",
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=markup
+                    f"Group <code>{new_gid}</code> is already in the forwarding pool."
                 )
+                await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, already_text, markup)
                 return
 
             ok, reason = add_dynamic_linked_group(new_gid)
-            context.user_data.pop("awaiting_grp_action", None)
             if not ok:
                 msg_text, markup = build_groups_list_view()
-                await msg_obj.reply_text(f"⚠️ Could not add group: {reason}", parse_mode=ParseMode.HTML, reply_markup=markup)
+                fail_text = f"⚠️ Could not add group: {reason}"
+                await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, fail_text, markup)
                 return
 
             try:
@@ -5460,30 +5474,31 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
                 pass
             msg_text, markup = build_groups_list_view()
             new_total = len(get_target_group_chat_ids())
-            await msg_obj.reply_text(
+            success_text = (
                 f"✅ <b>Group Linked Successfully!</b> <code>{new_gid}</code>\n"
                 f"• <b>Active Groups:</b> <code>{new_total} / {MAX_FORWARDING_GROUPS}</code> (Limit: 1 - 10)\n"
                 f"• Commands wiped from group menu (0 commands).\n"
-                f"• Forwarding active immediately with custom buttons.",
-                parse_mode=ParseMode.HTML,
-                reply_markup=markup
+                f"• Forwarding active immediately with custom buttons."
             )
+            await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, success_text, markup)
             return
         except ValueError:
-            await msg_obj.reply_text(
+            err_text = (
                 "❌ <b>Invalid Group Chat ID</b>\n"
                 "Must be a numerical chat ID (e.g. <code>-1004473973263</code>).\n"
-                "Please send a valid chat ID or click Cancel:",
-                parse_mode=ParseMode.HTML,
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("❌ Cancel", callback_data="grp_list")]
-                ])
+                "Please send a valid chat ID or click Cancel:"
             )
+            err_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Cancel", callback_data="grp_list")]
+            ])
+            await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, err_text, err_kb)
             return
 
     # Check if admin was in middle of renaming, updating URL, or adding a button
     awaiting = context.user_data.get("awaiting_btn_action")
     if awaiting and isinstance(awaiting, dict):
+        prompt_msg_id = context.user_data.pop("prompt_msg_id", None)
+        prompt_chat_id = context.user_data.pop("prompt_chat_id", None) or chat.id
         action = awaiting.get("action")
         target_id = awaiting.get("id")
         buttons = get_custom_link_buttons()
@@ -5496,16 +5511,15 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
                 save_custom_link_buttons(buttons)
                 context.user_data.pop("awaiting_btn_action", None)
                 _, detail_kb = build_button_detail_view(found["id"])
-                await msg_obj.reply_text(
+                resp_text = (
                     f"✅ <b>Button Renamed!</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"• <b>Old:</b> <code>{html.escape(old_name)}</code>\n"
                     f"• <b>New:</b> <code>{html.escape(text)}</code>\n"
                     f"• <b>URL:</b> <code>{html.escape(found['url'])}</code>\n"
-                    f"• <b>Synced:</b> <code>Cloud DB 🔒</code>",
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=detail_kb
+                    f"• <b>Synced:</b> <code>Cloud DB 🔒</code>"
                 )
+                await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, resp_text, detail_kb)
                 return
 
         elif action == "reurl" and target_id:
@@ -5513,29 +5527,30 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
             if found:
                 clean_url = normalize_button_url(text)
                 if not clean_url:
-                    await msg_obj.reply_text(
+                    err_text = (
                         "❌ <b>Invalid URL or Bot Username</b>\n"
                         "Link must start with <code>https://</code>, <code>http://</code>, or be a bot username like <code>@bot_username</code>.\n"
-                        "Please send a valid link or click Cancel:",
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("❌ Cancel", callback_data=f"link_view_{found['id']}")]
-                        ])
+                        "Please send a valid link or click Cancel:"
                     )
+                    err_kb = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("❌ Cancel", callback_data=f"link_view_{found['id']}")]
+                    ])
+                    context.user_data["prompt_msg_id"] = prompt_msg_id
+                    context.user_data["prompt_chat_id"] = prompt_chat_id
+                    await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, err_text, err_kb)
                     return
                 found["url"] = clean_url
                 save_custom_link_buttons(buttons)
                 context.user_data.pop("awaiting_btn_action", None)
                 _, detail_kb = build_button_detail_view(found["id"])
-                await msg_obj.reply_text(
+                resp_text = (
                     f"✅ <b>Button URL Updated!</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"• <b>Button:</b> <code>{html.escape(found['text'])}</code>\n"
                     f"• <b>New URL:</b> <code>{html.escape(clean_url)}</code>\n"
-                    f"• <b>Synced:</b> <code>Cloud DB 🔒</code>",
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=detail_kb
+                    f"• <b>Synced:</b> <code>Cloud DB 🔒</code>"
                 )
+                await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, resp_text, detail_kb)
                 return
 
         elif action == "add":
@@ -5555,17 +5570,19 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
 
             clean_url = normalize_button_url(raw_url)
             if not b_name or not clean_url:
-                await msg_obj.reply_text(
+                err_text = (
                     "❌ <b>Invalid Format</b>\n"
                     "Please provide button name and link or bot username separated by <code>|</code>:\n"
                     "<code>Button Name | @bot_username</code>\n"
                     "<i>or:</i> <code>Button Name | https://yourlink.com</code>\n\n"
-                    "<i>Example:</i> <code>🤖 Number Bot | @my_number_bot</code>",
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("❌ Cancel", callback_data="link_list")]
-                    ])
+                    "<i>Example:</i> <code>🤖 Number Bot | @my_number_bot</code>"
                 )
+                err_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ Cancel", callback_data="link_list")]
+                ])
+                context.user_data["prompt_msg_id"] = prompt_msg_id
+                context.user_data["prompt_chat_id"] = prompt_chat_id
+                await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, err_text, err_kb)
                 return
 
             new_id = str(len(buttons) + 1)
@@ -5573,16 +5590,15 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
             save_custom_link_buttons(buttons)
             context.user_data.pop("awaiting_btn_action", None)
             _, detail_kb = build_button_detail_view(new_id)
-            await msg_obj.reply_text(
+            resp_text = (
                 f"✅ <b>New Custom Button Added!</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"• <b>Label:</b> <code>{html.escape(b_name)}</code>\n"
                 f"• <b>Link:</b> <code>{html.escape(clean_url)}</code>\n"
                 f"• <b>Total Active Buttons:</b> <code>{len(buttons)}</code> (side-by-side in group OTPs)\n"
-                f"• <b>Synced:</b> <code>Cloud DB 🔒</code>",
-                parse_mode=ParseMode.HTML,
-                reply_markup=detail_kb
+                f"• <b>Synced:</b> <code>Cloud DB 🔒</code>"
             )
+            await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, resp_text, detail_kb)
             return
 
 # ==========================================
