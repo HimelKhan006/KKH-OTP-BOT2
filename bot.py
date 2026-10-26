@@ -164,7 +164,7 @@ TELEGRAM_GROUP_CHAT_ID = os.getenv("TELEGRAM_GROUP_CHAT_ID", "").strip()
 SECONDARY_GROUP_CHAT_ID = os.getenv("SECONDARY_GROUP_CHAT_ID", os.getenv("TELEGRAM_SECONDARY_GROUP_CHAT_ID", "")).strip()
 MIN_FORWARDING_GROUPS: int = 1
 MAX_FORWARDING_GROUPS: int = 10
-POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "1.5"))
+POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "2.0"))
 STARTUP_TYPE          = os.getenv("STARTUP_TYPE", "workflow_dispatch").strip().lower()
 
 _admin_raw    = os.getenv("ADMIN_USER_IDS", "").strip()
@@ -1678,7 +1678,7 @@ class ThirdwaveClient:
     - Rate limit: 30 requests per minute per key (respects Retry-After on HTTP 429)
     - Response structure: {"items": [{"received_at", "sender_id", "range_name", "range_template", "number", "sms", "rate"}]}
     """
-    def __init__(self, base_url: str, api_key: str, timeout: float = 20.0):
+    def __init__(self, base_url: str, api_key: str, timeout: float = 8.0):
         self.base_url = self.clean_base_url(base_url)
         self.api_key = api_key.strip()
         self.timeout = timeout
@@ -1802,11 +1802,11 @@ class ThirdwaveClient:
             elif res.status_code == 429:
                 retry_header = res.headers.get("Retry-After", "")
                 try:
-                    retry_wait = float(retry_header) if retry_header else 20.0
+                    retry_wait = min(float(retry_header), 6.0) if retry_header else 2.5
                 except Exception:
-                    retry_wait = 20.0
+                    retry_wait = 2.5
                 self.cooldown_until = time.time() + retry_wait
-                logger.warning(f"⚠️ Thirdwave 429 Rate Limit Exceeded. Waiting {retry_wait:.1f}s (Retry-After)...")
+                logger.warning(f"⚠️ Thirdwave 429 Rate Limit Exceeded. Backing off {retry_wait:.1f}s...")
                 return []
 
             elif res.status_code in (401, 403):
@@ -2964,7 +2964,7 @@ async def poll_incoming_messages(application: Application):
             logger.error(f"⚠️ Polling error: {e}. Continuing in 2s...")
             await asyncio.sleep(2.0)
 
-        await asyncio.sleep(max(0.5, POLL_INTERVAL_SECONDS))
+        await asyncio.sleep(max(2.0, POLL_INTERVAL_SECONDS))
 
 # ==========================================
 # 12. Bot Commands & Admin Control Panel
