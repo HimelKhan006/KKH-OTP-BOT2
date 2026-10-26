@@ -164,7 +164,7 @@ TELEGRAM_GROUP_CHAT_ID = os.getenv("TELEGRAM_GROUP_CHAT_ID", "").strip()
 SECONDARY_GROUP_CHAT_ID = os.getenv("SECONDARY_GROUP_CHAT_ID", os.getenv("TELEGRAM_SECONDARY_GROUP_CHAT_ID", "")).strip()
 MIN_FORWARDING_GROUPS: int = 1
 MAX_FORWARDING_GROUPS: int = 10
-POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "2.0"))
+POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "4.0"))
 STARTUP_TYPE          = os.getenv("STARTUP_TYPE", "workflow_dispatch").strip().lower()
 
 _admin_raw    = os.getenv("ADMIN_USER_IDS", "").strip()
@@ -2964,7 +2964,7 @@ async def poll_incoming_messages(application: Application):
             logger.error(f"⚠️ Polling error: {e}. Continuing in 2s...")
             await asyncio.sleep(2.0)
 
-        await asyncio.sleep(max(2.0, POLL_INTERVAL_SECONDS))
+        await asyncio.sleep(max(4.0, POLL_INTERVAL_SECONDS))
 
 # ==========================================
 # 12. Bot Commands & Admin Control Panel
