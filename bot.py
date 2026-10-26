@@ -100,6 +100,7 @@ from telegram import (
     InlineKeyboardMarkup,
     CopyTextButton,
     ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
     KeyboardButton,
     BotCommand,
     BotCommandScopeDefault,
@@ -631,10 +632,192 @@ def get_linked_group_chat_id() -> Optional[int]:
     targets = get_target_group_chat_ids()
     return targets[0] if targets else None
 
+def is_admin(user_id: int) -> bool:
+    """Strict admin check: checks environment ADMIN_USER_IDS and database bot_admins."""
+    if not user_id:
+        return False
+    if ADMIN_USER_IDS and user_id in ADMIN_USER_IDS:
+        return True
+    try:
+        with get_db_connection() as conn:
+            row = conn.execute("SELECT user_id FROM bot_admins WHERE user_id = ?;", (user_id,)).fetchone()
+            if row:
+                return True
+    except Exception:
+        pass
+    return False
+
 def is_user_authorized(user_id: int) -> bool:
     if not ADMIN_USER_IDS:
         return True
-    return user_id in ADMIN_USER_IDS
+    return is_admin(user_id)
+
+def get_all_admin_ids() -> List[int]:
+    """Returns all unique admin user IDs from environment and database."""
+    admins = set(ADMIN_USER_IDS)
+    try:
+        with get_db_connection() as conn:
+            for r in conn.execute("SELECT user_id FROM bot_admins;").fetchall():
+                admins.add(r["user_id"])
+    except Exception:
+        pass
+    return list(admins)
+
+def get_all_admin_details() -> List[Dict[str, Any]]:
+    """Returns detailed information for all administrators."""
+    results = []
+    seen = set()
+    # 1. Environment Super Admins
+    for aid in ADMIN_USER_IDS:
+        seen.add(aid)
+        results.append({
+            "user_id": aid,
+            "username": "",
+            "first_name": "Super Admin",
+            "is_super": True,
+            "added_by": 0,
+        })
+    # 2. Database Admins
+    try:
+        with get_db_connection() as conn:
+            rows = conn.execute("SELECT user_id, added_by, username, first_name FROM bot_admins;").fetchall()
+            for r in rows:
+                uid = r["user_id"]
+                if uid not in seen:
+                    seen.add(uid)
+                    results.append({
+                        "user_id": uid,
+                        "username": r["username"] or "",
+                        "first_name": r["first_name"] or "Admin",
+                        "is_super": False,
+                        "added_by": r["added_by"] or 0,
+                    })
+    except Exception:
+        pass
+    return results
+
+def add_admin(user_id: int, added_by: int = 0, username: str = "", first_name: str = "") -> bool:
+    """Adds a new admin to the database and syncs to cloud Gist."""
+    try:
+        with get_db_connection() as conn:
+            conn.execute("""
+                INSERT INTO bot_admins (user_id, added_by, username, first_name)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    username = CASE WHEN excluded.username != '' THEN excluded.username ELSE bot_admins.username END,
+                    first_name = CASE WHEN excluded.first_name != '' THEN excluded.first_name ELSE bot_admins.first_name END;
+            """, (user_id, added_by, username or "", first_name or ""))
+            conn.commit()
+        if "gist_storage" in globals() and gist_storage.enabled:
+            try:
+                asyncio.create_task(sync_admins_to_gist())
+            except Exception:
+                pass
+        return True
+    except Exception as e:
+        logger.error(f"Error adding admin {user_id}: {e}")
+        return False
+
+def remove_admin(user_id: int) -> bool:
+    """Removes an admin from database (cannot remove env super admins)."""
+    if ADMIN_USER_IDS and user_id in ADMIN_USER_IDS:
+        return False
+    try:
+        with get_db_connection() as conn:
+            conn.execute("DELETE FROM bot_admins WHERE user_id = ?;", (user_id,))
+            conn.commit()
+        if "gist_storage" in globals() and gist_storage.enabled:
+            try:
+                asyncio.create_task(sync_admins_to_gist())
+            except Exception:
+                pass
+        return True
+    except Exception as e:
+        logger.error(f"Error removing admin {user_id}: {e}")
+        return False
+
+async def notify_admin_revocation(bot: Bot, target_id: int):
+    """
+    Sends a professional confirmation message to the removed administrator
+    informing them that their privileges have been revoked, and automatically
+    removes their admin reply keyboard.
+    """
+    try:
+        bot_name = get_bot_name()
+        notification_text = (
+            "⛔ <b>Administrator Privileges Revoked</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"Your administrator access on <b>{html.escape(bot_name)}</b> has been revoked by the Super Administrator.\n\n"
+            "• <b>Account Status:</b> <code>Standard User</code>\n"
+            "• <b>Admin Privileges:</b> <code>Disabled</code>\n"
+            "• <b>Dashboard Access:</b> <code>Cleared & Deactivated</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "<i>Your admin controls have been removed from this account.</i>"
+        )
+        await send_with_retry(bot, target_id, notification_text, reply_markup=ReplyKeyboardRemove())
+        logger.info(f"Delivered admin revocation notification to user {target_id}")
+    except Exception as e:
+        logger.warning(f"Could not deliver admin revocation notice to {target_id}: {e}")
+
+async def notify_admin_promoted(bot: Bot, target_id: int):
+    """Sends a professional notification when a user is promoted to Administrator."""
+    try:
+        bot_name = get_bot_name()
+        notification_text = (
+            "👑 <b>Administrator Privileges Granted</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"You have been granted Administrator privileges on <b>{html.escape(bot_name)}</b>!\n\n"
+            "• <b>Account Status:</b> <code>Administrator</code>\n"
+            "• <b>Admin Dashboard:</b> <code>Active & Unlocked</code>\n"
+            "• <b>Permissions:</b> <code>OTP forwarding, linked groups & bot controls</code>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "<i>Your menu has been updated with Admin controls. Tap below to access the Admin Panel:</i>"
+        )
+        await send_with_retry(bot, target_id, notification_text, reply_markup=get_admin_reply_keyboard())
+        logger.info(f"Delivered admin promotion notification to user {target_id}")
+    except Exception as e:
+        logger.warning(f"Could not deliver admin promotion notice to {target_id}: {e}")
+
+def build_admin_manage_view() -> Tuple[str, InlineKeyboardMarkup]:
+    admins = get_all_admin_details()
+    admin_lines = []
+    for a in admins:
+        role = "👑 <b>Super Admin</b> (Env)" if a["is_super"] else "🛡️ <b>Admin</b> (Added via Bot)"
+        u_tag = f"@{a['username']}" if a["username"] else a["first_name"]
+        admin_lines.append(f"• <code>{a['user_id']}</code> — {u_tag} [{role}]")
+
+    admins_formatted = "\n".join(admin_lines) if admin_lines else "<i>No administrators found.</i>"
+    text = (
+        f"👑 <b>Administrator Management</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>Active Administrators:</b>\n"
+        f"{admins_formatted}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💡 <i>All administrators have full access to status, forwarding controls, and bot management.</i>\n"
+        f"<i>Super Admins are defined in GitHub Secrets / .env and cannot be removed via Telegram.</i>"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Add New Admin", callback_data="admin_add_admin_prompt")],
+        [InlineKeyboardButton("🗑️ Remove Admin", callback_data="admin_remove_admin_menu")],
+        [InlineKeyboardButton("◀️ Back to Status", callback_data="admin_panel")]
+    ])
+    return text, keyboard
+
+async def sync_admins_to_gist():
+    if not gist_storage.enabled:
+        return
+    try:
+        today_total, total_28h, active_countries = get_dashboard_stats()
+        base = client.base_url if "client" in globals() else ""
+        await gist_storage.save_state(
+            seen_dict=seen_timestamps,
+            is_handover=False,
+            total_forwarded=today_total,
+            country_counts=active_countries,
+            base_url=base,
+        )
+    except Exception as e:
+        logger.warning(f"Gist admin sync notice: {e}")
 
 # ==========================================
 # 6. GitHub Gist Cloud Storage (28-Hour Retention)
@@ -756,6 +939,25 @@ class GistStorage:
                             cutoff = datetime.now(timezone.utc).timestamp() - (28 * 3600)
                             valid_seen = {k: float(v) for k, v in seen_map.items() if float(v) >= cutoff}
 
+                            # Reconcile bot admins
+                            admins_data = parsed.get("admins", [])
+                            if isinstance(admins_data, list):
+                                try:
+                                    with get_db_connection() as aconn:
+                                        for a in admins_data:
+                                            aid = a.get("user_id")
+                                            if aid and not a.get("is_super"):
+                                                aconn.execute("""
+                                                    INSERT INTO bot_admins (user_id, added_by, username, first_name)
+                                                    VALUES (?, ?, ?, ?)
+                                                    ON CONFLICT(user_id) DO UPDATE SET
+                                                        username = CASE WHEN excluded.username != '' THEN excluded.username ELSE bot_admins.username END,
+                                                        first_name = CASE WHEN excluded.first_name != '' THEN excluded.first_name ELSE bot_admins.first_name END;
+                                                """, (aid, a.get("added_by", 0), a.get("username", ""), a.get("first_name", "")))
+                                        aconn.commit()
+                                except Exception as ae:
+                                    logger.warning(f"Error restoring admins from Gist: {ae}")
+
                             logger.info(f"☁️ Restored {len(valid_seen)} seen messages from GitHub Gist ({self.gist_id[:8]}...).")
                             return {
                                 "seen": valid_seen,
@@ -792,6 +994,21 @@ class GistStorage:
             cutoff = datetime.now(timezone.utc).timestamp() - (28 * 3600)
             cleaned = {k: v for k, v in seen_dict.items() if v >= cutoff}
 
+            # Active database admins for cloud persistence
+            admins_list = []
+            try:
+                with get_db_connection() as aconn:
+                    for row in aconn.execute("SELECT user_id, added_by, username, first_name FROM bot_admins;").fetchall():
+                        admins_list.append({
+                            "user_id": row["user_id"],
+                            "added_by": row["added_by"],
+                            "username": row["username"],
+                            "first_name": row["first_name"],
+                            "is_super": False
+                        })
+            except Exception:
+                pass
+
             payload_data = {
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "bot": self.bot_name,
@@ -804,6 +1021,7 @@ class GistStorage:
                 "country_counts": country_counts or {},
                 "base_url": base_url or "",
                 "bot_data": load_stored_data(),
+                "admins": admins_list,
                 "manual_restart": bool(kwargs.get("manual_restart", False)),
             }
             payload = {
@@ -931,6 +1149,15 @@ def init_db():
                 key         TEXT PRIMARY KEY,
                 value       TEXT,
                 updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS bot_admins (
+                user_id     INTEGER PRIMARY KEY,
+                added_by    INTEGER DEFAULT 0,
+                username    TEXT DEFAULT '',
+                first_name  TEXT DEFAULT '',
+                added_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
         conn.commit()
@@ -2819,6 +3046,7 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
         f"🗄️ <b>Database:</b>   <code>{gist_status}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"👥 <b>Groups:</b>      <code>{group_text}</code>\n"
+        f"👑 <b>Admins:</b>      <code>{len(get_all_admin_ids())} active</code>\n"
         f"⚡ <b>Forwarding:</b>  <code>{fwd_label}</code>\n"
         f"📨 <b>OTPs Today:</b>  <code>{total_today} received</code>\n"
         f"📦 <b>DB Records:</b>  <code>{total_28h} (28h rolling)</code>\n"
@@ -2831,6 +3059,7 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     )
 
     keyboard = [
+        [InlineKeyboardButton("👑 Manage Admins", callback_data="admin_manage_admins")],
         [InlineKeyboardButton("🔄 Refresh Status", callback_data="refresh_dash")],
     ]
     return msg, InlineKeyboardMarkup(keyboard)
@@ -2842,14 +3071,14 @@ def get_admin_reply_keyboard() -> ReplyKeyboardMarkup:
     Row 2: 📋 SMS Format | 👥 Linked Groups
     Row 3: 🌐 API URL | 🔑 API Key
     Row 4: ✏️ Bot Name | 🔗 Link Button
-    Row 5: 🔄 Restart (at the very bottom)
+    Row 5: 👑 Admins | 🔄 Restart
     """
     keyboard = [
         [KeyboardButton("📊 Status"), KeyboardButton("⚡ OTP Forwarding")],
         [KeyboardButton("📋 SMS Format"), KeyboardButton("👥 Linked Groups")],
         [KeyboardButton("🌐 API URL"), KeyboardButton("🔑 API Key")],
         [KeyboardButton("✏️ Bot Name"), KeyboardButton("🔗 Link Button")],
-        [KeyboardButton("🔄 Restart")],
+        [KeyboardButton("👑 Admins"), KeyboardButton("🔄 Restart")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
@@ -3042,6 +3271,7 @@ def clear_all_admin_states(context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("awaiting_btn_action", None)
     context.user_data.pop("awaiting_grp_action", None)
     context.user_data.pop("awaiting_action", None)
+    context.user_data.pop("awaiting_add_admin", None)
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to cancel any pending interactive action."""
@@ -3772,7 +4002,35 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     user_id = query.from_user.id if query.from_user else 0
     if not is_user_authorized(user_id):
-        await query.answer("⛔ Access Restricted: Admins only.", show_alert=True)
+        try:
+            await query.answer("⛔ Access Denied: Administrator privileges revoked.", show_alert=True)
+        except Exception:
+            pass
+
+        bot_name = get_bot_name()
+        revoked_msg = (
+            "⛔ <b>Administrator Privileges Revoked</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"Your administrator access on <b>{html.escape(bot_name)}</b> has been revoked.\n"
+            "You no longer have permission to view or manage the OTP Bot Dashboard.\n\n"
+            "• <b>Account Status:</b> <code>Standard User</code>\n"
+            "• <b>Admin Privileges:</b> <code>Disabled</code>\n"
+            "• <b>Dashboard:</b> <code>Cleared & Deactivated</code>"
+        )
+        try:
+            await query.edit_message_text(revoked_msg, parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="🔄 <i>Your menu has been updated. Admin privileges removed.</i>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=ReplyKeyboardRemove()
+            )
+        except Exception:
+            pass
         return
 
     # Acknowledge callback unless it has a dedicated toast notification
@@ -4357,6 +4615,63 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         text_view, markup = build_sms_format_view(preview_mode="long")
         await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
 
+    elif query.data in ("admin_manage_admins", "admin_panel"):
+        clear_all_admin_states(context)
+        text_view, markup = build_admin_manage_view() if query.data == "admin_manage_admins" else build_status_dashboard()
+        try:
+            await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+        except Exception as e:
+            if "not modified" not in str(e).lower():
+                try:
+                    await query.answer("Updated")
+                except Exception:
+                    pass
+
+    elif query.data == "admin_add_admin_prompt":
+        context.user_data["awaiting_add_admin"] = True
+        text = (
+            "➕ <b>Add New Administrator</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Send the **Telegram User ID** (numbers only) of the user you wish to promote to Admin.\n\n"
+            "💡 <i>Tip: The user can check their ID via @userinfobot.</i>"
+        )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_admins")]
+        ])
+        await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+
+    elif query.data == "admin_remove_admin_menu":
+        admins = get_all_admin_details()
+        removable = [a for a in admins if not a["is_super"]]
+        if not removable:
+            await query.answer("ℹ️ No removable database admins found. Super Admins (from .env) cannot be removed via Telegram.", show_alert=True)
+            return
+
+        buttons = []
+        for a in removable:
+            u_tag = f"@{a['username']}" if a["username"] else a["first_name"]
+            buttons.append([InlineKeyboardButton(f"🗑️ Remove {u_tag} ({a['user_id']})", callback_data=f"admin_rm_admin_{a['user_id']}")])
+
+        buttons.append([InlineKeyboardButton("◀️ Back", callback_data="admin_manage_admins")])
+        text = (
+            "🗑️ <b>Remove Administrator</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Tap an admin below to revoke their administrative privileges:"
+        )
+        await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+
+    elif query.data.startswith("admin_rm_admin_"):
+        target_id = int(query.data.split("_")[3])
+        ok = remove_admin(target_id)
+        if ok:
+            await query.answer(f"✅ Admin privileges revoked for {target_id}!", show_alert=True)
+            asyncio.create_task(notify_admin_revocation(context.bot, target_id))
+        else:
+            await query.answer(f"❌ Could not remove {target_id}.", show_alert=True)
+
+        text_view, markup = build_admin_manage_view()
+        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
     elif query.data in ("refresh_dash", "refresh_dash_msg"):
         try:
             msg_text, reply_markup = build_status_dashboard()
@@ -4609,6 +4924,75 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=confirm_kb,
     )
 
+async def addadmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj or not user:
+        return
+    if not is_user_authorized(user.id):
+        return
+    args = context.args if context and context.args else []
+    if not args or not args[0].isdigit():
+        await msg_obj.reply_text("💡 Usage: <code>/addadmin &lt;user_id&gt;</code>\nExample: <code>/addadmin 123456789</code>", parse_mode=ParseMode.HTML)
+        return
+    target_id = int(args[0])
+    ok = add_admin(target_id, added_by=user.id)
+    if ok:
+        await msg_obj.reply_text(
+            f"✅ User <code>{target_id}</code> has been promoted to Administrator!\n"
+            f"• Cloud DB: <code>Synced & Encrypted 🔒</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👑 Manage Admins", callback_data="admin_manage_admins")]
+            ])
+        )
+        asyncio.create_task(notify_admin_promoted(context.bot, target_id))
+    else:
+        await msg_obj.reply_text("❌ Could not add administrator.", parse_mode=ParseMode.HTML)
+
+async def removeadmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj or not user:
+        return
+    if not is_user_authorized(user.id):
+        return
+    args = context.args if context and context.args else []
+    if not args or not args[0].isdigit():
+        await msg_obj.reply_text("💡 Usage: <code>/removeadmin &lt;user_id&gt;</code>\nExample: <code>/removeadmin 123456789</code>", parse_mode=ParseMode.HTML)
+        return
+    target_id = int(args[0])
+    if target_id in ADMIN_USER_IDS:
+        await msg_obj.reply_text("⛔ Cannot remove Super Admin defined in environment variables / secrets.", parse_mode=ParseMode.HTML)
+        return
+    ok = remove_admin(target_id)
+    if ok:
+        await msg_obj.reply_text(
+            f"✅ Administrator privileges revoked for <code>{target_id}</code>.\n"
+            f"• Cloud DB: <code>Synced & Encrypted 🔒</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👑 Manage Admins", callback_data="admin_manage_admins")]
+            ])
+        )
+        asyncio.create_task(notify_admin_revocation(context.bot, target_id))
+    else:
+        await msg_obj.reply_text("❌ Could not remove administrator.", parse_mode=ParseMode.HTML)
+
+async def admins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user = update.effective_user
+    msg_obj = update.effective_message
+    if not chat or not msg_obj or not user:
+        return
+    if not is_user_authorized(user.id):
+        return
+    clear_all_admin_states(context)
+    text_view, markup = build_admin_manage_view()
+    await msg_obj.reply_text(text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
 async def send_startup_announcement(application: Application):
     """
     Sends startup notification to Admin private chat only on new update pushed,
@@ -4677,7 +5061,7 @@ async def send_startup_announcement(application: Application):
         "━━━━━━━━━━━━━━━━━━━━\n"
         "<i>👑 Use /start anytime to open the admin dashboard.</i>"
     )
-    for aid in ADMIN_USER_IDS:
+    for aid in get_all_admin_ids():
         if aid:
             try:
                 await send_with_retry(application.bot, aid, admin_msg, reply_markup=get_admin_reply_keyboard())
@@ -4730,13 +5114,21 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         return
     user_id = user.id
     if not is_user_authorized(user_id):
-        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
+        bot_name = get_bot_name()
+        await msg_obj.reply_text(
+            "⛔ <b>Access Restricted</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"Your administrator access on <b>{html.escape(bot_name)}</b> has been revoked.\n\n"
+            "<i>Admin menu has been removed from your account.</i>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=ReplyKeyboardRemove()
+        )
         return
 
     text = (msg_obj.text or "").strip()
 
     # Clear pending prompt states if an admin clicks any reply menu button
-    if text in ("📊 Status", "⚡ OTP Forwarding", "🔑 API Key", "🌐 API URL", "📋 SMS Format", "✏️ Bot Name", "🔗 Link Button", "👥 Linked Groups", "🔄 Restart"):
+    if text in ("📊 Status", "⚡ OTP Forwarding", "🔑 API Key", "🌐 API URL", "📋 SMS Format", "✏️ Bot Name", "🔗 Link Button", "👥 Linked Groups", "👑 Admins", "🔄 Restart"):
         clear_all_admin_states(context)
 
     # Cancel command or cancel text
@@ -4793,9 +5185,39 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         await msg_obj.reply_text(msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
         return
 
+    elif text == "👑 Admins":
+        clear_all_admin_states(context)
+        text_view, markup = build_admin_manage_view()
+        await msg_obj.reply_text(text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+        return
+
     elif text == "🔄 Restart":
         clear_all_admin_states(context)
         await restart_command(update, context)
+        return
+
+    # Awaiting Add Admin text input
+    if context.user_data.get("awaiting_add_admin"):
+        context.user_data.pop("awaiting_add_admin", None)
+        if text.isdigit():
+            aid = int(text)
+            ok = add_admin(aid, added_by=user_id)
+            if ok:
+                await msg_obj.reply_text(
+                    f"✅ User <code>{aid}</code> is now an Administrator!\n"
+                    f"• Status: <code>Active Admin</code>\n"
+                    f"• Cloud DB: <code>Synced & Encrypted 🔒</code>",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("👑 Manage Admins", callback_data="admin_manage_admins")],
+                        [InlineKeyboardButton("📊 Status", callback_data="refresh_dash_msg")]
+                    ])
+                )
+                asyncio.create_task(notify_admin_promoted(context.bot, aid))
+            else:
+                await msg_obj.reply_text("❌ Failed to add administrator.", parse_mode=ParseMode.HTML)
+        else:
+            await msg_obj.reply_text("❌ Invalid user ID. Please send digits only.", parse_mode=ParseMode.HTML)
         return
 
     # Awaiting API URL text input
@@ -5280,6 +5702,9 @@ async def main():
     application.add_handler(CommandHandler("groups",       groups_command,       filters=_private))
     application.add_handler(CommandHandler("listgroups",   groups_command,       filters=_private))
     application.add_handler(CommandHandler("restart",      restart_command,      filters=_private))
+    application.add_handler(CommandHandler("addadmin",     addadmin_command,     filters=_private))
+    application.add_handler(CommandHandler("removeadmin",  removeadmin_command,  filters=_private))
+    application.add_handler(CommandHandler("admins",       admins_command,       filters=_private))
     application.add_handler(CallbackQueryHandler(admin_callback_handler))
     application.add_handler(MessageHandler(_private & filters.TEXT & ~filters.COMMAND, keyboard_button_handler))
 
@@ -5375,11 +5800,10 @@ async def main():
                 logger.debug(f"Default commands register notice: {cmd_err}")
 
             # 3. Wipe commands from groups ONLY (groups will have 0 commands and default menu)
-            for sc in (BotCommandScopeAllGroupChats(), BotCommandScopeAllChatAdministrators()):
-                try:
-                    await application.bot.set_my_commands([], scope=sc)
-                except Exception:
-                    pass
+            try:
+                await application.bot.set_my_commands([], scope=BotCommandScopeAllGroupChats())
+            except Exception:
+                pass
 
             for gid in get_target_group_chat_ids():
                 try:
@@ -5388,7 +5812,7 @@ async def main():
                 except Exception:
                     pass
 
-            for aid in ADMIN_USER_IDS:
+            for aid in get_all_admin_ids():
                 try:
                     await application.bot.set_my_commands(bot_cmds, scope=BotCommandScopeChat(aid))
                     await application.bot.set_chat_menu_button(chat_id=aid, menu_button=MenuButtonCommands())
