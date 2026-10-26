@@ -4647,12 +4647,9 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             await query.edit_message_text(
                 "🔒 <b>Administrator Panel Closed</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                "<i>The administrator management panel has been closed safely.</i>\n\n"
-                "💡 <i>Use the <b>👑 Admins</b> menu button or tap below to reopen.</i>",
+                "<i>The administrator management panel has been closed safely.</i>",
                 parse_mode=ParseMode.HTML,
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("👑 Reopen Admins", callback_data="admin_manage_admins")]
-                ])
+                reply_markup=None
             )
         except Exception:
             pass
