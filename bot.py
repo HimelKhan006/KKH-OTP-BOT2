@@ -71,6 +71,27 @@ def format_bangladesh_12h(dt: Optional[datetime] = None) -> Tuple[str, str]:
     date_str = dt.strftime("%d-%m-%Y")
     return time_str, date_str
 
+def get_current_commit() -> str:
+    """Returns the current git commit SHA (short) from env or git."""
+    sha = os.getenv("GITHUB_SHA", "").strip()
+    if sha:
+        return sha[:7]
+    try:
+        repo_dir = os.path.dirname(os.path.abspath(__file__))
+        res = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=3,
+            cwd=repo_dir
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            return res.stdout.strip()
+    except Exception:
+        pass
+    return ""
+
 import httpx
 from telegram import (
     Update,
@@ -209,10 +230,69 @@ def _load_settings_from_sqlite() -> dict:
         logger.warning(f"Error loading settings from SQLite: {e}")
     return result
 
+def get_bot_setting(key: str, default: str = "") -> str:
+    """Reads a single setting string directly from SQLite bot_settings table."""
+    try:
+        if os.path.exists(DB_FILE):
+            conn = sqlite3.connect(DB_FILE, timeout=30.0)
+            try:
+                conn.execute("PRAGMA busy_timeout = 30000;")
+                cur = conn.execute("SELECT value FROM bot_settings WHERE key = ? LIMIT 1;", (key,))
+                row = cur.fetchone()
+                if row and row[0] is not None:
+                    return str(row[0]).strip()
+            finally:
+                conn.close()
+    except Exception as e:
+        logger.debug(f"get_bot_setting notice ({key}): {e}")
+    return default
+
+def set_bot_setting(key: str, value: str) -> bool:
+    """Writes a single setting string directly to SQLite bot_settings table."""
+    try:
+        conn = sqlite3.connect(DB_FILE, timeout=30.0)
+        try:
+            conn.execute("PRAGMA busy_timeout = 30000;")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS bot_settings (
+                    key         TEXT PRIMARY KEY,
+                    value       TEXT,
+                    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            conn.execute(
+                "INSERT OR REPLACE INTO bot_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP);",
+                (key, str(value))
+            )
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning(f"set_bot_setting error ({key}): {e}")
+    return False
+
+def delete_bot_setting(key: str) -> bool:
+    """Deletes a setting from SQLite bot_settings table."""
+    try:
+        if os.path.exists(DB_FILE):
+            conn = sqlite3.connect(DB_FILE, timeout=30.0)
+            try:
+                conn.execute("PRAGMA busy_timeout = 30000;")
+                conn.execute("DELETE FROM bot_settings WHERE key = ?;", (key,))
+                conn.commit()
+                return True
+            finally:
+                conn.close()
+    except Exception as e:
+        logger.warning(f"delete_bot_setting error ({key}): {e}")
+    return False
+
 def _save_settings_to_sqlite(data: dict):
     """
     Saves all bot configuration settings permanently to the SQLite database (bot_settings table).
     Stores both the consolidated JSON document and individual key-value rows.
+    Purges deleted keys so removed buttons/settings are never resurrected.
     """
     try:
         conn = sqlite3.connect(DB_FILE, timeout=30.0)
@@ -237,6 +317,15 @@ def _save_settings_to_sqlite(data: dict):
                     "INSERT OR REPLACE INTO bot_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP);",
                     (k, val_str)
                 )
+
+            # Explicitly purge legacy keys when custom link buttons are empty or cleared
+            if data.get("custom_link_buttons_cleared") or data.get("custom_link_buttons") == []:
+                conn.execute("DELETE FROM bot_settings WHERE key IN ('custom_link_button', 'custom_link_button_url', 'custom_link_button_text');")
+                conn.execute("INSERT OR REPLACE INTO bot_settings (key, value, updated_at) VALUES ('custom_link_buttons', '[]', CURRENT_TIMESTAMP);")
+                conn.execute("INSERT OR REPLACE INTO bot_settings (key, value, updated_at) VALUES ('custom_link_buttons_cleared', '1', CURRENT_TIMESTAMP);")
+            elif "custom_link_button" not in data:
+                conn.execute("DELETE FROM bot_settings WHERE key IN ('custom_link_button', 'custom_link_button_url', 'custom_link_button_text');")
+
             conn.commit()
             try:
                 conn.execute("PRAGMA wal_checkpoint(PASSIVE);")
@@ -329,9 +418,16 @@ def normalize_button_url(raw_url: str) -> Optional[str]:
 def get_custom_link_buttons() -> List[Dict[str, str]]:
     """
     Returns list of custom buttons: [{"id": "1", "text": "...", "url": "..."}, ...]
-    Maintains backward compatibility with legacy single dict data['custom_link_button'].
+    Maintains backward compatibility with legacy single dict data['custom_link_button']
+    ONLY if custom buttons were never configured or cleared.
     """
     data = load_stored_data()
+
+    # 1. If admin explicitly cleared buttons or marked cleared in SQLite/data, return empty list!
+    if data.get("custom_link_buttons_cleared") or get_bot_setting("custom_link_buttons_cleared") == "1":
+        return []
+
+    # 2. Check explicit custom_link_buttons list
     buttons = []
     raw_list = data.get("custom_link_buttons")
     if isinstance(raw_list, list):
@@ -342,22 +438,22 @@ def get_custom_link_buttons() -> List[Dict[str, str]]:
                 b_url  = normalize_button_url(raw_u) or raw_u
                 b_id   = str(item.get("id") or (idx + 1))
                 buttons.append({"id": b_id, "text": b_text, "url": b_url})
+        return buttons
 
-    legacy = data.get("custom_link_button")
-    if isinstance(legacy, dict) and legacy.get("text") and legacy.get("url"):
-        legacy_text = str(legacy["text"]).strip()
-        raw_lu      = str(legacy["url"]).strip()
-        legacy_url  = normalize_button_url(raw_lu) or raw_lu
-        if not any(b["text"] == legacy_text and b["url"] == legacy_url for b in buttons):
-            buttons.insert(0, {"id": "1", "text": legacy_text, "url": legacy_url})
-            for idx, b in enumerate(buttons):
-                b["id"] = str(idx + 1)
+    # 3. Only if custom_link_buttons key was NEVER defined anywhere in data/db:
+    if "custom_link_buttons" not in data:
+        legacy = data.get("custom_link_button")
+        if isinstance(legacy, dict) and legacy.get("text") and legacy.get("url"):
+            legacy_text = str(legacy["text"]).strip()
+            raw_lu      = str(legacy["url"]).strip()
+            legacy_url  = normalize_button_url(raw_lu) or raw_lu
+            buttons.append({"id": "1", "text": legacy_text, "url": legacy_url})
             data["custom_link_buttons"] = buttons
             save_stored_data(data)
     return buttons
 
 def save_custom_link_buttons(buttons: List[Dict[str, str]]):
-    """Saves normalized custom link buttons list and updates legacy key for backward compatibility."""
+    """Saves normalized custom link buttons list and syncs both locally and to cloud Gist."""
     data = load_stored_data()
     normalized = []
     for idx, b in enumerate(buttons):
@@ -370,14 +466,26 @@ def save_custom_link_buttons(buttons: List[Dict[str, str]]):
         })
     data["custom_link_buttons"] = normalized
     if normalized:
+        data["custom_link_buttons_cleared"] = False
         data["custom_link_button"] = {"text": normalized[0]["text"], "url": normalized[0]["url"]}
+        set_bot_setting("custom_link_buttons_cleared", "0")
+        set_bot_setting("custom_link_buttons", json.dumps(normalized))
+        set_bot_setting("custom_link_button", json.dumps(data["custom_link_button"]))
     else:
+        data["custom_link_buttons_cleared"] = True
         data.pop("custom_link_button", None)
+        set_bot_setting("custom_link_buttons_cleared", "1")
+        set_bot_setting("custom_link_buttons", "[]")
+        delete_bot_setting("custom_link_button")
+        delete_bot_setting("custom_link_button_url")
+        delete_bot_setting("custom_link_button_text")
+
     save_stored_data(data)
     if "sync_data_to_secret_db" in globals():
         try:
-            asyncio.create_task(sync_data_to_secret_db())
-        except Exception:
+            loop = asyncio.get_running_loop()
+            loop.create_task(sync_data_to_secret_db())
+        except (RuntimeError, Exception):
             pass
 
 def get_dynamic_linked_groups() -> List[int]:
@@ -2464,6 +2572,15 @@ async def poll_incoming_messages(application: Application):
             local_data = load_stored_data()
             local_data.pop("thirdwave_base_url", None)
             local_data.pop("base_url", None)
+            if saved_bot_data.get("custom_link_buttons_cleared") or saved_bot_data.get("custom_link_buttons") == []:
+                local_data["custom_link_buttons"] = []
+                local_data["custom_link_buttons_cleared"] = True
+                local_data.pop("custom_link_button", None)
+                delete_bot_setting("custom_link_button")
+                delete_bot_setting("custom_link_button_url")
+                delete_bot_setting("custom_link_button_text")
+                set_bot_setting("custom_link_buttons", "[]")
+                set_bot_setting("custom_link_buttons_cleared", "1")
             local_data.update(saved_bot_data)
             save_stored_data(local_data)
             custom_name = local_data.get("bot_name") or local_data.get("default_bot_name")
@@ -4381,6 +4498,11 @@ async def perform_zero_restart_handover(target_message=None, manual_restart: boo
     _manual_restart = manual_restart
 
     try:
+        set_bot_setting("manual_restart", "1" if manual_restart else "0")
+    except Exception:
+        pass
+
+    try:
         with get_db_connection() as conn:
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
     except Exception as e:
@@ -4388,11 +4510,12 @@ async def perform_zero_restart_handover(target_message=None, manual_restart: boo
 
     if gist_storage.enabled:
         try:
+            today_total, total_28h, active_countries = get_dashboard_stats()
             await gist_storage.save_state(
                 seen_dict=seen_timestamps,
                 is_handover=True,
-                total_forwarded=total_forwarded_count,
-                country_counts=country_forwarded_counts,
+                total_forwarded=today_total,
+                country_counts=active_countries,
                 base_url=client.base_url,
                 manual_restart=manual_restart,
             )
@@ -4412,7 +4535,7 @@ async def perform_zero_restart_handover(target_message=None, manual_restart: boo
 
     # Proactively dispatch the new GitHub Actions workflow run session
     try:
-        await trigger_proactive_handover()
+        await trigger_proactive_handover(manual_restart=manual_restart)
     except Exception as e:
         logger.warning(f"Admin restart dispatch notice: {e}")
 
@@ -4449,8 +4572,9 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_startup_announcement(application: Application):
     """
-    Sends startup notification to Admin private DM only on initial deployment, push, or manual admin restart.
-    COMPLETELY SILENT on routine 24/7 handover sessions (zero restart messages).
+    Sends startup notification to Admin private chat only on new update pushed,
+    initial deployment, or manual admin restart. Matching number bot format.
+    COMPLETELY SILENT on routine 24/7 handover sessions (zero spam).
     """
     global _manual_restart, _is_handover
     silent_env = os.getenv("SILENT_STARTUP", "").strip().lower() in ("true", "1", "yes")
@@ -4458,30 +4582,43 @@ async def send_startup_announcement(application: Application):
         logger.info("🤫 SILENT_STARTUP set: startup notification suppressed.")
         return
 
-    # If it is a routine 24/7 handover and NOT a manual admin restart, remain silent
-    if _is_handover and not _manual_restart:
-        logger.info("🤫 Automated session handover continuation: restart notification suppressed (zero-restart mode).")
+    current_commit = get_current_commit()
+    last_notified_commit = get_bot_setting("last_notified_commit", "")
+    manual_restart = (get_bot_setting("manual_restart", "0") == "1") or _manual_restart
+    admin_alert_enabled = os.getenv("ADMIN_STARTUP_ALERT", "false").strip().lower() in ("true", "1", "yes")
+
+    # A new update is detected if the git commit changed, STARTUP_TYPE is "push", or manual restart
+    is_new_update = bool(
+        (current_commit and current_commit != last_notified_commit)
+        or (STARTUP_TYPE == "push")
+    )
+
+    # Completely suppress on routine automated handover sessions unless an actual new update was pushed or admin manually restarted
+    if _is_handover and not is_new_update and not manual_restart:
+        logger.info(f"🤫 Automated session handover continuation (commit: {current_commit or 'unknown'}): restart notification suppressed (zero-restart mode).")
         return
 
-    admin_alert_enabled = os.getenv("ADMIN_STARTUP_ALERT", "false").strip().lower() in ("true", "1", "yes")
-    if not _manual_restart and not admin_alert_enabled and STARTUP_TYPE != "push":
+    if not is_new_update and not manual_restart and not admin_alert_enabled:
         logger.info("ℹ️ Bot started cleanly in silent 24/7 background mode (no admin spam).")
         return
 
-    # Reset manual_restart flag in Gist so future automated handovers remain silent
-    if _manual_restart and gist_storage.enabled:
+    # Reset manual_restart flag in SQLite & Gist once handled
+    if manual_restart:
         _manual_restart = False
-        try:
-            await gist_storage.save_state(
-                seen_dict=seen_timestamps,
-                is_handover=_is_handover,
-                total_forwarded=total_forwarded_count,
-                country_counts=country_forwarded_counts,
-                base_url=client.base_url,
-                manual_restart=False,
-            )
-        except Exception as e:
-            logger.debug(f"Clear manual_restart notice: {e}")
+        set_bot_setting("manual_restart", "0")
+        if gist_storage.enabled:
+            try:
+                today_total, total_28h, active_countries = get_dashboard_stats()
+                await gist_storage.save_state(
+                    seen_dict=seen_timestamps,
+                    is_handover=_is_handover,
+                    total_forwarded=today_total,
+                    country_counts=active_countries,
+                    base_url=client.base_url,
+                    manual_restart=False,
+                )
+            except Exception as e:
+                logger.debug(f"Clear manual_restart notice: {e}")
 
     try:
         me = await application.bot.get_me()
@@ -4508,6 +4645,10 @@ async def send_startup_announcement(application: Application):
                 logger.info(f"✅ Initial alert sent to admin private chat {aid}")
             except Exception as e:
                 logger.warning(f"Initial alert failed for admin {aid}: {e}")
+
+    # Record this commit in database so subsequent routine 24/7 handover sessions remain silent
+    if current_commit:
+        set_bot_setting("last_notified_commit", current_commit)
 
 async def periodic_db_cleanup_loop():
     cleanup_counter = 0
@@ -4967,7 +5108,7 @@ def validate_config():
         print("\nSet these in your .env file or GitHub Secrets.\n")
         sys.exit(1)
 
-async def trigger_proactive_handover() -> bool:
+async def trigger_proactive_handover(manual_restart: bool = False) -> bool:
     """
     Proactively dispatches the next GitHub Actions workflow run in advance
     so the incoming runner boots up, sets up Python, restores DB cache,
@@ -5009,6 +5150,7 @@ async def trigger_proactive_handover() -> bool:
                 total_forwarded=today_total,
                 country_counts=active_countries,
                 base_url=client.base_url if "client" in globals() else "",
+                manual_restart=manual_restart,
             )
         except Exception:
             pass
@@ -5142,6 +5284,27 @@ async def main():
                 if gist_state.get("manual_restart"):
                     global _manual_restart
                     _manual_restart = True
+                    set_bot_setting("manual_restart", "1")
+
+                # Pre-restore bot configuration settings secretly from cloud database BEFORE tasks start
+                saved_bot_data = gist_state.get("bot_data")
+                if isinstance(saved_bot_data, dict) and saved_bot_data:
+                    saved_bot_data.pop("thirdwave_base_url", None)
+                    saved_bot_data.pop("base_url", None)
+                    local_data = load_stored_data()
+                    local_data.pop("thirdwave_base_url", None)
+                    local_data.pop("base_url", None)
+                    if saved_bot_data.get("custom_link_buttons_cleared") or saved_bot_data.get("custom_link_buttons") == []:
+                        local_data["custom_link_buttons"] = []
+                        local_data["custom_link_buttons_cleared"] = True
+                        local_data.pop("custom_link_button", None)
+                        delete_bot_setting("custom_link_button")
+                        delete_bot_setting("custom_link_button_url")
+                        delete_bot_setting("custom_link_button_text")
+                        set_bot_setting("custom_link_buttons", "[]")
+                        set_bot_setting("custom_link_buttons_cleared", "1")
+                    local_data.update(saved_bot_data)
+                    save_stored_data(local_data)
             except Exception as e:
                 logger.debug(f"Initial Gist check notice: {e}")
 
