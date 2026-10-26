@@ -3412,9 +3412,7 @@ def build_api_key_view() -> Tuple[str, InlineKeyboardMarkup]:
         f"• <b>Status:</b> <code>{'Configured ✅' if current_key else 'Missing ⚠️'}</code>\n"
         f"• <b>Cloud Database:</b> <code>Synced & Encrypted 🔒</code>\n\n"
         "💬 <b>How to update:</b>\n"
-        "• Click <b>✏️ Enter New Key</b> below to type in chat.\n"
-        "• Or send: <code>/setkey &lt;your_api_key&gt;</code>\n"
-        "<i>Example:</i> <code>/setkey tw_live_1234567890abcdef</code>"
+        "• Tap <b>✏️ Enter New Key</b> below to send your new API key in chat."
     )
     kb = [
         [InlineKeyboardButton("✏️ Enter New Key", callback_data="prompt_set_key")],
@@ -3724,13 +3722,9 @@ def build_groups_list_view() -> Tuple[str, InlineKeyboardMarkup]:
 
     msg += (
         "\n━━━━━━━━━━━━━━━━━━━━\n"
-        "💬 <b>How to link a group:</b>\n"
-        "• Click <b>➕ Link New Group</b> below or send:\n"
-        "  <code>/addgroup &lt;Chat ID&gt;</code>\n"
-        "  <i>Example:</i> <code>/addgroup -1004473973263</code>\n\n"
-        "💬 <b>How to remove a group:</b>\n"
-        "• Click <b>🗑️ Remove</b> below or send:\n"
-        "  <code>/delgroup &lt;Chat ID&gt;</code>\n\n"
+        "💬 <b>Group Forwarding Controls:</b>\n"
+        "• Tap <b>➕ Link New Group</b> below to send the Telegram Group Chat ID.\n"
+        "• Tap <b>🗑️ Remove</b> next to any linked group to disconnect it.\n\n"
         "<i>⚡ All OTPs are forwarded simultaneously to all active groups. Only custom link buttons appear on OTP messages (group IDs are never shown as buttons). Group chat command menus are automatically cleared (0 commands).</i>"
     )
 
@@ -3913,8 +3907,7 @@ async def setbtnname_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if not context.args or len(context.args) < 2:
         await msg_obj.reply_text(
-            "✏️ <b>Usage:</b> <code>/setbtnname &lt;Button ID&gt; &lt;New Button Name&gt;</code>\n"
-            "<i>Example:</i> <code>/setbtnname 1 📢 Official Updates</code>",
+            "⚠️ <b>Usage:</b> Tap <b>✏️ Rename Button</b> in the button menu to update the button name.",
             parse_mode=ParseMode.HTML
         )
         return
@@ -4316,8 +4309,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"• <b>Current Name:</b> <code>{html.escape(found['text'])}</code>\n"
                 f"• <b>Target URL:</b> <code>{html.escape(found['url'])}</code>\n\n"
-                f"💬 <b>Send the new button name</b> directly in this chat, or use:\n"
-                f"<code>/setbtnname {found['id']} &lt;New Name&gt;</code>",
+                f"💬 <b>Send the new button name</b> directly in this chat:",
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb
             )
@@ -4338,9 +4330,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                 f"• <b>Button:</b> <code>{html.escape(found['text'])}</code>\n"
                 f"• <b>Current URL:</b> <code>{html.escape(found['url'])}</code>\n\n"
                 f"💬 <b>Send the new link URL or bot username</b> directly in this chat:\n"
-                f"<code>https://...</code> or <code>@bot_username</code>\n\n"
-                f"<b>Or use command:</b>\n"
-                f"<code>/setbtnurl {found['id']} &lt;New URL or @bot_username&gt;</code>",
+                f"<code>https://...</code> or <code>@bot_username</code>",
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb
             )
@@ -4358,8 +4348,6 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             "💬 <b>Send button name and link or bot username</b> in chat using this format:\n"
             "<code>Button Name | @bot_username</code>\n"
             "<i>or:</i> <code>Button Name | https://yourlink.com</code>\n\n"
-            "<b>Or run command:</b>\n"
-            "<code>/setlink Button Name | @bot_username</code>\n\n"
             "<i>Examples:</i>\n"
             "• <code>🤖 Number Bot | @my_number_bot</code>\n"
             "• <code>📢 Join Channel | https://t.me/mychannel</code>\n"
@@ -4479,8 +4467,6 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"• <b>Active Groups:</b> <code>{len(all_current)} / {MAX_FORWARDING_GROUPS}</code> (Limit: 1 - 10)\n\n"
             f"💬 <b>Send the numerical chat ID</b> of the group below (e.g. <code>-1004473973263</code>):\n\n"
-            f"<b>Or use command:</b>\n"
-            f"<code>/addgroup &lt;Chat ID&gt;</code>\n\n"
             f"<i>Note: Make sure this bot is added to the group as an admin. Commands will be automatically wiped from the group chat menu (0 commands).</i>",
             parse_mode=ParseMode.HTML,
             reply_markup=kb
