@@ -780,28 +780,40 @@ async def notify_admin_promoted(bot: Bot, target_id: int):
 
 def build_admin_manage_view() -> Tuple[str, InlineKeyboardMarkup]:
     admins = get_all_admin_details()
-    admin_lines = []
-    for a in admins:
-        role = "👑 <b>Super Admin</b> (Env)" if a["is_super"] else "🛡️ <b>Admin</b> (Added via Bot)"
-        u_tag = f"@{a['username']}" if a["username"] else a["first_name"]
-        admin_lines.append(f"• <code>{a['user_id']}</code> — {u_tag} [{role}]")
+    super_count = sum(1 for a in admins if a.get("is_super"))
+    db_count = len(admins) - super_count
 
-    admins_formatted = "\n".join(admin_lines) if admin_lines else "<i>No administrators found.</i>"
+    admin_lines = []
+    buttons = []
+    for idx, a in enumerate(admins, start=1):
+        role = "👑 <b>Super Admin</b> (Env)" if a["is_super"] else "🛡️ <b>Admin</b> (Database)"
+        u_name = html.escape(a.get("first_name") or "Administrator")
+        u_tag = f"@{html.escape(a['username'])}" if a.get("username") else u_name
+        admin_lines.append(
+            f"{idx}. <b>{u_name}</b> ({u_tag})\n"
+            f"   🆔 <code>{a['user_id']}</code> | 🔰 Role: {role}"
+        )
+        btn_icon = "👑" if a["is_super"] else "🛡️"
+        buttons.append([InlineKeyboardButton(
+            f"{btn_icon} Manage ID: {a['user_id']} ({u_tag[:14]})",
+            callback_data=f"admin_inspect_{a['user_id']}"
+        )])
+
+    admins_formatted = "\n\n".join(admin_lines) if admin_lines else "<i>No administrators found.</i>"
     text = (
-        f"👑 <b>Administrator Management</b>\n"
+        f"👑 <b>Administrator Management & Access Control</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"<b>Active Administrators:</b>\n"
+        f"• <b>Total Administrators:</b> <code>{len(admins)}</code>\n"
+        f"• <b>Super Administrators:</b> <code>{super_count}</code>\n"
+        f"• <b>Database Administrators:</b> <code>{db_count}</code>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
         f"{admins_formatted}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💡 <i>All administrators have full access to status, forwarding controls, and bot management.</i>\n"
-        f"<i>Super Admins are defined in GitHub Secrets / .env and cannot be removed via Telegram.</i>"
+        f"💡 <i>Tap any administrator button below to view details or revoke privileges.</i>"
     )
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Add New Admin", callback_data="admin_add_admin_prompt")],
-        [InlineKeyboardButton("🗑️ Remove Admin", callback_data="admin_remove_admin_menu")],
-        [InlineKeyboardButton("◀️ Back to Status", callback_data="admin_panel")]
-    ])
-    return text, keyboard
+    buttons.append([InlineKeyboardButton("➕ Add New Administrator", callback_data="admin_add_admin_prompt")])
+    buttons.append([InlineKeyboardButton("◀️ Back to Status Dashboard", callback_data="refresh_dash_msg")])
+    return text, InlineKeyboardMarkup(buttons)
 
 async def sync_admins_to_gist():
     if not gist_storage.enabled:
@@ -4629,16 +4641,46 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     elif query.data == "admin_add_admin_prompt":
         context.user_data["awaiting_add_admin"] = True
+        context.user_data["prompt_msg_id"] = query.message.message_id
+        context.user_data["prompt_chat_id"] = query.message.chat_id
         text = (
             "➕ <b>Add New Administrator</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "Send the **Telegram User ID** (numbers only) of the user you wish to promote to Admin.\n\n"
+            "Send the numerical <b>Telegram User ID</b> of the user you wish to promote to Admin.\n\n"
             "💡 <i>Tip: The user can check their ID via @userinfobot.</i>"
         )
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_admins")]
         ])
         await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+
+    elif query.data.startswith("admin_inspect_"):
+        target_id = int(query.data.split("_")[2])
+        admins = get_all_admin_details()
+        admin_info = next((a for a in admins if a["user_id"] == target_id), None)
+
+        fname = (admin_info.get("first_name") if admin_info else "") or "Administrator"
+        uname = (admin_info.get("username") if admin_info else "")
+        u_tag = f"@{html.escape(uname)}" if uname else "<i>None</i>"
+        is_super = admin_info.get("is_super", False) if admin_info else (target_id in ADMIN_USER_IDS)
+        role_badge = "👑 <b>Super Administrator</b> (Configured via .env)" if is_super else "🛡️ <b>Administrator</b> (Added via Bot)"
+
+        profile_text = (
+            f"👑 <b>Administrator Profile & Access Control</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🆔 <b>Admin ID:</b> <code>{target_id}</code>\n"
+            f"📛 <b>Name:</b> <code>{html.escape(fname)}</code>\n"
+            f"🔗 <b>Username:</b> {u_tag}\n"
+            f"🔰 <b>Role & Tier:</b> {role_badge}\n"
+            f"🛡️ <b>Account Status:</b> <code>Active & Verified</code>\n"
+            f"━━━━━━━━━━━━━━━━━━━━"
+        )
+        buttons = []
+        if not is_super:
+            buttons.append([InlineKeyboardButton("🗑️ Revoke Administrator Privileges", callback_data=f"admin_rm_admin_{target_id}")])
+        buttons.append([InlineKeyboardButton("📋 Back to Admin List", callback_data="admin_manage_admins")])
+        buttons.append([InlineKeyboardButton("📊 Back to Status Dashboard", callback_data="refresh_dash_msg")])
+        await query.edit_message_text(profile_text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
 
     elif query.data == "admin_remove_admin_menu":
         admins = get_all_admin_details()
@@ -5199,25 +5241,114 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
     # Awaiting Add Admin text input
     if context.user_data.get("awaiting_add_admin"):
         context.user_data.pop("awaiting_add_admin", None)
-        if text.isdigit():
-            aid = int(text)
-            ok = add_admin(aid, added_by=user_id)
+        prompt_msg_id = context.user_data.pop("prompt_msg_id", None)
+        prompt_chat_id = context.user_data.pop("prompt_chat_id", None) or chat.id
+
+        try:
+            await msg_obj.delete()
+        except Exception:
+            pass
+
+        clean_text = text.strip()
+        if clean_text.isdigit():
+            aid = int(clean_text)
+            uname = ""
+            fname = ""
+            try:
+                target_chat = await context.bot.get_chat(aid)
+                if target_chat:
+                    uname = target_chat.username or ""
+                    fname = target_chat.first_name or ""
+            except Exception:
+                pass
+
+            ok = add_admin(aid, added_by=user_id, username=uname, first_name=fname)
             if ok:
-                await msg_obj.reply_text(
-                    f"✅ User <code>{aid}</code> is now an Administrator!\n"
-                    f"• Status: <code>Active Admin</code>\n"
-                    f"• Cloud DB: <code>Synced & Encrypted 🔒</code>",
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("👑 Manage Admins", callback_data="admin_manage_admins")],
-                        [InlineKeyboardButton("📊 Status", callback_data="refresh_dash_msg")]
-                    ])
+                u_tag = f"@{html.escape(uname)}" if uname else "<i>None</i>"
+                disp_name = html.escape(fname or "Administrator")
+                confirm_text = (
+                    "✅ <b>Administrator Successfully Added!</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"• <b>User ID:</b> <code>{aid}</code>\n"
+                    f"• <b>Name:</b> <code>{disp_name}</code>\n"
+                    f"• <b>Username:</b> {u_tag}\n"
+                    "• <b>Role:</b> <code>🛡️ Administrator</code>\n"
+                    "• <b>Status:</b> <code>Active & Authorized</code>\n"
+                    "• <b>Cloud Sync:</b> <code>Synced & Encrypted 🔒</code>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "<i>The user has been promoted and notified in private chat.</i>"
                 )
+                confirm_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(f"👑 Manage ID: {aid}", callback_data=f"admin_inspect_{aid}")],
+                    [InlineKeyboardButton("📋 Active Admin List", callback_data="admin_manage_admins")],
+                    [InlineKeyboardButton("➕ Add Another Admin", callback_data="admin_add_admin_prompt")],
+                    [InlineKeyboardButton("📊 Status", callback_data="refresh_dash_msg")]
+                ])
+
+                edited = False
+                if prompt_msg_id and prompt_chat_id:
+                    try:
+                        await context.bot.edit_message_text(
+                            chat_id=prompt_chat_id,
+                            message_id=prompt_msg_id,
+                            text=confirm_text,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=confirm_kb
+                        )
+                        edited = True
+                    except Exception:
+                        pass
+                if not edited:
+                    await context.bot.send_message(
+                        chat_id=prompt_chat_id,
+                        text=confirm_text,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=confirm_kb
+                    )
                 asyncio.create_task(notify_admin_promoted(context.bot, aid))
             else:
-                await msg_obj.reply_text("❌ Failed to add administrator.", parse_mode=ParseMode.HTML)
+                fail_text = "❌ <b>Failed to add administrator.</b> Database write error."
+                fail_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Try Again", callback_data="admin_add_admin_prompt")],
+                    [InlineKeyboardButton("📋 Admin List", callback_data="admin_manage_admins")]
+                ])
+                if prompt_msg_id and prompt_chat_id:
+                    try:
+                        await context.bot.edit_message_text(
+                            chat_id=prompt_chat_id,
+                            message_id=prompt_msg_id,
+                            text=fail_text,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=fail_kb
+                        )
+                    except Exception:
+                        await context.bot.send_message(chat_id=prompt_chat_id, text=fail_text, parse_mode=ParseMode.HTML, reply_markup=fail_kb)
+                else:
+                    await context.bot.send_message(chat_id=prompt_chat_id, text=fail_text, parse_mode=ParseMode.HTML, reply_markup=fail_kb)
         else:
-            await msg_obj.reply_text("❌ Invalid user ID. Please send digits only.", parse_mode=ParseMode.HTML)
+            err_text = (
+                "❌ <b>Invalid Account ID</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "Please enter digits only (e.g. <code>6798979733</code>).\n\n"
+                "💡 <i>Tip: The user can check their ID via @userinfobot.</i>"
+            )
+            err_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Try Again", callback_data="admin_add_admin_prompt")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_admins")]
+            ])
+            if prompt_msg_id and prompt_chat_id:
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=prompt_chat_id,
+                        message_id=prompt_msg_id,
+                        text=err_text,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=err_kb
+                    )
+                except Exception:
+                    await context.bot.send_message(chat_id=prompt_chat_id, text=err_text, parse_mode=ParseMode.HTML, reply_markup=err_kb)
+            else:
+                await context.bot.send_message(chat_id=prompt_chat_id, text=err_text, parse_mode=ParseMode.HTML, reply_markup=err_kb)
         return
 
     # Awaiting API URL text input
