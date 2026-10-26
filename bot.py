@@ -2217,12 +2217,34 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
 # 11. Telegram Bot Engine & Polling Loop
 # ==========================================
 def get_effective_base_url() -> str:
-    # Always prioritize environment variable / GitHub Secret
+    # 1. First prioritize custom URL configured by admin in SQLite or bot_data so it never reverts
+    db_custom = get_bot_setting("thirdwave_base_url", "")
+    if db_custom and db_custom.strip():
+        return ThirdwaveClient.clean_base_url(db_custom.strip())
+    try:
+        data = load_stored_data()
+        stored = data.get("thirdwave_base_url") or data.get("base_url")
+        if stored and str(stored).strip():
+            return ThirdwaveClient.clean_base_url(str(stored).strip())
+    except Exception:
+        pass
+    # 2. Fall back to environment variable / GitHub Secret or default
     raw = os.getenv("THIRDWAVE_BASE_URL", "").strip() or THIRDWAVE_BASE_URL or "https://thirdwave.im"
     return ThirdwaveClient.clean_base_url(raw)
 
 def get_effective_api_key() -> str:
-    # Always prioritize environment variable / GitHub Secret
+    # 1. First prioritize custom API key configured by admin in SQLite or bot_data so it never reverts
+    db_custom = get_bot_setting("thirdwave_api_key", "")
+    if db_custom and db_custom.strip():
+        return db_custom.strip()
+    try:
+        data = load_stored_data()
+        stored = data.get("thirdwave_api_key") or data.get("api_key")
+        if stored and str(stored).strip():
+            return str(stored).strip()
+    except Exception:
+        pass
+    # 2. Fall back to environment variable / GitHub Secret
     raw = os.getenv("THIRDWAVE_API_KEY", "").strip() or THIRDWAVE_API_KEY
     return raw.strip()
 
@@ -2564,14 +2586,10 @@ async def poll_incoming_messages(application: Application):
                 f"last epoch {_handover_epoch:.0f}."
             )
 
-        # Restore bot configuration settings secretly from cloud database (excluding secrets)
+        # Restore bot configuration settings secretly from cloud database
         saved_bot_data = gist_state.get("bot_data")
         if isinstance(saved_bot_data, dict) and saved_bot_data:
-            saved_bot_data.pop("thirdwave_base_url", None)
-            saved_bot_data.pop("base_url", None)
             local_data = load_stored_data()
-            local_data.pop("thirdwave_base_url", None)
-            local_data.pop("base_url", None)
             if saved_bot_data.get("custom_link_buttons_cleared") or saved_bot_data.get("custom_link_buttons") == []:
                 local_data["custom_link_buttons"] = []
                 local_data["custom_link_buttons_cleared"] = True
@@ -2581,6 +2599,15 @@ async def poll_incoming_messages(application: Application):
                 delete_bot_setting("custom_link_button_text")
                 set_bot_setting("custom_link_buttons", "[]")
                 set_bot_setting("custom_link_buttons_cleared", "1")
+            # Restore custom API URL and Key if configured by admin
+            custom_url = saved_bot_data.get("thirdwave_base_url") or saved_bot_data.get("base_url")
+            if custom_url and "client" in globals():
+                client.update_base_url(custom_url)
+                set_bot_setting("thirdwave_base_url", custom_url)
+            custom_key = saved_bot_data.get("thirdwave_api_key") or saved_bot_data.get("api_key")
+            if custom_key and "client" in globals():
+                client.update_api_key(custom_key)
+                set_bot_setting("thirdwave_api_key", custom_key)
             local_data.update(saved_bot_data)
             save_stored_data(local_data)
             custom_name = local_data.get("bot_name") or local_data.get("default_bot_name")
@@ -4390,11 +4417,17 @@ async def seturl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw_input = " ".join(context.args).strip()
     new_url = client.update_base_url(raw_input)
 
-    # Persist in bot_data.json so it survives restarts
+    # Persist in bot_data.json and SQLite so it permanently survives restarts and pushes
     data = load_stored_data()
     data["thirdwave_base_url"] = new_url
+    set_bot_setting("thirdwave_base_url", new_url)
     save_stored_data(data)
-    asyncio.create_task(sync_data_to_secret_db())
+    if "sync_data_to_secret_db" in globals():
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(sync_data_to_secret_db())
+        except (RuntimeError, Exception):
+            pass
 
     await msg_obj.reply_text(
         f"✅ <b>API Base URL Successfully Updated!</b>\n"
@@ -4431,8 +4464,14 @@ async def setkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = load_stored_data()
     data["thirdwave_api_key"] = new_key
+    set_bot_setting("thirdwave_api_key", new_key)
     save_stored_data(data)
-    asyncio.create_task(sync_data_to_secret_db())
+    if "sync_data_to_secret_db" in globals():
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(sync_data_to_secret_db())
+        except (RuntimeError, Exception):
+            pass
 
     new_masked = f"{new_key[:8]}...{new_key[-4:]}" if len(new_key) > 12 else new_key
     await msg_obj.reply_text(
@@ -5289,11 +5328,7 @@ async def main():
                 # Pre-restore bot configuration settings secretly from cloud database BEFORE tasks start
                 saved_bot_data = gist_state.get("bot_data")
                 if isinstance(saved_bot_data, dict) and saved_bot_data:
-                    saved_bot_data.pop("thirdwave_base_url", None)
-                    saved_bot_data.pop("base_url", None)
                     local_data = load_stored_data()
-                    local_data.pop("thirdwave_base_url", None)
-                    local_data.pop("base_url", None)
                     if saved_bot_data.get("custom_link_buttons_cleared") or saved_bot_data.get("custom_link_buttons") == []:
                         local_data["custom_link_buttons"] = []
                         local_data["custom_link_buttons_cleared"] = True
@@ -5303,6 +5338,15 @@ async def main():
                         delete_bot_setting("custom_link_button_text")
                         set_bot_setting("custom_link_buttons", "[]")
                         set_bot_setting("custom_link_buttons_cleared", "1")
+                    # Restore custom API URL and Key if configured by admin
+                    custom_url = saved_bot_data.get("thirdwave_base_url") or saved_bot_data.get("base_url")
+                    if custom_url and "client" in globals():
+                        client.update_base_url(custom_url)
+                        set_bot_setting("thirdwave_base_url", custom_url)
+                    custom_key = saved_bot_data.get("thirdwave_api_key") or saved_bot_data.get("api_key")
+                    if custom_key and "client" in globals():
+                        client.update_api_key(custom_key)
+                        set_bot_setting("thirdwave_api_key", custom_key)
                     local_data.update(saved_bot_data)
                     save_stored_data(local_data)
             except Exception as e:
