@@ -3056,7 +3056,7 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
         f"⏱️ <b>Uptime:</b>      {uptime_str}\n"
         f"🔄 <b>Handover:</b>    {handover_info}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🌐 <b>API Base:</b>    {html.escape(client.base_url)}\n"
+        f"🌐 <b>API Base:</b>    <code>{html.escape(client.base_url)}</code>\n"
         f"🔑 <b>API Key:</b>     {masked_key}\n"
         f"🗄️ <b>Database:</b>   {gist_status}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -3100,8 +3100,6 @@ def get_bot_commands() -> List[BotCommand]:
     """Returns the slash commands for the Telegram [≡ Menu] command button."""
     return [
         BotCommand("start", "🚀 Admin Dashboard"),
-        BotCommand("status", "📊 System Status"),
-        BotCommand("cancel", "❌ Cancel Current Action"),
     ]
 
 async def setup_admin_menu_for_chat(bot: Bot, chat_id: int):
@@ -3254,6 +3252,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg,
         parse_mode=ParseMode.HTML,
         reply_markup=markup,
+        disable_web_page_preview=True,
     )
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4071,7 +4070,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
         try:
             msg_text, reply_markup = build_status_dashboard()
-            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup, disable_web_page_preview=True)
         except Exception as e:
             logger.warning(f"Could not edit dashboard message on toggle: {e}")
 
@@ -4639,7 +4638,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         clear_all_admin_states(context)
         text_view, markup = build_admin_manage_view() if query.data == "admin_manage_admins" else build_status_dashboard()
         try:
-            await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+            await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup, disable_web_page_preview=True)
         except Exception as e:
             if "not modified" not in str(e).lower():
                 try:
@@ -4739,7 +4738,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif query.data in ("refresh_dash", "refresh_dash_msg"):
         try:
             msg_text, reply_markup = build_status_dashboard()
-            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup, disable_web_page_preview=True)
             await query.answer("Dashboard Refreshed 🔄")
         except Exception:
             await query.answer("Refreshed")
