@@ -188,11 +188,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       - name: Install Dependencies
         run: |
-          pip install --quiet -r requirements.txt
+          pip install --quiet "python-telegram-bot>=21.0" "httpx>=0.27.0" "python-dotenv>=1.0.0"
           echo "✅ Dependencies ready."
 
       - name: Validate Required Secrets & Config
@@ -223,6 +222,7 @@ jobs:
           fi
 
       - name: Run Bot (Auto-Recovery & Crash Protection)
+        id: run_bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           THIRDWAVE_API_KEY: ${{ secrets.THIRDWAVE_API_KEY }}
@@ -340,7 +340,7 @@ jobs:
           key: bot1-database-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Self-Trigger Next Run (Zero Downtime Restart)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.run_bot.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           ALT_TOKEN: ${{ secrets.PAT || secrets.GH_TOKEN || secrets.GIST_TOKEN }}
