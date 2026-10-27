@@ -216,7 +216,6 @@ jobs:
           TELEGRAM_GROUP_CHAT_ID: ${{ secrets.TELEGRAM_GROUP_CHAT_ID }}
           SECONDARY_GROUP_CHAT_ID: ${{ secrets.SECONDARY_GROUP_CHAT_ID }}
           POLL_INTERVAL_SECONDS: ${{ secrets.POLL_INTERVAL_SECONDS || '9.0' }}
-          GROUP_FORWARD_DELAY_SECONDS: ${{ secrets.GROUP_FORWARD_DELAY_SECONDS || '7.0' }}
           ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -165,22 +165,6 @@ SECONDARY_GROUP_CHAT_ID = os.getenv("SECONDARY_GROUP_CHAT_ID", os.getenv("TELEGR
 MIN_FORWARDING_GROUPS: int = 1
 MAX_FORWARDING_GROUPS: int = 10
 POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "9.0"))
-GROUP_FORWARD_DELAY_SECONDS = float(os.getenv("GROUP_FORWARD_DELAY_SECONDS", "7.0"))
-
-def get_group_forward_delay() -> float:
-    data = load_stored_data()
-    val = data.get("group_forward_delay")
-    if val is not None:
-        try:
-            return max(0.0, float(val))
-        except (ValueError, TypeError):
-            pass
-    return max(0.0, GROUP_FORWARD_DELAY_SECONDS)
-
-def set_group_forward_delay(seconds: float) -> None:
-    data = load_stored_data()
-    data["group_forward_delay"] = max(0.0, float(seconds))
-    save_stored_data(data)
 STARTUP_TYPE          = os.getenv("STARTUP_TYPE", "workflow_dispatch").strip().lower()
 
 _admin_raw    = os.getenv("ADMIN_USER_IDS", "").strip()
@@ -2669,28 +2653,6 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
 
     return sent_to_any or True
 
-async def _deliver_item_with_delay(bot: Bot, item: Dict[str, Any], dest_ids: Set[int], delay: float = 0.0) -> bool:
-    global total_forwarded_count
-    if delay > 0:
-        raw_time_str = str(item.get("received_at") or item.get("receivedAt") or item.get("messageTime") or item.get("createdAt") or "")
-        msg_ts = parse_message_timestamp(raw_time_str)
-        now = datetime.now(timezone.utc).timestamp()
-        if msg_ts > 0:
-            elapsed = now - msg_ts
-            remaining_hold = max(0.0, delay - elapsed)
-        else:
-            remaining_hold = delay
-
-        if remaining_hold > 0:
-            mid = str(item.get("id") or "")
-            logger.info(f"⏳ Holding OTP ({mid}) for {remaining_hold:.1f}s to prioritize Number Bot inbox delivery...")
-            await asyncio.sleep(remaining_hold)
-
-    ok = await _deliver_item(bot, item, dest_ids)
-    if ok:
-        total_forwarded_count += 1
-    return ok
-
 async def run_startup_reconciliation(
     client: ThirdwaveClient,
     application: Application,
@@ -2990,16 +2952,12 @@ async def poll_incoming_messages(application: Application):
 
             if new_items:
                 logger.info(f"🔔 {len(new_items)} new SMS/OTP(s) detected!")
-                delay_sec = get_group_forward_delay()
                 for item in reversed(new_items):  # oldest first
-                    if delay_sec > 0:
-                        asyncio.create_task(_deliver_item_with_delay(application.bot, item, dest_ids, delay=delay_sec))
-                    else:
-                        ok = await _deliver_item(application.bot, item, dest_ids)
-                        if ok:
-                            total_forwarded_count += 1
-                        # Ultra-fast micro-pause so each OTP is sent as a clearly separate new message
-                        await asyncio.sleep(0.05)
+                    ok = await _deliver_item(application.bot, item, dest_ids)
+                    if ok:
+                        total_forwarded_count += 1
+                    # Ultra-fast micro-pause so each OTP is sent as a clearly separate new message
+                    await asyncio.sleep(0.05)
 
         except (TimedOut, NetworkError) as net_err:
             logger.warning(f"⚠️ Network hiccup: {net_err}. Retrying in 2s...")
@@ -3108,7 +3066,6 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
         f"📨 <b>OTPs Today:</b>  {total_today} received\n"
         f"📦 <b>DB Records:</b>  {total_28h} (28h rolling)\n"
         f"⚡ <b>Poll Rate:</b>   every {effective_poll:.1f}s\n"
-        f"⏳ <b>Group Delay:</b> {get_group_forward_delay():.1f}s (Number Bot Priority 🔒)\n"
         f"📋 <b>SMS Format:</b>  {fmt_label}\n"
         f"🔗 <b>Buttons:</b>     {link_str}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -3354,42 +3311,6 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML,
         reply_markup=get_admin_reply_keyboard(),
     )
-
-async def delay_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command to view or set the group forwarding hold delay."""
-    user = update.effective_user
-    msg_obj = update.effective_message
-    if not user or not msg_obj or not is_admin(user.id):
-        return
-    args = context.args if context else []
-    if not args:
-        curr = get_group_forward_delay()
-        status_desc = "🔒 Active (Prioritizing Number Bot)" if curr > 0 else "⚡ Immediate Forwarding (0s)"
-        await msg_obj.reply_text(
-            f"⏳ <b>Group Forwarding Delay Settings</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>Current Delay:</b> <code>{curr:.1f}s</code>\n"
-            f"• <b>Status:</b> {status_desc}\n\n"
-            f"<i>This delay holds group broadcasts so Number Bot users receive OTPs in their private DM first.</i>\n\n"
-            f"<b>To change:</b> <code>/delay &lt;seconds&gt;</code> (e.g. <code>/delay 7</code> or <code>/delay 0</code>)",
-            parse_mode=ParseMode.HTML
-        )
-        return
-    try:
-        val = max(0.0, min(120.0, float(args[0])))
-        set_group_forward_delay(val)
-        if gist_storage.enabled:
-            asyncio.create_task(gist_storage.save_state(is_handover=False))
-        status_note = f"held for <b>{val:.1f}s</b> before broadcasting to groups, prioritizing Number Bot inbox" if val > 0 else "broadcast to groups <b>immediately (0s delay)</b>"
-        await msg_obj.reply_text(
-            f"✅ <b>Group Forwarding Delay Updated</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>New Delay:</b> <code>{val:.1f} seconds</code>\n\n"
-            f"<i>OTPs will now be {status_note}.</i>",
-            parse_mode=ParseMode.HTML
-        )
-    except Exception as e:
-        await msg_obj.reply_text(f"❌ <b>Invalid value:</b> <code>{e}</code>", parse_mode=ParseMode.HTML)
 
 def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, InlineKeyboardMarkup]:
     """Builds interactive configuration & live preview panel for SMS delivery format."""
@@ -5956,7 +5877,6 @@ async def main():
     application.add_handler(CommandHandler("start", start_command, filters=_private))
     application.add_handler(CommandHandler("status", status_command, filters=_private))
     application.add_handler(CommandHandler("cancel", cancel_command, filters=_private))
-    application.add_handler(CommandHandler("delay", delay_command, filters=_private))
     application.add_handler(CallbackQueryHandler(admin_callback_handler))
     application.add_handler(MessageHandler(_private & filters.TEXT & ~filters.COMMAND, keyboard_button_handler))
 
