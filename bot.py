@@ -803,9 +803,9 @@ def build_admin_manage_view() -> Tuple[str, InlineKeyboardMarkup]:
     text = (
         f"👑 <b>Administrator Management & Access Control</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Total Administrators:</b> <code>{len(admins)}</code>\n"
-        f"• <b>Super Administrators:</b> <code>{super_count}</code>\n"
-        f"• <b>Database Administrators:</b> <code>{db_count}</code>\n"
+        f"• <b>Total Administrators:</b> {len(admins)}\n"
+        f"• <b>Super Administrators:</b> {super_count}\n"
+        f"• <b>Database Administrators:</b> {db_count}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"{admins_formatted}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -3015,9 +3015,9 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
         handover_secs = max(0, session_timeout - uptime_secs)
         h_hours, h_rem = divmod(handover_secs, 3600)
         h_mins, _ = divmod(h_rem, 60)
-        handover_info = f"<code>{h_hours}h {h_mins}m remaining</code> (Auto-Sync 🔄)"
+        handover_info = f"{h_hours}h {h_mins}m remaining (Auto-Sync 🔄)"
     else:
-        handover_info = "<code>Always-Online (Continuous)</code>"
+        handover_info = "Always-Online (Continuous)"
 
     # Format & Link button status
     data = load_stored_data()
@@ -3027,7 +3027,7 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
 
     custom_buttons = get_custom_link_buttons()
     if custom_buttons:
-        link_items = [f"<code>{html.escape(b['text'])}</code>" for b in custom_buttons]
+        link_items = [html.escape(b['text']) for b in custom_buttons]
         link_str = f"<b>{len(custom_buttons)} Active:</b> " + ", ".join(link_items)
     else:
         link_str = "<i>None configured</i>"
@@ -3038,7 +3038,7 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
         sorted_countries = sorted(country_counts_28h.items(), key=lambda x: x[1], reverse=True)
         country_lines = "\n🌍 <b>OTPs by Country (28h Rolling):</b>\n"
         for idx, (iso_display, cnt) in enumerate(sorted_countries[:15], 1):
-            country_lines += f"  {idx}. {iso_display} — <code>{cnt}</code>\n"
+            country_lines += f"  {idx}. {iso_display} — {cnt}\n"
         country_lines += "━━━━━━━━━━━━━━━━━━━━\n"
 
     gist_status = f"Encrypted Cloud DB ({GIST_ID[:8]}...) 🔒" if gist_storage.enabled else "Local Storage"
@@ -3050,23 +3050,23 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     bottom_note = "<i>🔔 Real-time forwarding active — zero restarts, always on.</i>" if fwd_active else "<i>🔕 Group forwarding is paused by admin — recording OTPs to DB & history silently.</i>"
 
     msg = (
-        f"⚡ <b>{html.escape(active_bot_name)}</b>  •  <code>LIVE & ONLINE</code>\n"
+        f"⚡ <b>{html.escape(active_bot_name)} • LIVE & ONLINE</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🟢 <b>Engine:</b>      <code>100% Online ✅</code>\n"
-        f"⏱️ <b>Uptime:</b>      <code>{uptime_str}</code>\n"
+        f"🟢 <b>Engine:</b>      100% Online ✅\n"
+        f"⏱️ <b>Uptime:</b>      {uptime_str}\n"
         f"🔄 <b>Handover:</b>    {handover_info}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🌐 <b>API Base:</b>    <code>{html.escape(client.base_url)}</code>\n"
-        f"🔑 <b>API Key:</b>     <code>{masked_key}</code>\n"
-        f"🗄️ <b>Database:</b>   <code>{gist_status}</code>\n"
+        f"🌐 <b>API Base:</b>    {html.escape(client.base_url)}\n"
+        f"🔑 <b>API Key:</b>     {masked_key}\n"
+        f"🗄️ <b>Database:</b>   {gist_status}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"👥 <b>Groups:</b>      <code>{group_text}</code>\n"
-        f"👑 <b>Admins:</b>      <code>{len(get_all_admin_ids())} active</code>\n"
-        f"⚡ <b>Forwarding:</b>  <code>{fwd_label}</code>\n"
-        f"📨 <b>OTPs Today:</b>  <code>{total_today} received</code>\n"
-        f"📦 <b>DB Records:</b>  <code>{total_28h} (28h rolling)</code>\n"
-        f"⚡ <b>Poll Rate:</b>   <code>every {effective_poll:.1f}s</code>\n"
-        f"📋 <b>SMS Format:</b>  <code>{fmt_label}</code>\n"
+        f"👥 <b>Groups:</b>      {group_text}\n"
+        f"👑 <b>Admins:</b>      {len(get_all_admin_ids())} active\n"
+        f"⚡ <b>Forwarding:</b>  {fwd_label}\n"
+        f"📨 <b>OTPs Today:</b>  {total_today} received\n"
+        f"📦 <b>DB Records:</b>  {total_28h} (28h rolling)\n"
+        f"⚡ <b>Poll Rate:</b>   every {effective_poll:.1f}s\n"
+        f"📋 <b>SMS Format:</b>  {fmt_label}\n"
         f"🔗 <b>Buttons:</b>     {link_str}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"{country_lines}"
@@ -3097,10 +3097,23 @@ def get_admin_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
 def get_bot_commands() -> List[BotCommand]:
-    """Returns ONLY the /start command for the Telegram [≡ Menu] command button."""
+    """Returns the slash commands for the Telegram [≡ Menu] command button."""
     return [
         BotCommand("start", "🚀 Admin Dashboard"),
+        BotCommand("status", "📊 System Status"),
+        BotCommand("cancel", "❌ Cancel Current Action"),
     ]
+
+async def setup_admin_menu_for_chat(bot: Bot, chat_id: int):
+    """Locks [≡ Menu] button and registers slash commands for an admin private chat."""
+    if not chat_id or chat_id <= 0:
+        return
+    try:
+        cmds = get_bot_commands()
+        await bot.set_my_commands(cmds, scope=BotCommandScopeChat(chat_id))
+        await bot.set_chat_menu_button(chat_id=chat_id, menu_button=MenuButtonCommands())
+    except Exception as e:
+        logger.debug(f"Menu setup for chat {chat_id} notice: {e}")
 
 def build_forwarding_control_view() -> Tuple[str, InlineKeyboardMarkup]:
     """Builds interactive configuration view for OTP group forwarding."""
@@ -3109,10 +3122,10 @@ def build_forwarding_control_view() -> Tuple[str, InlineKeyboardMarkup]:
         msg = (
             "⚡ <b>OTP Group Forwarding Control</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "• <b>Status:</b> 🟢 <code>ACTIVE (Live Mode)</code>\n"
-            "• <b>Group Delivery:</b> <code>ON (Live Delivery)</code>\n"
-            "• <b>Database & Retention:</b> <code>100% Synced (28h)</code>\n"
-            "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
+            "• <b>Status:</b> 🟢 ACTIVE (Live Mode)\n"
+            "• <b>Group Delivery:</b> ON (Live Delivery)\n"
+            "• <b>Database & Retention:</b> 100% Synced (28h)\n"
+            "• <b>Synced:</b> Cloud DB 🔒\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Tap below to pause group forwarding:</i>"
         )
@@ -3121,10 +3134,10 @@ def build_forwarding_control_view() -> Tuple[str, InlineKeyboardMarkup]:
         msg = (
             "⚡ <b>OTP Group Forwarding Control</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "• <b>Status:</b> ⏸️ <code>PAUSED (Silent Mode)</code>\n"
-            "• <b>Group Delivery:</b> <code>PAUSED (No messages sent)</code>\n"
-            "• <b>Database & Retention:</b> <code>100% Active (Recording silently)</code>\n"
-            "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
+            "• <b>Status:</b> ⏸️ PAUSED (Silent Mode)\n"
+            "• <b>Group Delivery:</b> PAUSED (No messages sent)\n"
+            "• <b>Database & Retention:</b> 100% Active (Recording silently)\n"
+            "• <b>Synced:</b> Cloud DB 🔒\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Tap below to resume group forwarding:</i>"
         )
@@ -3138,10 +3151,10 @@ def build_forwarding_updated_view(action: str) -> Tuple[str, InlineKeyboardMarku
         msg = (
             "⏸️ <b>OTP Forwarding: Paused</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "• <b>Status:</b> ⏸️ <code>PAUSED (Silent Mode)</code>\n"
-            "• <b>Group Delivery:</b> <code>PAUSED (No messages sent to groups)</code>\n"
-            "• <b>Database & Retention:</b> <code>100% Active (Recording silently)</code>\n"
-            "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
+            "• <b>Status:</b> ⏸️ PAUSED (Silent Mode)\n"
+            "• <b>Group Delivery:</b> PAUSED (No messages sent to groups)\n"
+            "• <b>Database & Retention:</b> 100% Active (Recording silently)\n"
+            "• <b>Synced:</b> Cloud DB 🔒\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Incoming OTPs continue recording silently in SQLite & 28h history. Groups will not receive forwards until resumed.</i>"
         )
@@ -3150,11 +3163,11 @@ def build_forwarding_updated_view(action: str) -> Tuple[str, InlineKeyboardMarku
         msg = (
             "🟢 <b>OTP Forwarding: Resumed</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "• <b>Status:</b> 🟢 <code>ACTIVE (Live Mode)</code>\n"
-            "• <b>Group Delivery:</b> <code>ACTIVE (Delivered live to groups)</code>\n"
-            "• <b>Database & Retention:</b> <code>100% Synced (28h)</code>\n"
-            "• <b>Zero Spam Shield:</b> <code>Active (Pause OTPs suppressed)</code>\n"
-            "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
+            "• <b>Status:</b> 🟢 ACTIVE (Live Mode)\n"
+            "• <b>Group Delivery:</b> ACTIVE (Delivered live to groups)\n"
+            "• <b>Database & Retention:</b> 100% Synced (28h)\n"
+            "• <b>Zero Spam Shield:</b> Active (Pause OTPs suppressed)\n"
+            "• <b>Synced:</b> Cloud DB 🔒\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "<i>Live forwarding is active. Every new incoming OTP is delivered to your group(s) in real time.</i>"
         )
@@ -3234,6 +3247,8 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
         return
     clear_all_admin_states(context)
+    # Ensure command menu button and slash commands are permanently active
+    asyncio.create_task(setup_admin_menu_for_chat(context.bot, chat.id))
     msg, markup = build_status_dashboard()
     await msg_obj.reply_text(
         msg,
@@ -3252,17 +3267,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
         return
 
-    # Lock Telegram Menu Button in background task so [≡ Menu] command button is ALWAYS visible
-    async def _bg_lock_menu():
-        try:
-            await context.bot.set_chat_menu_button(chat_id=chat.id, menu_button=MenuButtonCommands())
-            await context.bot.set_my_commands(
-                get_bot_commands(),
-                scope=BotCommandScopeChat(chat.id)
-            )
-        except Exception:
-            pass
-    asyncio.create_task(_bg_lock_menu())
+    # Lock Telegram Menu Button and slash commands for admin
+    asyncio.create_task(setup_admin_menu_for_chat(context.bot, chat.id))
 
     bot_name = get_bot_name()
     # Show welcome greeting with the persistent admin keyboard on /start
@@ -3304,9 +3310,7 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━━━\n"
         "No changes were made. All current settings remain active.",
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 View Live Status", callback_data="refresh_dash_msg")]
-        ])
+        reply_markup=get_admin_reply_keyboard(),
     )
 
 def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, InlineKeyboardMarkup]:
@@ -3320,7 +3324,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
     msg = (
         "📋 <b>SMS Format Configuration</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"🟢 <b>Active Mode:</b>   <code>{'Short ⚡' if curr_fmt == 'short' else 'Long 📜'}</code>\n\n"
+        f"🟢 <b>Active Mode:</b>   {'Short ⚡' if curr_fmt == 'short' else 'Long 📜'}\n\n"
         "<b>Available Modes:</b>\n"
         f"• <b>Short</b> {short_active}\n"
         "  Compact card with From / To / OTP highlighted.\n\n"
@@ -3390,7 +3394,7 @@ def build_api_url_view() -> Tuple[str, InlineKeyboardMarkup]:
         f"• <b>Active Base URL:</b> <code>{html.escape(masked_url)}</code>\n"
         f"• <b>Traffic Endpoint:</b> <code>{html.escape(masked_url)}/api/v1/traffic</code>\n"
         f"• <b>Default System URL:</b> <code>https://thirdwave.im</code>\n"
-        f"• <b>Cloud Database:</b> <code>Synced & Encrypted 🔒</code>\n\n"
+        f"• <b>Cloud Database:</b> Synced & Encrypted 🔒\n\n"
         "💬 <b>How to update:</b>\n"
         "• Click <b>✏️ Enter New URL</b> below to type in chat.\n"
         "• Or send: <code>/seturl &lt;new_url&gt;</code>\n"
@@ -3413,8 +3417,8 @@ def build_api_key_view() -> Tuple[str, InlineKeyboardMarkup]:
         "🔑 <b>Thirdwave API Key Configuration</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"• <b>Active API Key:</b> <code>{masked_key}</code>\n"
-        f"• <b>Status:</b> <code>{'Configured ✅' if current_key else 'Missing ⚠️'}</code>\n"
-        f"• <b>Cloud Database:</b> <code>Synced & Encrypted 🔒</code>\n\n"
+        f"• <b>Status:</b> {'Configured ✅' if current_key else 'Missing ⚠️'}\n"
+        f"• <b>Cloud Database:</b> Synced & Encrypted 🔒\n\n"
         "💬 <b>How to update:</b>\n"
         "• Tap <b>✏️ Enter New Key</b> below to send your new API key in chat."
     )
@@ -3433,8 +3437,8 @@ def build_bot_name_view() -> Tuple[str, InlineKeyboardMarkup]:
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"• <b>Current Active Name:</b> <code>{html.escape(curr_name)}</code>\n"
         f"• <b>Default System Name:</b> <code>{html.escape(default_name)}</code>\n"
-        f"• <b>Telegram Bot API:</b> <code>Official Name Sync ✅</code>\n"
-        f"• <b>Cloud Database:</b> <code>Synced & Encrypted 🔒</code>\n\n"
+        f"• <b>Telegram Bot API:</b> Official Name Sync ✅\n"
+        f"• <b>Cloud Database:</b> Synced & Encrypted 🔒\n\n"
         "💬 <b>How to update:</b>\n"
         "• Click <b>✏️ Change Bot Name</b> below to type in chat.\n"
         "• Click <b>🔄 Reset to Default</b> to restore system name."
@@ -3710,10 +3714,10 @@ def build_groups_list_view() -> Tuple[str, InlineKeyboardMarkup]:
     msg = (
         "👥 <b>Linked Forwarding Groups Management</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Active Forwarding Groups:</b> <code>{total_count} / {MAX_FORWARDING_GROUPS}</code>\n"
-        f"• <b>Group Limits:</b> <code>Min: {MIN_FORWARDING_GROUPS} | Max: {MAX_FORWARDING_GROUPS}</code>\n"
+        f"• <b>Active Forwarding Groups:</b> {total_count} / {MAX_FORWARDING_GROUPS}\n"
+        f"• <b>Group Limits:</b> Min: {MIN_FORWARDING_GROUPS} | Max: {MAX_FORWARDING_GROUPS}\n"
         f"• <b>Capacity:</b> [{progress_bar}]\n"
-        f"• <b>Forwarding Mode:</b> <code>Simultaneous Multi-Group ⚡</code>\n\n"
+        f"• <b>Forwarding Mode:</b> Simultaneous Multi-Group ⚡\n\n"
         "<b>Currently Active Forwarding Groups:</b>\n"
     )
     if all_targets:
@@ -5262,16 +5266,11 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         return
     user_id = user.id
     if not is_user_authorized(user_id):
-        bot_name = get_bot_name()
-        await msg_obj.reply_text(
-            "⛔ <b>Access Restricted</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"Your administrator access on <b>{html.escape(bot_name)}</b> has been revoked.\n\n"
-            "<i>Admin menu has been removed from your account.</i>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=ReplyKeyboardRemove()
-        )
+        await msg_obj.reply_text("⛔ <b>Access Restricted</b>: Admins only.", parse_mode=ParseMode.HTML)
         return
+
+    # Keep command menu button and slash commands permanently active
+    asyncio.create_task(setup_admin_menu_for_chat(context.bot, chat.id))
 
     text = (msg_obj.text or "").strip()
 
@@ -5287,9 +5286,7 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
             "━━━━━━━━━━━━━━━━━━━━\n"
             "No changes were made. All current settings remain active.",
             parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📊 View Live Status", callback_data="refresh_dash_msg")]
-            ])
+            reply_markup=get_admin_reply_keyboard(),
         )
         return
 
@@ -5880,6 +5877,7 @@ async def main():
     _private = filters.ChatType.PRIVATE
     application.add_handler(CommandHandler("start", start_command, filters=_private))
     application.add_handler(CommandHandler("status", status_command, filters=_private))
+    application.add_handler(CommandHandler("cancel", cancel_command, filters=_private))
     application.add_handler(CallbackQueryHandler(admin_callback_handler))
     application.add_handler(MessageHandler(_private & filters.TEXT & ~filters.COMMAND, keyboard_button_handler))
 
@@ -5986,11 +5984,12 @@ async def main():
                     pass
 
                 for gid in get_target_group_chat_ids():
-                    try:
-                        await application.bot.set_my_commands([], scope=BotCommandScopeChat(gid))
-                        await application.bot.set_chat_menu_button(chat_id=gid, menu_button=MenuButtonDefault())
-                    except Exception:
-                        pass
+                    if gid and gid < 0:
+                        try:
+                            await application.bot.set_my_commands([], scope=BotCommandScopeChat(gid))
+                            await application.bot.set_chat_menu_button(chat_id=gid, menu_button=MenuButtonDefault())
+                        except Exception:
+                            pass
 
                 for aid in get_all_admin_ids():
                     try:
