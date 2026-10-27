@@ -5960,46 +5960,49 @@ async def main():
         asyncio.create_task(poll_incoming_messages(application))
         asyncio.create_task(periodic_db_cleanup_loop())
         asyncio.create_task(periodic_gist_sync_loop())
-        try:
-            # 1. Fetch & cache Telegram bot name
+        async def background_menu_setup():
             try:
-                me = await application.bot.get_me()
-                if me and me.first_name:
-                    set_cached_telegram_name(me.first_name)
-            except Exception:
-                pass
-
-            # 2. Lock command list and [≡ Menu] button permanently on Default and Private scopes (Zero flickering)
-            bot_cmds = get_bot_commands()
-            try:
-                await application.bot.set_my_commands(bot_cmds, scope=BotCommandScopeDefault())
-                await application.bot.set_my_commands(bot_cmds, scope=BotCommandScopeAllPrivateChats())
-                await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
-            except Exception as cmd_err:
-                logger.debug(f"Default commands register notice: {cmd_err}")
-
-            # 3. Wipe commands from groups ONLY (groups will have 0 commands and default menu)
-            try:
-                await application.bot.set_my_commands([], scope=BotCommandScopeAllGroupChats())
-            except Exception:
-                pass
-
-            for gid in get_target_group_chat_ids():
+                # 1. Fetch & cache Telegram bot name
                 try:
-                    await application.bot.set_my_commands([], scope=BotCommandScopeChat(gid))
-                    await application.bot.set_chat_menu_button(chat_id=gid, menu_button=MenuButtonDefault())
+                    me = await application.bot.get_me()
+                    if me and me.first_name:
+                        set_cached_telegram_name(me.first_name)
                 except Exception:
                     pass
 
-            for aid in get_all_admin_ids():
+                # 2. Lock command list and [≡ Menu] button permanently on Default and Private scopes (Zero flickering)
+                bot_cmds = get_bot_commands()
                 try:
-                    await application.bot.set_my_commands(bot_cmds, scope=BotCommandScopeChat(aid))
-                    await application.bot.set_chat_menu_button(chat_id=aid, menu_button=MenuButtonCommands())
+                    await application.bot.set_my_commands(bot_cmds, scope=BotCommandScopeDefault())
+                    await application.bot.set_my_commands(bot_cmds, scope=BotCommandScopeAllPrivateChats())
+                    await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+                except Exception as cmd_err:
+                    logger.debug(f"Default commands register notice: {cmd_err}")
+
+                # 3. Wipe commands from groups ONLY (groups will have 0 commands and default menu)
+                try:
+                    await application.bot.set_my_commands([], scope=BotCommandScopeAllGroupChats())
                 except Exception:
                     pass
-            logger.info("✅ Telegram Bot Command Menu: Permanently active in private chat (Zero flickering); groups wiped (0 commands).")
-        except Exception as e:
-            logger.warning(f"Error configuring command menu scopes: {e}")
+
+                for gid in get_target_group_chat_ids():
+                    try:
+                        await application.bot.set_my_commands([], scope=BotCommandScopeChat(gid))
+                        await application.bot.set_chat_menu_button(chat_id=gid, menu_button=MenuButtonDefault())
+                    except Exception:
+                        pass
+
+                for aid in get_all_admin_ids():
+                    try:
+                        await application.bot.set_my_commands(bot_cmds, scope=BotCommandScopeChat(aid))
+                        await application.bot.set_chat_menu_button(chat_id=aid, menu_button=MenuButtonCommands())
+                    except Exception:
+                        pass
+                logger.info("✅ Telegram Bot Command Menu: Permanently active in private chat (Zero flickering); groups wiped (0 commands).")
+            except Exception as e:
+                logger.warning(f"Error configuring command menu scopes: {e}")
+
+        asyncio.create_task(background_menu_setup())
         logger.info(f"✅ {get_bot_name()} is fully online and monitoring incoming messages...")
 
         # Robust polling starter with automatic conflict recovery
