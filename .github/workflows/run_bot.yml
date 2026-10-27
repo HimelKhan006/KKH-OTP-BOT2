@@ -13,14 +13,19 @@ on:
         description: 'Internal zero-restart handover flag (true/false)'
         required: false
         default: 'false'
+      is_manual_restart:
+        description: 'Manual admin restart flag (true/false)'
+        required: false
+        default: 'false'
   schedule:
-    # 4-hour safety net — fires every 4h if self-trigger ever delays
+    # 4-hour safety net — fires every 4h ONLY if bot ever stops unexpectedly
     - cron: '0 */4 * * *'
 
-# Only ONE bot instance ever runs. New run cancels the old one instantly so updates apply immediately with ZERO delay!
+# Only ONE bot instance ever runs. New push/handover cancels old one instantly so updates apply with ZERO delay.
+# Scheduled backup uses a unique group so it NEVER cancels an active running bot!
 concurrency:
-  group: otp-wave-bot-single-instance
-  cancel-in-progress: true
+  group: otp-wave-bot-${{ github.event_name == 'schedule' && github.run_id || 'single-instance' }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 permissions:
   actions: write
@@ -36,6 +41,30 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Scheduled Safety-Net Check
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "🔍 Checking if bot is already running in 24/7 session..."
+          ACTIVE_RUNS=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs?status=in_progress&per_page=20" \
+            | python3 -c "
+          import sys, json
+          runs = json.load(sys.stdin).get('workflow_runs', [])
+          active = [r for r in runs if str(r.get('id')) != '${{ github.run_id }}']
+          print(len(active))
+          ")
+          if [ "$ACTIVE_RUNS" -gt 0 ]; then
+            echo "✅ Bot is already running healthy ($ACTIVE_RUNS active runner). Backup schedule exiting without interrupting."
+            curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/cancel" || true
+            exit 0
+          fi
+          echo "⚠️ No active runner detected! Scheduled backup will start the bot now."
 
       # ─────────────────────────────────────────────────────────────────
       # Restore the OTP database & settings from cache FIRST
@@ -161,7 +190,7 @@ jobs:
           THIRDWAVE_BASE_URL: ${{ github.event.inputs.custom_base_url || secrets.THIRDWAVE_BASE_URL || 'https://thirdwave.im' }}
           TELEGRAM_GROUP_CHAT_ID: ${{ secrets.TELEGRAM_GROUP_CHAT_ID }}
           SECONDARY_GROUP_CHAT_ID: ${{ secrets.SECONDARY_GROUP_CHAT_ID }}
-          POLL_INTERVAL_SECONDS: ${{ secrets.POLL_INTERVAL_SECONDS || '1.5' }}
+          POLL_INTERVAL_SECONDS: ${{ secrets.POLL_INTERVAL_SECONDS || '4.8' }}
           ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -171,6 +200,7 @@ jobs:
           GIST_ID: ${{ secrets.GIST_ID }}
           STARTUP_TYPE: ${{ github.event_name }}
           IS_HANDOVER: ${{ github.event.inputs.is_handover || 'false' }}
+          IS_MANUAL_RESTART: ${{ github.event.inputs.is_manual_restart || 'false' }}
           DB_FILE: ${{ github.workspace }}/bot1_database.db
           SESSION_TIMEOUT: "19500"
           PYTHONUNBUFFERED: "1"

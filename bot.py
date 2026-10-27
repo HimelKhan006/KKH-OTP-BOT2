@@ -841,7 +841,7 @@ seen_timestamps: Dict[str, float] = {}
 seen_content_signatures: Dict[str, float] = {}
 _gist_dirty: bool = False
 _is_handover: bool = os.getenv("IS_HANDOVER", "false").strip().lower() in ("true", "1", "yes")
-_manual_restart: bool = False
+_manual_restart: bool = os.getenv("IS_MANUAL_RESTART", "false").strip().lower() in ("true", "1", "yes")
 _handover_epoch: float = 0.0
 bot_process_start_time: float = time.time()
 
@@ -980,6 +980,7 @@ class GistStorage:
                                 "base_url": parsed.get("base_url", ""),
                                 "bot_data": parsed.get("bot_data", {}),
                                 "manual_restart": bool(parsed.get("manual_restart", False)),
+                                "last_notified_commit": str(parsed.get("last_notified_commit", "")),
                             }
                 else:
                     logger.warning(f"Gist load status {res.status_code}: {res.text[:100]}")
@@ -1035,6 +1036,7 @@ class GistStorage:
                 "bot_data": load_stored_data(),
                 "admins": admins_list,
                 "manual_restart": bool(kwargs.get("manual_restart", False)),
+                "last_notified_commit": str(kwargs.get("last_notified_commit") or get_bot_setting("last_notified_commit", "")),
             }
             payload = {
                 "description": self.description,
@@ -5065,21 +5067,41 @@ async def send_startup_announcement(application: Application):
     current_commit = get_current_commit()
     last_notified_commit = get_bot_setting("last_notified_commit", "")
     manual_restart = (get_bot_setting("manual_restart", "0") == "1") or _manual_restart
-    admin_alert_enabled = os.getenv("ADMIN_STARTUP_ALERT", "false").strip().lower() in ("true", "1", "yes")
 
-    # A new update is detected if the git commit changed, STARTUP_TYPE is "push", or manual restart
-    is_new_update = bool(
-        (current_commit and current_commit != last_notified_commit)
-        or (STARTUP_TYPE == "push")
-    )
-
-    # Completely suppress on routine automated handover sessions unless an actual new update was pushed or admin manually restarted
-    if _is_handover and not is_new_update and not manual_restart:
-        logger.info(f"🤫 Automated session handover continuation (commit: {current_commit or 'unknown'}): restart notification suppressed (zero-restart mode).")
+    # Rule 1: Scheduled safety-net triggers must NEVER announce unless an admin specifically triggered a manual restart
+    if STARTUP_TYPE == "schedule" and not manual_restart:
+        logger.info(f"🤫 Scheduled safety-net trigger (STARTUP_TYPE={STARTUP_TYPE}): startup notification suppressed.")
         return
 
-    if not is_new_update and not manual_restart and not admin_alert_enabled:
-        logger.info("ℹ️ Bot started cleanly in silent 24/7 background mode (no admin spam).")
+    # Rule 2: Routine session handovers must NEVER announce unless an admin specifically triggered a manual restart
+    if _is_handover and not manual_restart:
+        logger.info(f"🤫 Automated session handover continuation (commit: {current_commit or 'unknown'}): startup notification suppressed (zero-restart mode).")
+        return
+
+    # Rule 3: A new update is ONLY if STARTUP_TYPE is 'push' or git commit changed from the last notified commit
+    is_git_push = (STARTUP_TYPE == "push")
+    is_commit_change = bool(current_commit and last_notified_commit and current_commit != last_notified_commit)
+    is_new_update = is_git_push or is_commit_change
+
+    # Suppress if neither a new update was pushed nor a manual restart from admin panel
+    if not is_new_update and not manual_restart:
+        logger.info(f"ℹ️ Bot started cleanly in silent 24/7 background mode (commit={current_commit or 'none'}, trigger={STARTUP_TYPE}). No admin alert needed.")
+        # Ensure baseline commit is stored if this was an initial boot
+        if current_commit and not last_notified_commit:
+            set_bot_setting("last_notified_commit", current_commit)
+            if gist_storage.enabled:
+                try:
+                    today_total, total_28h, active_countries = get_dashboard_stats()
+                    asyncio.create_task(gist_storage.save_state(
+                        seen_dict=seen_timestamps,
+                        is_handover=_is_handover,
+                        total_forwarded=today_total,
+                        country_counts=active_countries,
+                        base_url=client.base_url if "client" in globals() else "",
+                        last_notified_commit=current_commit,
+                    ))
+                except Exception:
+                    pass
         return
 
     # Reset manual_restart flag in SQLite & Gist once handled
@@ -5094,8 +5116,9 @@ async def send_startup_announcement(application: Application):
                     is_handover=_is_handover,
                     total_forwarded=today_total,
                     country_counts=active_countries,
-                    base_url=client.base_url,
+                    base_url=client.base_url if "client" in globals() else "",
                     manual_restart=False,
+                    last_notified_commit=current_commit,
                 )
             except Exception as e:
                 logger.debug(f"Clear manual_restart notice: {e}")
@@ -5126,9 +5149,23 @@ async def send_startup_announcement(application: Application):
             except Exception as e:
                 logger.warning(f"Initial alert failed for admin {aid}: {e}")
 
-    # Record this commit in database so subsequent routine 24/7 handover sessions remain silent
+    # Record this commit in database and cloud Gist so subsequent routine 24/7 handover sessions remain silent
     if current_commit:
         set_bot_setting("last_notified_commit", current_commit)
+        if gist_storage.enabled:
+            try:
+                today_total, total_28h, active_countries = get_dashboard_stats()
+                await gist_storage.save_state(
+                    seen_dict=seen_timestamps,
+                    is_handover=_is_handover,
+                    total_forwarded=today_total,
+                    country_counts=active_countries,
+                    base_url=client.base_url if "client" in globals() else "",
+                    last_notified_commit=current_commit,
+                    manual_restart=False,
+                )
+            except Exception as e:
+                logger.debug(f"Gist commit record error: {e}")
 
 async def periodic_db_cleanup_loop():
     cleanup_counter = 0
@@ -5147,17 +5184,27 @@ async def periodic_db_cleanup_loop():
 async def periodic_gist_sync_loop():
     global _gist_dirty
     while True:
-        await asyncio.sleep(15.0)
-        if _gist_dirty and gist_storage.enabled:
-            _gist_dirty = False
-            today_total, total_28h, active_countries = get_dashboard_stats()
-            await gist_storage.save_state(
-                seen_dict=seen_timestamps,
-                is_handover=False,
-                total_forwarded=today_total,
-                country_counts=active_countries,
-                base_url=client.base_url,
-            )
+        try:
+            await asyncio.sleep(15.0)
+            if _gist_dirty and gist_storage.enabled:
+                _gist_dirty = False
+                try:
+                    today_total, total_28h, active_countries = get_dashboard_stats()
+                    await gist_storage.save_state(
+                        seen_dict=seen_timestamps,
+                        is_handover=False,
+                        total_forwarded=today_total,
+                        country_counts=active_countries,
+                        base_url=client.base_url,
+                    )
+                except Exception as gist_err:
+                    logger.debug(f"Periodic Gist sync notice: {gist_err}")
+                    _gist_dirty = True  # retry next cycle
+        except asyncio.CancelledError:
+            break
+        except Exception as loop_err:
+            logger.debug(f"Periodic Gist loop error: {loop_err}")
+            await asyncio.sleep(5.0)
 
 async def render_prompt_response(
     context: ContextTypes.DEFAULT_TYPE,
@@ -5765,7 +5812,10 @@ async def trigger_proactive_handover(manual_restart: bool = False) -> bool:
     url = f"https://api.github.com/repos/{repo}/actions/workflows/run_bot.yml/dispatches"
     payload = {
         "ref": "main",
-        "inputs": {"is_handover": "true"},
+        "inputs": {
+            "is_handover": "true",
+            "is_manual_restart": "true" if manual_restart else "false",
+        },
     }
 
     try:
@@ -5870,6 +5920,10 @@ async def main():
                     global _manual_restart
                     _manual_restart = True
                     set_bot_setting("manual_restart", "1")
+
+                gist_last_commit = gist_state.get("last_notified_commit")
+                if gist_last_commit:
+                    set_bot_setting("last_notified_commit", gist_last_commit)
 
                 # Pre-restore bot configuration settings secretly from cloud database BEFORE tasks start
                 saved_bot_data = gist_state.get("bot_data")
