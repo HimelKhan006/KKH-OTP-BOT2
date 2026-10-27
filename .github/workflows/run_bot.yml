@@ -215,7 +215,7 @@ jobs:
           THIRDWAVE_BASE_URL: ${{ github.event.inputs.custom_base_url || secrets.THIRDWAVE_BASE_URL || 'https://thirdwave.im' }}
           TELEGRAM_GROUP_CHAT_ID: ${{ secrets.TELEGRAM_GROUP_CHAT_ID }}
           SECONDARY_GROUP_CHAT_ID: ${{ secrets.SECONDARY_GROUP_CHAT_ID }}
-          POLL_INTERVAL_SECONDS: ${{ secrets.POLL_INTERVAL_SECONDS || '4.8' }}
+          POLL_INTERVAL_SECONDS: ${{ secrets.POLL_INTERVAL_SECONDS || '9.0' }}
           ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
