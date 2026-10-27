@@ -21,10 +21,12 @@ on:
     # 4-hour safety net — fires every 4h ONLY if bot ever stops unexpectedly
     - cron: '0 */4 * * *'
 
-# Only ONE bot instance ever runs. New push/handover cancels old one instantly so updates apply with ZERO delay.
-# Scheduled backup uses a unique group so it NEVER cancels an active running bot!
+# Only ONE bot instance ever runs at a time — guaranteed by shared concurrency group.
+# Push/dispatch/handover: cancel-in-progress=true  → instantly kills old bot, starts new one (zero delay).
+# Schedule safety-net:    cancel-in-progress=false → queues behind running bot, starts only if bot is dead.
+# This prevents TWO bots ever running simultaneously (which caused Telegram polling conflicts & crashes).
 concurrency:
-  group: otp-wave-bot-${{ github.event_name == 'schedule' && github.run_id || 'single-instance' }}
+  group: otp-wave-bot-single-instance
   cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 permissions:
@@ -44,27 +46,11 @@ jobs:
 
       - name: Scheduled Safety-Net Check
         if: github.event_name == 'schedule'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          echo "🔍 Checking if bot is already running in 24/7 session..."
-          ACTIVE_RUNS=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/runs?status=in_progress&per_page=20" \
-            | python3 -c "
-          import sys, json
-          runs = json.load(sys.stdin).get('workflow_runs', [])
-          active = [r for r in runs if str(r.get('id')) != '${{ github.run_id }}']
-          print(len(active))
-          ")
-          if [ "$ACTIVE_RUNS" -gt 0 ]; then
-            echo "✅ Bot is already running healthy ($ACTIVE_RUNS active runner). Backup schedule exiting without interrupting."
-            curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/cancel" || true
-            exit 0
-          fi
-          echo "⚠️ No active runner detected! Scheduled backup will start the bot now."
+          # The shared concurrency group already guarantees only one bot runs at a time.
+          # If this scheduled run reached here, it means the bot was NOT running (it won the
+          # concurrency queue lock). So we always proceed to start the bot as a recovery.
+          echo "⚠️ Scheduled safety-net fired — bot was not running. Starting recovery session now."
 
       # ─────────────────────────────────────────────────────────────────
       # Restore the OTP database & settings from cache FIRST
