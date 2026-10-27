@@ -5229,7 +5229,8 @@ async def render_prompt_response(
                 message_id=prompt_msg_id,
                 text=text,
                 parse_mode=ParseMode.HTML,
-                reply_markup=reply_markup
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
             )
             edited = True
         except Exception as e:
@@ -5242,7 +5243,8 @@ async def render_prompt_response(
                 chat_id=chat_id,
                 text=text,
                 parse_mode=ParseMode.HTML,
-                reply_markup=reply_markup
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
             )
         except Exception as e:
             logger.warning(f"Error sending prompt response: {e}")
