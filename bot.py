@@ -3043,6 +3043,7 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
 
     gist_status = f"Encrypted Cloud DB ({GIST_ID[:8]}...) 🔒" if gist_storage.enabled else "Local Storage"
     masked_key = f"{client.api_key[:8]}...{client.api_key[-4:]}" if len(client.api_key) > 12 else (client.api_key or "<i>Missing</i>")
+    effective_poll = max(4.8, POLL_INTERVAL_SECONDS)
 
     fwd_active = is_otp_forwarding_enabled()
     fwd_label = "🟢 ACTIVE (Live Mode)" if fwd_active else "⏸️ PAUSED (Silent Mode • DB & History Only)"
@@ -3064,7 +3065,7 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
         f"⚡ <b>Forwarding:</b>  <code>{fwd_label}</code>\n"
         f"📨 <b>OTPs Today:</b>  <code>{total_today} received</code>\n"
         f"📦 <b>DB Records:</b>  <code>{total_28h} (28h rolling)</code>\n"
-        f"⚡ <b>Poll Rate:</b>   <code>every {POLL_INTERVAL_SECONDS}s</code>\n"
+        f"⚡ <b>Poll Rate:</b>   <code>every {effective_poll:.1f}s</code>\n"
         f"📋 <b>SMS Format:</b>  <code>{fmt_label}</code>\n"
         f"🔗 <b>Buttons:</b>     {link_str}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -5878,6 +5879,7 @@ async def main():
     # Strictly ONLY /start is registered as a slash command. All other interactions are button-driven.
     _private = filters.ChatType.PRIVATE
     application.add_handler(CommandHandler("start", start_command, filters=_private))
+    application.add_handler(CommandHandler("status", status_command, filters=_private))
     application.add_handler(CallbackQueryHandler(admin_callback_handler))
     application.add_handler(MessageHandler(_private & filters.TEXT & ~filters.COMMAND, keyboard_button_handler))
 
