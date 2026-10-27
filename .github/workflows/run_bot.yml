@@ -114,6 +114,69 @@ jobs:
           " || true
           echo "✅ Active runner check complete."
 
+      - name: Clear Old Completed Workflow History
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PAT: ${{ secrets.PAT }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 -c "
+          import os, sys, json, urllib.request
+          from concurrent.futures import ThreadPoolExecutor
+
+          repo = '${{ github.repository }}'
+          current_run_id = '${{ github.run_id }}'
+          tokens = [
+              os.getenv('PAT', '').strip(),
+              os.getenv('GH_TOKEN', '').strip(),
+              os.getenv('GIST_TOKEN', '').strip(),
+              os.getenv('GITHUB_TOKEN', '').strip(),
+          ]
+          tokens = [t for t in tokens if t and t.lower() != 'true']
+
+          if not repo or not tokens:
+              sys.exit(0)
+
+          runs = []
+          for tok in tokens:
+              try:
+                  url = f'https://api.github.com/repos/{repo}/actions/runs?per_page=30'
+                  req = urllib.request.Request(url, headers={'Authorization': f'Bearer {tok}', 'Accept': 'application/vnd.github+json', 'User-Agent': 'Cleaner'})
+                  with urllib.request.urlopen(req, timeout=4) as resp:
+                      data = json.load(resp)
+                      runs = [r for r in data.get('workflow_runs', []) if str(r.get('id')) != current_run_id and r.get('status') == 'completed']
+                      if runs:
+                          break
+              except Exception:
+                  continue
+
+          if not runs:
+              print('✅ No old completed runs to clean.')
+              sys.exit(0)
+
+          print(f'🧹 Purging {len(runs)} old completed/cancelled run(s) from dashboard in parallel...')
+
+          def delete_run(r):
+              r_id = str(r.get('id'))
+              r_num = r.get('run_number')
+              for tok in tokens:
+                  try:
+                      del_url = f'https://api.github.com/repos/{repo}/actions/runs/{r_id}'
+                      del_req = urllib.request.Request(del_url, method='DELETE', headers={'Authorization': f'Bearer {tok}', 'Accept': 'application/vnd.github+json', 'User-Agent': 'Cleaner'})
+                      with urllib.request.urlopen(del_req, timeout=4) as del_resp:
+                          if del_resp.status in (200, 204):
+                              print(f'  🗑️ Purged old run #{r_num} (id: {r_id})')
+                              return
+                  except Exception:
+                      continue
+
+          with ThreadPoolExecutor(max_workers=8) as pool:
+              list(pool.map(delete_run, runs))
+
+          print('✅ Workflow run history cleaned.')
+          " || true
+
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
@@ -183,27 +246,34 @@ jobs:
           echo "  Session  : 5h 25min (19500s) — GitHub limit: 6h"
           echo "========================================"
 
-          # Continuous background cleaner: deletes completed runs every 60s
+          # Continuous background cleaner: deletes completed runs in parallel every 180s
           (
-            CLEAN_TOKEN="${{ github.token }}"
-            CLEAN_ALT="${{ secrets.PAT || secrets.GH_TOKEN || secrets.GIST_TOKEN }}"
             while true; do
-              sleep 60
-              curl -s -H "Authorization: Bearer $CLEAN_TOKEN" \
-                -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/${{ github.repository }}/actions/runs?per_page=50" \
-                | python3 -c "
-              import sys, json
-              runs = json.load(sys.stdin).get('workflow_runs', [])
-              for r in runs:
-                  if str(r.get('id')) != '${{ github.run_id }}' and r.get('status') == 'completed':
-                      print(r['id'])
-              " 2>/dev/null | while read r_id; do
-                DEL_RES=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE -H "Authorization: Bearer $CLEAN_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id")
-                if [ "$DEL_RES" != "204" ] && [ -n "$CLEAN_ALT" ]; then
-                  curl -s -X DELETE -H "Authorization: Bearer $CLEAN_ALT" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/actions/runs/$r_id" >/dev/null 2>&1 || true
-                fi
-              done
+              sleep 180
+              python3 -c "
+              import os, json, urllib.request
+              from concurrent.futures import ThreadPoolExecutor
+              repo = '${{ github.repository }}'
+              current_id = '${{ github.run_id }}'
+              tokens = [os.getenv('PAT', '').strip(), os.getenv('GH_TOKEN', '').strip(), os.getenv('GIST_TOKEN', '').strip(), os.getenv('GITHUB_TOKEN', '').strip()]
+              tokens = [t for t in tokens if t and t.lower() != 'true']
+              for tok in tokens:
+                  try:
+                      req = urllib.request.Request(f'https://api.github.com/repos/{repo}/actions/runs?per_page=30', headers={'Authorization': f'Bearer {tok}', 'Accept': 'application/vnd.github+json', 'User-Agent': 'Cleaner'})
+                      with urllib.request.urlopen(req, timeout=4) as resp:
+                          runs = [r for r in json.load(resp).get('workflow_runs', []) if str(r.get('id')) != current_id and r.get('status') == 'completed']
+                          if runs:
+                              def del_r(r):
+                                  for t in tokens:
+                                      try:
+                                          d_req = urllib.request.Request(f'https://api.github.com/repos/{repo}/actions/runs/{r[\"id\"]}', method='DELETE', headers={'Authorization': f'Bearer {t}', 'Accept': 'application/vnd.github+json', 'User-Agent': 'Cleaner'})
+                                          with urllib.request.urlopen(d_req, timeout=4) as dr:
+                                              if dr.status in (200, 204): return
+                                      except Exception: pass
+                              with ThreadPoolExecutor(max_workers=8) as p: list(p.map(del_r, runs))
+                              break
+                  except Exception: pass
+              " 2>/dev/null || true
             done
           ) &
 
