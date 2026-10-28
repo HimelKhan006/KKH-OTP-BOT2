@@ -2337,7 +2337,7 @@ COLLAPSED_SMS_HINT = "\u2800" * 7 + "  " + "<b>Tap to read...</b>"
 CARD_DIVIDER = "━" * 20
 QUOTE_DIVIDER = "━" * 18
 
-def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 22) -> str:
+def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 28) -> str:
     """
     Wraps SMS lines cleanly and highlights ONLY the OTP code inside a copyable <code> tag,
     leaving the rest of the SMS as plain text so tapping copies ONLY the OTP code.
@@ -2441,12 +2441,13 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     if sms_format != "short" and clean_msg:
         # Cap SMS display length to 3000 chars to strictly stay within Telegram's 4096 limit
         display_sms = clean_msg if len(clean_msg) <= 3000 else (clean_msg[:3000] + "... [truncated]")
-        styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=22)
+        styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=28)
         quote_block = (
             f"\n\n{EXPANDABLE_SMS_LABEL}\n"
             f"<blockquote expandable>⠀\n"
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
+            f"{CARD_DIVIDER}\n"
             f"💬 <b>SMS Content:</b>\n"
             f"{styled_sms}</blockquote>"
         )
