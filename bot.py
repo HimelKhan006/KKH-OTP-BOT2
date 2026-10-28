@@ -2334,9 +2334,10 @@ EXPANDABLE_SMS_LABEL = "📩 <b>View Full SMS:</b>"
 # Centered collapsed hint without icon (calibrated to exact optical center between left bar and quote mark)
 COLLAPSED_SMS_HINT = "\u2800" * 7 + "  " + "<b>Tap to read...</b>"
 # Symmetrical card divider (26 characters) to ensure cards have unified horizontal width across devices
-CARD_DIVIDER = "━" * 26
+CARD_DIVIDER = "━" * 20
+QUOTE_DIVIDER = "━" * 18
 
-def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 28) -> str:
+def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 22) -> str:
     """
     Wraps SMS lines cleanly and highlights ONLY the OTP code inside a copyable <code> tag,
     leaving the rest of the SMS as plain text so tapping copies ONLY the OTP code.
@@ -2446,7 +2447,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             f"<blockquote expandable>⠀\n"
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
-            f"{CARD_DIVIDER}\n"
+            f"{QUOTE_DIVIDER}\n"
             f"💬 <b>SMS Content:</b>\n"
             f"{styled_sms}</blockquote>"
         )
