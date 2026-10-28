@@ -224,6 +224,7 @@ jobs:
           PAT: ${{ secrets.PAT || '' }}
           GIST_ID: ${{ secrets.GIST_ID }}
           STARTUP_TYPE: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.sha }}
           IS_HANDOVER: ${{ github.event.inputs.is_handover || 'false' }}
           IS_MANUAL_RESTART: ${{ github.event.inputs.is_manual_restart || 'false' }}
           DB_FILE: ${{ github.workspace }}/bot1_database.db

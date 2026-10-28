@@ -5058,39 +5058,68 @@ async def admins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_startup_announcement(application: Application):
     """
-    Sends startup notification to Admin private chat only on new update pushed,
-    initial deployment, or manual admin restart. Matching number bot format.
-    COMPLETELY SILENT on routine 24/7 handover sessions (zero spam).
+    Sends startup notification to Admin private chat ONLY in 3 cases:
+      1. A new code update was pushed to GitHub (github.event_name == 'push')
+      2. The git commit SHA changed from the previously recorded commit
+      3. An admin explicitly triggered a manual restart from the admin panel
+
+    COMPLETELY SILENT on:
+      - Routine 24/7 session handovers (IS_HANDOVER=true)
+      - Scheduled safety-net triggers (STARTUP_TYPE=schedule)
+      - Any workflow_dispatch NOT explicitly flagged as manual restart
     """
     global _manual_restart, _is_handover
-    silent_env = os.getenv("SILENT_STARTUP", "").strip().lower() in ("true", "1", "yes")
-    if silent_env:
-        logger.info("🤫 SILENT_STARTUP set: startup notification suppressed.")
+
+    # SILENT_STARTUP env override (emergency escape hatch)
+    if os.getenv("SILENT_STARTUP", "").strip().lower() in ("true", "1", "yes"):
+        logger.info("\U0001f92b SILENT_STARTUP set: startup notification suppressed.")
         return
 
     current_commit = get_current_commit()
     last_notified_commit = get_bot_setting("last_notified_commit", "")
-    manual_restart = (get_bot_setting("manual_restart", "0") == "1") or _manual_restart
 
-    # Rule 1: Scheduled safety-net triggers must NEVER announce unless an admin specifically triggered a manual restart
+    # Only trust manual_restart if IS_MANUAL_RESTART env was explicitly set to true
+    # by the bot's own restart-dispatch call. Never trust it from Gist alone.
+    manual_restart = _manual_restart  # already set from IS_MANUAL_RESTART env at startup
+
+    # ── Rule 1: Scheduled safety-net → always silent ──────────────────────────
     if STARTUP_TYPE == "schedule" and not manual_restart:
-        logger.info(f"🤫 Scheduled safety-net trigger (STARTUP_TYPE={STARTUP_TYPE}): startup notification suppressed.")
+        logger.info(f"\U0001f92b Scheduled safety-net (STARTUP_TYPE=schedule): startup notification suppressed.")
         return
 
-    # Rule 2: Routine session handovers must NEVER announce unless an admin specifically triggered a manual restart
+    # ── Rule 2: Session handover → always silent unless IS_MANUAL_RESTART=true ─
     if _is_handover and not manual_restart:
-        logger.info(f"🤫 Automated session handover continuation (commit: {current_commit or 'unknown'}): startup notification suppressed (zero-restart mode).")
+        logger.info(
+            f"\U0001f92b Automated 24/7 session handover (IS_HANDOVER=true, commit={current_commit or 'unknown'}): "
+            f"startup notification suppressed (zero-downtime mode)."
+        )
         return
 
-    # Rule 3: A new update is ONLY if STARTUP_TYPE is 'push' or git commit changed from the last notified commit
+    # ── Rule 3: workflow_dispatch that is NOT a handover and NOT manual restart → silent ─
+    # (e.g. manually triggered from GitHub Actions UI without being a code push)
+    if STARTUP_TYPE == "workflow_dispatch" and not manual_restart and not _is_handover:
+        # Only alert if commit actually changed (real update snuck in via dispatch)
+        is_commit_change = bool(current_commit and last_notified_commit and current_commit != last_notified_commit)
+        if not is_commit_change:
+            logger.info(
+                f"\u2139\ufe0f workflow_dispatch startup without new commit or manual restart: "
+                f"startup notification suppressed (commit={current_commit or 'none'})."
+            )
+            if current_commit and not last_notified_commit:
+                set_bot_setting("last_notified_commit", current_commit)
+            return
+
+    # ── Determine what kind of alert to send ──────────────────────────────────
     is_git_push = (STARTUP_TYPE == "push")
     is_commit_change = bool(current_commit and last_notified_commit and current_commit != last_notified_commit)
     is_new_update = is_git_push or is_commit_change
 
-    # Suppress if neither a new update was pushed nor a manual restart from admin panel
+    # Final gate: if nothing significant happened, stay silent
     if not is_new_update and not manual_restart:
-        logger.info(f"ℹ️ Bot started cleanly in silent 24/7 background mode (commit={current_commit or 'none'}, trigger={STARTUP_TYPE}). No admin alert needed.")
-        # Ensure baseline commit is stored if this was an initial boot
+        logger.info(
+            f"\u2139\ufe0f Bot started cleanly in 24/7 background mode "
+            f"(commit={current_commit or 'none'}, trigger={STARTUP_TYPE}). No admin alert needed."
+        )
         if current_commit and not last_notified_commit:
             set_bot_setting("last_notified_commit", current_commit)
             if gist_storage.enabled:
@@ -5108,7 +5137,7 @@ async def send_startup_announcement(application: Application):
                     pass
         return
 
-    # Reset manual_restart flag in SQLite & Gist once handled
+    # ── Clear manual_restart flag immediately so it doesn't re-fire next session ─
     if manual_restart:
         _manual_restart = False
         set_bot_setting("manual_restart", "0")
@@ -5125,8 +5154,9 @@ async def send_startup_announcement(application: Application):
                     last_notified_commit=current_commit,
                 )
             except Exception as e:
-                logger.debug(f"Clear manual_restart notice: {e}")
+                logger.debug(f"Clear manual_restart gist notice: {e}")
 
+    # ── Send alert ────────────────────────────────────────────────────────────
     try:
         me = await application.bot.get_me()
         if me and me.first_name:
@@ -5137,23 +5167,31 @@ async def send_startup_announcement(application: Application):
     bot_name = get_bot_name()
     time_str, date_str = format_bangladesh_12h()
 
+    if manual_restart and not is_new_update:
+        trigger_label = "\U0001f501 <b>Admin Manual Restart</b>"
+    elif is_git_push:
+        trigger_label = "\U0001f680 <b>New Update Deployed</b>"
+    else:
+        trigger_label = "\U0001f4e6 <b>Code Update Detected</b>"
+
     admin_msg = (
-        f"✅ <b>{html.escape(bot_name)}</b> is now <b>LIVE</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"⏰ <b>Start Time:</b> <code>{time_str}</code>\n"
-        f"📅 <b>Date:</b>       <code>{date_str}</code>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "<i>👑 Use /start anytime to open the admin dashboard.</i>"
+        f"\u2705 <b>{html.escape(bot_name)}</b> is now <b>LIVE</b>\n"
+        "\u2501" * 20 + "\n"
+        f"\u23f0 <b>Start Time:</b> <code>{time_str}</code>\n"
+        f"\U0001f4c5 <b>Date:</b>       <code>{date_str}</code>\n"
+        f"\u26a1 <b>Trigger:</b>    {trigger_label}\n"
+        "\u2501" * 20 + "\n"
+        "<i>\U0001f451 Use /start anytime to open the admin dashboard.</i>"
     )
     for aid in get_all_admin_ids():
         if aid:
             try:
                 await send_with_retry(application.bot, aid, admin_msg, reply_markup=get_admin_reply_keyboard())
-                logger.info(f"✅ Initial alert sent to admin private chat {aid}")
+                logger.info(f"\u2705 Startup alert sent to admin {aid}")
             except Exception as e:
-                logger.warning(f"Initial alert failed for admin {aid}: {e}")
+                logger.warning(f"Startup alert failed for admin {aid}: {e}")
 
-    # Record this commit in database and cloud Gist so subsequent routine 24/7 handover sessions remain silent
+    # Record commit so subsequent handovers stay silent
     if current_commit:
         set_bot_setting("last_notified_commit", current_commit)
         if gist_storage.enabled:
@@ -5170,6 +5208,7 @@ async def send_startup_announcement(application: Application):
                 )
             except Exception as e:
                 logger.debug(f"Gist commit record error: {e}")
+
 
 async def periodic_db_cleanup_loop():
     cleanup_counter = 0
@@ -5912,21 +5951,41 @@ async def main():
         await application.initialize()
         await application.start()
 
-        # Check cloud Gist state at startup to identify manual restarts vs routine handovers
+        # ── Gist state restore at startup ──────────────────────────────────────
         if gist_storage.enabled:
             try:
                 await gist_storage.ensure_gist()
                 gist_state = await gist_storage.load_state()
-                if gist_state.get("manual_restart"):
-                    global _manual_restart
-                    _manual_restart = True
-                    set_bot_setting("manual_restart", "1")
 
+                # manual_restart is ONLY trusted from Gist when IS_MANUAL_RESTART env was
+                # explicitly set by the bot's own dispatch (preventing stale flag re-triggering)
+                if gist_state.get("manual_restart") and _manual_restart:
+                    # Already set from env, flag confirmed — leave as-is
+                    set_bot_setting("manual_restart", "1")
+                elif gist_state.get("manual_restart") and not _manual_restart:
+                    # Stale Gist flag from a previous session — clear it immediately, do NOT re-trigger
+                    logger.info("\u2139\ufe0f Stale manual_restart flag found in Gist — clearing (not re-triggering alert).")
+                    set_bot_setting("manual_restart", "0")
+                    # Immediately clear in Gist so next session doesn't see it either
+                    try:
+                        today_total, total_28h, active_countries = get_dashboard_stats()
+                        asyncio.create_task(gist_storage.save_state(
+                            seen_dict=seen_timestamps,
+                            is_handover=_is_handover,
+                            total_forwarded=today_total,
+                            country_counts=active_countries,
+                            base_url=client.base_url if "client" in globals() else "",
+                            manual_restart=False,
+                        ))
+                    except Exception:
+                        pass
+
+                # Restore last_notified_commit so commit-change detection works across sessions
                 gist_last_commit = gist_state.get("last_notified_commit")
                 if gist_last_commit:
                     set_bot_setting("last_notified_commit", gist_last_commit)
 
-                # Pre-restore bot configuration settings secretly from cloud database BEFORE tasks start
+                # Pre-restore bot configuration settings from cloud database BEFORE tasks start
                 saved_bot_data = gist_state.get("bot_data")
                 if isinstance(saved_bot_data, dict) and saved_bot_data:
                     local_data = load_stored_data()
