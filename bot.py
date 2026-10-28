@@ -2574,10 +2574,10 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     num_plain    = masked_number if masked_number else html.escape(country_name)
     source_plain = source  # Already safely escaped / canonical name
 
-    # Fixed-width monospace alignment so ✦, App/Geo/Num, colons ':', and values align to the exact pixel
+    # Fixed-width monospace alignment so ✦, App/Loc/Num, colons ':', and values align to the exact pixel
     info_block = (
         f"<code>✦ App: {source_plain}</code>\n"
-        f"<code>✦ Geo: </code>{flag} <code>{country_text}</code>\n"
+        f"<code>✦ Loc: </code>{flag} <code>{country_text}</code>\n"
         f"<code>✦ Num: {num_plain}</code>"
     )
 
@@ -3515,7 +3515,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "🔐 <b>OTP PASS</b>\n"
             f"{CARD_DIVIDER}\n"
             "<code>✦ App: WhatsApp</code>\n"
-            "<code>✦ Geo: </code>🇳🇵 <code>Nepal (NP)</code>\n"
+            "<code>✦ Loc: </code>🇳🇵 <code>Nepal (NP)</code>\n"
             "<code>✦ Num: +977980****456</code>\n"
             f"{CARD_DIVIDER}\n"
             "🎯 <b>CODE:</b> <code>492810</code>\n\n"
@@ -3530,7 +3530,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "🔐 <b>OTP PASS</b>\n"
             f"{CARD_DIVIDER}\n"
             "<code>✦ App: WhatsApp</code>\n"
-            "<code>✦ Geo: </code>🇳🇵 <code>Nepal (NP)</code>\n"
+            "<code>✦ Loc: </code>🇳🇵 <code>Nepal (NP)</code>\n"
             "<code>✦ Num: +977980****456</code>\n"
             f"{CARD_DIVIDER}\n"
             "🎯 <b>CODE:</b> <code>492810</code>\n\n"
