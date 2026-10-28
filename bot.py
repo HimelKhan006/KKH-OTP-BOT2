@@ -2595,7 +2595,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
 
     if otp_code:
         full_text = (
-            f"👑 <b>OTP PASS</b>\n"
+            f"🔐 <b>OTP PASS</b>\n"
             f"{CARD_DIVIDER}\n"
             f"✦ <b>App:</b> {source_plain}\n"
             f"✦ <b>Geo:</b> {country_plain}\n"
@@ -2607,7 +2607,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     elif clean_msg:
         if sms_format == "short":
             full_text = (
-                f"👑 <b>OTP PASS</b>\n"
+                f"🔐 <b>OTP PASS</b>\n"
                 f"{CARD_DIVIDER}\n"
                 f"✦ <b>App:</b> {source_plain}\n"
                 f"✦ <b>Geo:</b> {country_plain}\n"
@@ -2617,7 +2617,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             )
         else:
             full_text = (
-                f"👑 <b>OTP PASS</b>\n"
+                f"🔐 <b>OTP PASS</b>\n"
                 f"{CARD_DIVIDER}\n"
                 f"✦ <b>App:</b> {source_plain}\n"
                 f"✦ <b>Geo:</b> {country_plain}\n"
@@ -2627,7 +2627,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             )
     else:
         full_text = (
-            f"👑 <b>OTP PASS</b>\n"
+            f"🔐 <b>OTP PASS</b>\n"
             f"{CARD_DIVIDER}\n"
             f"✦ <b>App:</b> {source_plain}\n"
             f"✦ <b>Geo:</b> {country_plain}\n"
@@ -3514,7 +3514,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Short:</b>\n\n"
-            "👑 <b>OTP PASS</b>\n"
+            "🔐 <b>OTP PASS</b>\n"
             f"{CARD_DIVIDER}\n"
             "✦ <b>App:</b> WhatsApp\n"
             "✦ <b>Geo:</b> 🇳🇵 Nepal (NP)\n"
@@ -3529,7 +3529,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
-            "👑 <b>OTP PASS</b>\n"
+            "🔐 <b>OTP PASS</b>\n"
             f"{CARD_DIVIDER}\n"
             "✦ <b>App:</b> WhatsApp\n"
             "✦ <b>Geo:</b> 🇳🇵 Nepal (NP)\n"
