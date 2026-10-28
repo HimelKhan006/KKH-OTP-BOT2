@@ -337,13 +337,18 @@ jobs:
             exit 0
           fi
 
-          echo "🔄 Triggering next bot session immediately to avoid downtime..."
+          IS_MANUAL="false"
+          if [ -f ".manual_restart" ]; then
+            IS_MANUAL="true"
+          fi
+
+          echo "🔄 Triggering next bot session immediately to avoid downtime (is_manual_restart=$IS_MANUAL)..."
           HTTP_CODE=$(curl -s -o /tmp/dispatch_out.txt -w "%{http_code}" -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/run_bot.yml/dispatches" \
-            -d '{"ref":"main","inputs":{"is_handover":"true"}}')
+            -d "{\"ref\":\"main\",\"inputs\":{\"is_handover\":\"true\",\"is_manual_restart\":\"$IS_MANUAL\"}}")
 
           if [ "$HTTP_CODE" != "204" ] && [ -n "$ALT_TOKEN" ]; then
             echo "ℹ️ Retrying dispatch with auxiliary token..."
@@ -352,7 +357,7 @@ jobs:
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "https://api.github.com/repos/${{ github.repository }}/actions/workflows/run_bot.yml/dispatches" \
-              -d '{"ref":"main","inputs":{"is_handover":"true"}}')
+              -d "{\"ref\":\"main\",\"inputs\":{\"is_handover\":\"true\",\"is_manual_restart\":\"$IS_MANUAL\"}}")
           fi
 
           if [ "$HTTP_CODE" = "204" ]; then

@@ -4952,6 +4952,12 @@ async def perform_zero_restart_handover(target_message=None, manual_restart: boo
 
     try:
         set_bot_setting("manual_restart", "1" if manual_restart else "0")
+        if manual_restart:
+            try:
+                with open(".manual_restart", "w", encoding="utf-8") as mf:
+                    mf.write("1")
+            except Exception:
+                pass
     except Exception:
         pass
 
