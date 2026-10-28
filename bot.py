@@ -173,7 +173,7 @@ TELEGRAM_GROUP_CHAT_ID = os.getenv("TELEGRAM_GROUP_CHAT_ID", "").strip()
 SECONDARY_GROUP_CHAT_ID = os.getenv("SECONDARY_GROUP_CHAT_ID", os.getenv("TELEGRAM_SECONDARY_GROUP_CHAT_ID", "")).strip()
 MIN_FORWARDING_GROUPS: int = 1
 MAX_FORWARDING_GROUPS: int = 10
-POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "9.0"))
+POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "7.5"))
 STARTUP_TYPE          = os.getenv("STARTUP_TYPE", "workflow_dispatch").strip().lower()
 
 _admin_raw    = os.getenv("ADMIN_USER_IDS", "").strip()
@@ -3025,7 +3025,7 @@ async def poll_incoming_messages(application: Application):
             logger.error(f"⚠️ Polling error: {e}. Continuing in 2s...")
             await asyncio.sleep(2.0)
 
-        await asyncio.sleep(max(9.0, POLL_INTERVAL_SECONDS))
+        await asyncio.sleep(max(7.5, POLL_INTERVAL_SECONDS))
 
 # ==========================================
 # 12. Bot Commands & Admin Control Panel
@@ -3101,7 +3101,7 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
 
     gist_status = f"Encrypted Cloud DB ({GIST_ID[:8]}...) 🔒" if gist_storage.enabled else "Local Storage"
     masked_key = f"{client.api_key[:8]}...{client.api_key[-4:]}" if len(client.api_key) > 12 else (client.api_key or "<i>Missing</i>")
-    effective_poll = max(9.0, POLL_INTERVAL_SECONDS)
+    effective_poll = max(7.5, POLL_INTERVAL_SECONDS)
 
     fwd_active = is_otp_forwarding_enabled()
     fwd_label = "🟢 ACTIVE (Live Mode)" if fwd_active else "⏸️ PAUSED (Silent Mode • DB & History Only)"
