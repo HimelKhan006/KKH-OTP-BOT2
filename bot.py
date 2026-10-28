@@ -5174,14 +5174,15 @@ async def send_startup_announcement(application: Application):
     else:
         trigger_label = "\U0001f4e6 <b>Code Update Detected</b>"
 
+    sep = "━" * 20
     admin_msg = (
-        f"\u2705 <b>{html.escape(bot_name)}</b> is now <b>LIVE</b>\n"
-        "\u2501" * 20 + "\n"
-        f"\u23f0 <b>Start Time:</b> <code>{time_str}</code>\n"
-        f"\U0001f4c5 <b>Date:</b>       <code>{date_str}</code>\n"
-        f"\u26a1 <b>Trigger:</b>    {trigger_label}\n"
-        "\u2501" * 20 + "\n"
-        "<i>\U0001f451 Use /start anytime to open the admin dashboard.</i>"
+        f"✅ <b>{html.escape(bot_name)}</b> is now <b>LIVE</b>\n"
+        f"{sep}\n"
+        f"⏰ <b>Start Time:</b> <code>{time_str}</code>\n"
+        f"📅 <b>Date:</b>       <code>{date_str}</code>\n"
+        f"⚡ <b>Trigger:</b>    {trigger_label}\n"
+        f"{sep}\n"
+        "<i>👑 Use /start anytime to open the admin dashboard.</i>"
     )
     for aid in get_all_admin_ids():
         if aid:
