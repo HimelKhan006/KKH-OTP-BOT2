@@ -2441,13 +2441,12 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     if sms_format != "short" and clean_msg:
         # Cap SMS display length to 3000 chars to strictly stay within Telegram's 4096 limit
         display_sms = clean_msg if len(clean_msg) <= 3000 else (clean_msg[:3000] + "... [truncated]")
-        styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=28)
+        styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=22)
         quote_block = (
             f"\n\n{EXPANDABLE_SMS_LABEL}\n"
             f"<blockquote expandable>⠀\n"
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
-            f"{QUOTE_DIVIDER}\n"
             f"💬 <b>SMS Content:</b>\n"
             f"{styled_sms}</blockquote>"
         )
