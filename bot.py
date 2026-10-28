@@ -2421,22 +2421,22 @@ ISO_TO_COUNTRY_NAME: Dict[str, str] = {
     "AZ": "Azerbaijan", "BA": "Bosnia", "BD": "Bangladesh", "BE": "Belgium",
     "BF": "Burkina Faso", "BG": "Bulgaria", "BH": "Bahrain", "BI": "Burundi", "BJ": "Benin",
     "BO": "Bolivia", "BR": "Brazil", "BT": "Bhutan", "BW": "Botswana", "BY": "Belarus",
-    "BZ": "Belize", "CA": "Canada", "CD": "DR Congo", "CF": "Central Africa",
+    "BZ": "Belize", "CA": "Canada", "CD": "DR Congo", "CF": "Cent. Africa",
     "CG": "Congo", "CH": "Switzerland", "CI": "Ivory Coast", "CL": "Chile", "CM": "Cameroon",
     "CN": "China", "CO": "Colombia", "CR": "Costa Rica", "CU": "Cuba", "CV": "Cape Verde",
-    "CY": "Cyprus", "CZ": "Czech Republic", "DE": "Germany", "DJ": "Djibouti", "DK": "Denmark",
-    "DO": "Dominican Rep.", "DZ": "Algeria", "EC": "Ecuador", "EE": "Estonia", "EG": "Egypt",
+    "CY": "Cyprus", "CZ": "Czechia", "DE": "Germany", "DJ": "Djibouti", "DK": "Denmark",
+    "DO": "Dominican R.", "DZ": "Algeria", "EC": "Ecuador", "EE": "Estonia", "EG": "Egypt",
     "ES": "Spain", "ET": "Ethiopia", "FI": "Finland", "FJ": "Fiji", "FR": "France",
-    "GA": "Gabon", "GB": "United Kingdom", "GE": "Georgia", "GH": "Ghana", "GI": "Gibraltar",
+    "GA": "Gabon", "GB": "UK", "GE": "Georgia", "GH": "Ghana", "GI": "Gibraltar",
     "GM": "Gambia", "GN": "Guinea", "GQ": "Eq. Guinea", "GR": "Greece", "GT": "Guatemala",
-    "GW": "Guinea-Bissau", "GY": "Guyana", "HK": "Hong Kong", "HN": "Honduras", "HR": "Croatia",
+    "GW": "Guinea-B.", "GY": "Guyana", "HK": "Hong Kong", "HN": "Honduras", "HR": "Croatia",
     "HT": "Haiti", "HU": "Hungary", "ID": "Indonesia", "IE": "Ireland", "IL": "Israel",
     "IN": "India", "IQ": "Iraq", "IR": "Iran", "IS": "Iceland", "IT": "Italy",
     "JM": "Jamaica", "JO": "Jordan", "JP": "Japan", "KE": "Kenya", "KG": "Kyrgyzstan",
     "KH": "Cambodia", "KR": "South Korea", "KW": "Kuwait", "KZ": "Kazakhstan", "LA": "Laos",
     "LB": "Lebanon", "LK": "Sri Lanka", "LR": "Liberia", "LS": "Lesotho", "LT": "Lithuania",
     "LU": "Luxembourg", "LV": "Latvia", "LY": "Libya", "MA": "Morocco", "MC": "Monaco",
-    "MD": "Moldova", "ME": "Montenegro", "MG": "Madagascar", "MK": "North Macedonia", "ML": "Mali",
+    "MD": "Moldova", "ME": "Montenegro", "MG": "Madagascar", "MK": "N. Macedonia", "ML": "Mali",
     "MM": "Myanmar", "MN": "Mongolia", "MO": "Macau", "MR": "Mauritania", "MT": "Malta",
     "MU": "Mauritius", "MV": "Maldives", "MW": "Malawi", "MX": "Mexico", "MY": "Malaysia",
     "MZ": "Mozambique", "NA": "Namibia", "NE": "Niger", "NG": "Nigeria", "NI": "Nicaragua",
@@ -2449,8 +2449,8 @@ ISO_TO_COUNTRY_NAME: Dict[str, str] = {
     "ST": "Sao Tome", "SV": "El Salvador", "SY": "Syria", "SZ": "Eswatini", "TD": "Chad",
     "TG": "Togo", "TH": "Thailand", "TJ": "Tajikistan", "TL": "Timor-Leste", "TM": "Turkmenistan",
     "TN": "Tunisia", "TO": "Tonga", "TR": "Turkey", "TT": "Trinidad", "TW": "Taiwan",
-    "TZ": "Tanzania", "UA": "Ukraine", "UG": "Uganda", "US": "United States", "UY": "Uruguay",
-    "UZ": "Uzbekistan", "VC": "Saint Vincent", "VE": "Venezuela", "VN": "Vietnam", "VU": "Vanuatu",
+    "TZ": "Tanzania", "UA": "Ukraine", "UG": "Uganda", "US": "USA", "UY": "Uruguay",
+    "UZ": "Uzbekistan", "VC": "St. Vincent", "VE": "Venezuela", "VN": "Vietnam", "VU": "Vanuatu",
     "WS": "Samoa", "XK": "Kosovo", "YE": "Yemen", "ZA": "South Africa", "ZM": "Zambia", "ZW": "Zimbabwe"
 }
 
@@ -2464,8 +2464,8 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
             parts = re.split(r"[-–—,:/]", raw_range)
             cand = parts[0].strip().title()
             if cand and len(cand) > 2:
-                if len(cand) > 15:
-                    cand = cand[:14].rstrip() + "."
+                if len(cand) > 12:
+                    cand = cand[:11].rstrip() + "."
                 return cand
     return "Global"
 
@@ -2473,10 +2473,12 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
 # 10. Clean OTP Notification Formatter (No Language)
 # Professional label matching the card's icon alignment (column 0)
 EXPANDABLE_SMS_LABEL = "📩 <b>View Full SMS:</b>"
-# Centered collapsed hint without icon (calibrated to exact optical center between left bar and quote mark)
-COLLAPSED_SMS_HINT = "\u2800" * 7 + "  " + "<b>Tap to read...</b>"
-# Symmetrical card divider (23 characters) to ensure Short & Long format cards have identical horizontal width (245px)
+# Centered collapsed hint inside the quote box
+COLLAPSED_SMS_HINT = "\u2800" * 6 + "<b>Tap to read...</b>"
+# Symmetrical outer card divider (23 characters = 245px) locking the exact horizontal width of all cards
 CARD_DIVIDER = "━" * 23
+# Inner quote divider (19 characters) compensating for blockquote border/padding so Long cards never stretch wider than Short cards
+QUOTE_DIVIDER = "━" * 19
 
 def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 28) -> str:
     """
@@ -2556,7 +2558,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     else:
         country_text = "Global"
 
-    # Smart service detection
+    # Smart service detection + strict length cap so the App row never stretches the card
     low_source = raw_source.lower()
     low_msg    = raw_message.lower()
     wa_keywords = ["whatsapp", "‏واتساب‏", "واتساب", "ватсап", "wa code", "wa.me"]
@@ -2567,8 +2569,23 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         source = "Telegram"
     elif "google" in low_source or "google" in low_msg or raw_message.startswith("G-"):
         source = "Google"
+    elif "facebook" in low_source or "facebook" in low_msg or "fb-" in low_msg:
+        source = "Facebook"
+    elif "instagram" in low_source or "instagram" in low_msg:
+        source = "Instagram"
+    elif "tiktok" in low_source or "tiktok" in low_msg:
+        source = "TikTok"
+    elif "microsoft" in low_source or "microsoft" in low_msg:
+        source = "Microsoft"
+    elif "apple" in low_source or "apple id" in low_msg:
+        source = "Apple"
+    elif "discord" in low_source or "discord" in low_msg:
+        source = "Discord"
     else:
-        source = html.escape(raw_source)
+        clean_src = re.sub(r"\s+", " ", raw_source).strip()
+        if len(clean_src) > 15:
+            clean_src = clean_src[:14].rstrip() + "."
+        source = html.escape(clean_src)
 
     # Display number / fallback to country name (safely HTML escaped)
     num_plain    = masked_number if masked_number else html.escape(country_name)
@@ -2588,13 +2605,13 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     if sms_format != "short" and clean_msg:
         # Cap SMS display length to 3000 chars to strictly stay within Telegram's 4096 limit
         display_sms = clean_msg if len(clean_msg) <= 3000 else (clean_msg[:3000] + "... [truncated]")
-        styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=28)
+        styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=23)
         quote_block = (
             f"\n\n{EXPANDABLE_SMS_LABEL}\n"
             f"<blockquote expandable>⠀\n"
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
-            f"{CARD_DIVIDER}\n"
+            f"{QUOTE_DIVIDER}\n"
             f"💬 <b>Message Body:</b>\n"
             f"{styled_sms}</blockquote>"
         )
@@ -3523,7 +3540,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         )
     elif preview_mode == "long":
         sample_sms = "Your WhatsApp verification code is 492-810. Do not share this code with anyone."
-        styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=28)
+        styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=23)
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
@@ -3538,7 +3555,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             f"<blockquote expandable>⠀\n"
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
-            f"{CARD_DIVIDER}\n"
+            f"{QUOTE_DIVIDER}\n"
             f"💬 <b>Message Body:</b>\n"
             f"{styled_sample}</blockquote>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
