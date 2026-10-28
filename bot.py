@@ -851,6 +851,7 @@ seen_content_signatures: Dict[str, float] = {}
 _gist_dirty: bool = False
 _is_handover: bool = os.getenv("IS_HANDOVER", "false").strip().lower() in ("true", "1", "yes")
 _manual_restart: bool = os.getenv("IS_MANUAL_RESTART", "false").strip().lower() in ("true", "1", "yes")
+_startup_alert_sent: bool = False  # in-process guard — prevents double-fire within a single bot.py run
 _handover_epoch: float = 0.0
 bot_process_start_time: float = time.time()
 
@@ -5103,7 +5104,15 @@ async def send_startup_announcement(application: Application):
       - Scheduled safety-net triggers (STARTUP_TYPE=schedule)
       - Any workflow_dispatch NOT explicitly flagged as manual restart
     """
-    global _manual_restart
+    global _manual_restart, _startup_alert_sent
+
+    # ── In-process dedup guard ─────────────────────────────────────────────
+    # Prevents double-firing if send_startup_announcement is somehow called
+    # more than once within the same Python process (e.g. via task re-schedule).
+    if _startup_alert_sent:
+        logger.info("\u2139\ufe0f send_startup_announcement: already sent in this process — skipping.")
+        return
+    _startup_alert_sent = True
 
     # SILENT_STARTUP env override (emergency escape hatch)
     if os.getenv("SILENT_STARTUP", "").strip().lower() in ("true", "1", "yes"):
@@ -5149,6 +5158,17 @@ async def send_startup_announcement(application: Application):
     is_commit_change = bool(current_commit and last_notified_commit and current_commit != last_notified_commit)
     is_new_update = is_git_push or is_commit_change
 
+    # ── Crash-restart deduplication: already notified for this exact commit? ──
+    # If STARTUP_TYPE=="push" but last_notified_commit already matches current_commit,
+    # it means a previous restart in this same session already sent the alert.
+    # This prevents 20x duplicate alerts from the crash-restart loop.
+    if is_git_push and current_commit and current_commit == last_notified_commit and not manual_restart:
+        logger.info(
+            f"\u2139\ufe0f Push event — startup alert already sent for commit {current_commit[:7]}. "
+            f"Skipping duplicate (crash-restart protection)."
+        )
+        return
+
     # Final gate: if nothing significant happened, stay silent
     if not is_new_update and not manual_restart:
         logger.info(
@@ -5191,6 +5211,29 @@ async def send_startup_announcement(application: Application):
             except Exception as e:
                 logger.debug(f"Clear manual_restart gist notice: {e}")
 
+    # ── DEDUP GUARD: record commit to DB *before* sending ─────────────────────
+    # This prevents the crash-restart loop from resending the alert if the bot
+    # crashes after sending but before recording. On the next restart (same
+    # STARTUP_TYPE=push), line 5156 sees current_commit==last_notified_commit
+    # and skips the alert. We also push to Gist immediately so the next
+    # runner session (fresh DB) also sees it.
+    if current_commit and not manual_restart:
+        set_bot_setting("last_notified_commit", current_commit)
+        if gist_storage.enabled:
+            try:
+                today_total, total_28h, active_countries = get_dashboard_stats()
+                await gist_storage.save_state(
+                    seen_dict=seen_timestamps,
+                    is_handover=_is_handover,
+                    total_forwarded=today_total,
+                    country_counts=active_countries,
+                    base_url=client.base_url if "client" in globals() else "",
+                    last_notified_commit=current_commit,
+                    manual_restart=False,
+                )
+            except Exception as e:
+                logger.debug(f"Pre-send Gist commit record notice: {e}")
+
     # ── Send alert ────────────────────────────────────────────────────────────
     try:
         me = await application.bot.get_me()
@@ -5226,10 +5269,10 @@ async def send_startup_announcement(application: Application):
             except Exception as e:
                 logger.warning(f"Startup alert failed for admin {aid}: {e}")
 
-    # Record commit so subsequent handovers stay silent
+    # Re-confirm commit recorded (also covers manual_restart path)
     if current_commit:
         set_bot_setting("last_notified_commit", current_commit)
-        if gist_storage.enabled:
+        if manual_restart and gist_storage.enabled:
             try:
                 today_total, total_28h, active_countries = get_dashboard_stats()
                 await gist_storage.save_state(
@@ -5242,7 +5285,7 @@ async def send_startup_announcement(application: Application):
                     manual_restart=False,
                 )
             except Exception as e:
-                logger.debug(f"Gist commit record error: {e}")
+                logger.debug(f"Post-send Gist commit record notice: {e}")
 
 
 async def periodic_db_cleanup_loop():
