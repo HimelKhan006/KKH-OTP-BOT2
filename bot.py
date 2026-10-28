@@ -106,13 +106,12 @@ from telegram import (
     BotCommandScopeDefault,
     BotCommandScopeAllPrivateChats,
     BotCommandScopeAllGroupChats,
-    BotCommandScopeAllChatAdministrators,
     BotCommandScopeChat,
     MenuButtonCommands,
     MenuButtonDefault,
 )
 from telegram.constants import ParseMode
-from telegram.error import RetryAfter, TimedOut, NetworkError, Conflict
+from telegram.error import RetryAfter, TimedOut, NetworkError, Conflict, BadRequest
 from telegram.request import HTTPXRequest
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
@@ -122,6 +121,16 @@ if sys.platform == "win32":
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+
+# Global background tasks set to prevent garbage collection in asyncio
+_BACKGROUND_TASKS: Set[asyncio.Task] = set()
+
+def create_safe_task(coro) -> asyncio.Task:
+    """Creates an asyncio background task and holds a strong reference to prevent GC collection."""
+    t = asyncio.create_task(coro)
+    _BACKGROUND_TASKS.add(t)
+    t.add_done_callback(_BACKGROUND_TASKS.discard)
+    return t
 
 # ==========================================
 # 3. Configuration
@@ -1597,7 +1606,6 @@ def get_total_processed_count() -> int:
 _SMS_BODY_CACHE: Dict[str, str] = {}
 
 def _cache_sms_message(key: str, message: str):
-    global _SMS_BODY_CACHE
     if not key or not message:
         return
     _SMS_BODY_CACHE[key] = str(message)
@@ -1606,7 +1614,6 @@ def _cache_sms_message(key: str, message: str):
             _SMS_BODY_CACHE.pop(k, None)
 
 def get_cached_sms_message(key: str) -> Optional[str]:
-    global _SMS_BODY_CACHE
     if not key:
         return None
     cached = _SMS_BODY_CACHE.get(key)
@@ -1717,6 +1724,15 @@ class ThirdwaveClient:
         self.api_key = new_key.strip()
         self._client = None
         return self.api_key
+
+    async def close(self):
+        """Cleanly close the underlying HTTP client session."""
+        if self._client is not None and not self._client.is_closed:
+            try:
+                await self._client.aclose()
+            except Exception:
+                pass
+            self._client = None
 
     async def fetch_incoming_messages(self, limit: int = 50) -> List[Dict[str, Any]]:
         """
@@ -2390,17 +2406,19 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     else:
         source = html.escape(raw_source)
 
-    # Display number / fallback to country name
-    num_plain     = masked_number if masked_number else country_name
+    # Display number / fallback to country name (safely HTML escaped)
+    num_plain     = masked_number if masked_number else html.escape(country_name)
     country_plain = re.sub(r'<[^>]+>', '', country_display).strip()
-    source_plain  = html.unescape(source)
+    source_plain  = source  # Already safely escaped / canonical name
 
     clean_msg = raw_message.strip()
 
     # Expandable quote block: only included in Long format
     quote_block = ""
     if sms_format != "short" and clean_msg:
-        styled_sms = style_sms_with_copyable_otp(clean_msg, otp_code, width=28)
+        # Cap SMS display length to 3000 chars to strictly stay within Telegram's 4096 limit
+        display_sms = clean_msg if len(clean_msg) <= 3000 else (clean_msg[:3000] + "... [truncated]")
+        styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=28)
         quote_block = (
             f"\n\n{EXPANDABLE_SMS_LABEL}\n"
             f"<blockquote expandable>⠀\n"
@@ -2499,11 +2517,12 @@ client = ThirdwaveClient(
 
 async def send_with_retry(bot: Bot, chat_id: int, text: str, max_retries: int = 3,
                           reply_markup=None) -> bool:
+    safe_text = text if len(text) <= 4090 else (text[:4080] + "...")
     for attempt in range(1, max_retries + 1):
         try:
             await bot.send_message(
                 chat_id=chat_id,
-                text=text,
+                text=safe_text,
                 parse_mode=ParseMode.HTML,
                 reply_markup=reply_markup,
                 read_timeout=30.0,
@@ -2518,6 +2537,23 @@ async def send_with_retry(bot: Bot, chat_id: int, text: str, max_retries: int = 
         except (TimedOut, NetworkError) as net_err:
             logger.warning(f"Network error sending to {chat_id}: {net_err}. Retry {attempt}/{max_retries}...")
             await asyncio.sleep(3.0)
+        except BadRequest as b_err:
+            # HTML parse error or entity mismatch: fall back to sending plain text so OTP is never lost!
+            logger.warning(f"⚠️ Telegram BadRequest ({b_err}) for {chat_id}. Falling back to plain text delivery...")
+            try:
+                plain_text = re.sub(r'<[^>]+>', '', safe_text)
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=plain_text,
+                    reply_markup=reply_markup,
+                    read_timeout=30.0,
+                    write_timeout=30.0,
+                    connect_timeout=30.0,
+                )
+                return True
+            except Exception as fb_err:
+                logger.error(f"❌ Plain text fallback also failed for {chat_id}: {fb_err}")
+                return False
         except Exception as e:
             logger.error(f"❌ Cannot send to {chat_id}: {e}")
             return False
@@ -2986,7 +3022,6 @@ def get_default_bot_name() -> str:
     env_name = os.getenv("BOT_NAME", "").strip()
     if env_name:
         return env_name[:64]
-    global _TELEGRAM_BOT_NAME
     if _TELEGRAM_BOT_NAME:
         return _TELEGRAM_BOT_NAME[:64]
     return "SMS WAVE"
@@ -5068,7 +5103,7 @@ async def send_startup_announcement(application: Application):
       - Scheduled safety-net triggers (STARTUP_TYPE=schedule)
       - Any workflow_dispatch NOT explicitly flagged as manual restart
     """
-    global _manual_restart, _is_handover
+    global _manual_restart
 
     # SILENT_STARTUP env override (emergency escape hatch)
     if os.getenv("SILENT_STARTUP", "").strip().lower() in ("true", "1", "yes"):
@@ -5084,7 +5119,7 @@ async def send_startup_announcement(application: Application):
 
     # ── Rule 1: Scheduled safety-net → always silent ──────────────────────────
     if STARTUP_TYPE == "schedule" and not manual_restart:
-        logger.info(f"\U0001f92b Scheduled safety-net (STARTUP_TYPE=schedule): startup notification suppressed.")
+        logger.info("\U0001f92b Scheduled safety-net (STARTUP_TYPE=schedule): startup notification suppressed.")
         return
 
     # ── Rule 2: Session handover → always silent unless IS_MANUAL_RESTART=true ─
@@ -5174,14 +5209,13 @@ async def send_startup_announcement(application: Application):
     else:
         trigger_label = "\U0001f4e6 <b>Code Update Detected</b>"
 
-    sep = "━" * 20
     admin_msg = (
         f"✅ <b>{html.escape(bot_name)}</b> is now <b>LIVE</b>\n"
-        f"{sep}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
         f"⏰ <b>Start Time:</b> <code>{time_str}</code>\n"
         f"📅 <b>Date:</b>       <code>{date_str}</code>\n"
         f"⚡ <b>Trigger:</b>    {trigger_label}\n"
-        f"{sep}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
         "<i>👑 Use /start anytime to open the admin dashboard.</i>"
     )
     for aid in get_all_admin_ids():
@@ -5214,16 +5248,22 @@ async def send_startup_announcement(application: Application):
 async def periodic_db_cleanup_loop():
     cleanup_counter = 0
     while True:
-        await asyncio.sleep(60.0)  # runs every 60s to prune old 28h records continuously
-        cleanup_old_messages(max_age_hours=28)
-        cleanup_counter += 1
-        # Periodically flush SQLite WAL journal to the permanent database file
-        if cleanup_counter % 5 == 0:
-            try:
-                with get_db_connection() as conn:
-                    conn.execute("PRAGMA wal_checkpoint(PASSIVE);")
-            except Exception:
-                pass
+        try:
+            await asyncio.sleep(60.0)  # runs every 60s to prune old 28h records continuously
+            cleanup_old_messages(max_age_hours=28)
+            cleanup_counter += 1
+            # Periodically flush SQLite WAL journal to the permanent database file
+            if cleanup_counter % 5 == 0:
+                try:
+                    with get_db_connection() as conn:
+                        conn.execute("PRAGMA wal_checkpoint(PASSIVE);")
+                except Exception:
+                    pass
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning(f"Periodic DB cleanup warning: {e}")
+            await asyncio.sleep(5.0)
 
 async def periodic_gist_sync_loop():
     global _gist_dirty
@@ -5849,11 +5889,13 @@ async def trigger_proactive_handover(manual_restart: bool = False) -> bool:
             pass
 
     url = f"https://api.github.com/repos/{repo}/actions/workflows/run_bot.yml/dispatches"
+    active_url = client.base_url if "client" in globals() else ""
     payload = {
         "ref": "main",
         "inputs": {
             "is_handover": "true",
             "is_manual_restart": "true" if manual_restart else "false",
+            "custom_base_url": active_url,
         },
     }
 
@@ -6013,10 +6055,10 @@ async def main():
             except Exception as e:
                 logger.debug(f"Initial Gist check notice: {e}")
 
-        asyncio.create_task(send_startup_announcement(application))
-        asyncio.create_task(poll_incoming_messages(application))
-        asyncio.create_task(periodic_db_cleanup_loop())
-        asyncio.create_task(periodic_gist_sync_loop())
+        create_safe_task(send_startup_announcement(application))
+        create_safe_task(poll_incoming_messages(application))
+        create_safe_task(periodic_db_cleanup_loop())
+        create_safe_task(periodic_gist_sync_loop())
         async def background_menu_setup():
             try:
                 # 1. Fetch & cache Telegram bot name
@@ -6060,7 +6102,7 @@ async def main():
             except Exception as e:
                 logger.warning(f"Error configuring command menu scopes: {e}")
 
-        asyncio.create_task(background_menu_setup())
+        create_safe_task(background_menu_setup())
         logger.info(f"✅ {get_bot_name()} is fully online and monitoring incoming messages...")
 
         # Robust polling starter with automatic conflict recovery
@@ -6130,6 +6172,11 @@ async def main():
             if application.running:
                 await application.stop()
             await application.shutdown()
+        except Exception:
+            pass
+        try:
+            if "client" in globals():
+                await client.close()
         except Exception:
             pass
         update_last_active_timestamp()
