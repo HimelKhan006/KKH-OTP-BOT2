@@ -69,6 +69,7 @@ jobs:
             bot1-database-
 
       - name: Cancel Any Other Running Instances
+        if: github.event_name != 'schedule'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

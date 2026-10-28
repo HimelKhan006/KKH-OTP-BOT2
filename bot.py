@@ -961,7 +961,7 @@ class GistStorage:
                             cutoff = datetime.now(timezone.utc).timestamp() - (28 * 3600)
                             valid_seen = {k: float(v) for k, v in seen_map.items() if float(v) >= cutoff}
 
-                            # Reconcile bot admins
+                            # Reconcile bot admins (insert active & remove revoked admins from stale cache)
                             admins_data = parsed.get("admins", [])
                             if isinstance(admins_data, list):
                                 try:
@@ -976,6 +976,12 @@ class GistStorage:
                                                         username = CASE WHEN excluded.username != '' THEN excluded.username ELSE bot_admins.username END,
                                                         first_name = CASE WHEN excluded.first_name != '' THEN excluded.first_name ELSE bot_admins.first_name END;
                                                 """, (aid, a.get("added_by", 0), a.get("username", ""), a.get("first_name", "")))
+                                        if parsed.get("updated_at"):
+                                            cloud_aids = {int(a["user_id"]) for a in admins_data if a.get("user_id")}
+                                            local_admins = [r[0] for r in aconn.execute("SELECT user_id FROM bot_admins;").fetchall()]
+                                            for l_aid in local_admins:
+                                                if l_aid not in cloud_aids and l_aid not in ADMIN_USER_IDS:
+                                                    aconn.execute("DELETE FROM bot_admins WHERE user_id = ?;", (l_aid,))
                                         aconn.commit()
                                 except Exception as ae:
                                     logger.warning(f"Error restoring admins from Gist: {ae}")
@@ -5594,7 +5600,7 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         resp_text = (
             f"✅ <b>Thirdwave API Key Successfully Updated!</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>New Active Key:</b> <code>{new_masked}</code>\n"
+            f"• <b>New Active Key:</b> <code>{html.escape(new_masked)}</code>\n"
             f"• <b>Status:</b> <code>Active & Forwarding OTPs ⚡</code>\n"
             f"• <b>Cloud DB:</b> <code>Synced & Encrypted 🔒</code>"
         )
