@@ -1094,13 +1094,34 @@ async def sync_data_to_secret_db():
 # ==========================================
 # 7. Local SQLite Database Storage
 # ==========================================
+class ClosingConnection:
+    """Wraps an SQLite connection so context management commits/rollbacks and guarantees clean closing."""
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+
+    def __enter__(self) -> sqlite3.Connection:
+        self._conn.__enter__()
+        return self._conn
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            return self._conn.__exit__(exc_type, exc_val, exc_tb)
+        finally:
+            self._conn.close()
+
+    def close(self):
+        self._conn.close()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
 def get_db_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_FILE, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout = 30000;")
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
-    return conn
+    return ClosingConnection(conn)
 
 def init_db():
     with get_db_connection() as conn:
@@ -1821,9 +1842,9 @@ class ThirdwaveClient:
             elif res.status_code == 429:
                 retry_header = res.headers.get("Retry-After", "")
                 try:
-                    retry_wait = min(float(retry_header), 6.0) if retry_header else 2.5
+                    retry_wait = max(5.0, min(float(retry_header), 60.0)) if retry_header else 10.0
                 except Exception:
-                    retry_wait = 2.5
+                    retry_wait = 10.0
                 self.cooldown_until = time.time() + retry_wait
                 logger.warning(f"⚠️ Thirdwave 429 Rate Limit Exceeded. Backing off {retry_wait:.1f}s...")
                 return []
@@ -2438,7 +2459,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             f"🌍 <b>Country:</b> {country_plain}\n"
             f"📱 <b>Number:</b> {num_plain}\n"
             f"{CARD_DIVIDER}\n"
-            f"🔑 <b>PASSCODE:</b> <code>{otp_code}</code>"
+            f"🔑 <b>PASSCODE:</b> <code>{html.escape(otp_code)}</code>"
             f"{quote_block}"
         )
     elif clean_msg:
@@ -3511,7 +3532,7 @@ async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYP
                 f"✅ <b>SMS Delivery Format Updated!</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"• <b>Active Mode:</b> <code>{mode_label}</code>\n"
-                f"• <b>Format Setting:</b> <code>{arg}</code>\n"
+                f"• <b>Format Setting:</b> <code>{html.escape(arg)}</code>\n"
                 f"• <b>Database:</b> <code>Saved Secretly to Cloud Store 🔒</code>",
                 parse_mode=ParseMode.HTML
             )
@@ -4846,8 +4867,8 @@ async def seturl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg_obj.reply_text(
         f"✅ <b>API Base URL Successfully Updated!</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>New Active URL:</b> <code>{new_url}</code>\n"
-        f"• <b>Endpoint:</b> <code>{new_url}/api/v1/traffic</code>\n\n"
+        f"• <b>New Active URL:</b> <code>{html.escape(new_url)}</code>\n"
+        f"• <b>Endpoint:</b> <code>{html.escape(new_url)}/api/v1/traffic</code>\n\n"
         f"The bot is now requesting OTP traffic from this URL in real-time.",
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([
@@ -5547,8 +5568,8 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         resp_text = (
             f"✅ <b>API Base URL Successfully Updated!</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>New Active URL:</b> <code>{new_url}</code>\n"
-            f"• <b>Endpoint:</b> <code>{new_url}/api/v1/traffic</code>\n"
+            f"• <b>New Active URL:</b> <code>{html.escape(new_url)}</code>\n"
+            f"• <b>Endpoint:</b> <code>{html.escape(new_url)}/api/v1/traffic</code>\n"
             f"• <b>Cloud DB:</b> <code>Synced & Encrypted 🔒</code>\n\n"
             f"The bot is now requesting OTP traffic from this URL in real-time."
         )
