@@ -374,18 +374,61 @@ def load_stored_data() -> dict:
                 pass
     return dict(_STORED_DATA_CACHE)
 
-def save_stored_data(data: dict):
+def save_stored_data(data: dict, from_gist: bool = False):
     """
     Persists bot settings to in-memory cache, local JSON file, and permanent SQLite database.
     """
     global _STORED_DATA_CACHE
     try:
+        if not from_gist:
+            data["_updated_at_epoch"] = time.time()
         _STORED_DATA_CACHE = dict(data)
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
     except Exception as e:
         logger.warning(f"Error saving stored data to {DATA_FILE}: {e}")
     _save_settings_to_sqlite(data)
+
+def merge_gist_bot_data(saved_bot_data: dict) -> dict:
+    """
+    Merges cloud Gist bot_data with local authoritative SQLite stored data,
+    ensuring an older Gist snapshot never overwrites newer local settings.
+    """
+    local_data = load_stored_data()
+    if not isinstance(saved_bot_data, dict) or not saved_bot_data:
+        return local_data
+
+    cloud_ts = float(saved_bot_data.get("_updated_at_epoch") or 0.0)
+    local_ts = float(local_data.get("_updated_at_epoch") or 0.0)
+    cloud_is_newer = (cloud_ts >= local_ts) or not local_data
+
+    if cloud_is_newer:
+        if saved_bot_data.get("custom_link_buttons_cleared") or saved_bot_data.get("custom_link_buttons") == []:
+            local_data["custom_link_buttons"] = []
+            local_data["custom_link_buttons_cleared"] = True
+            local_data.pop("custom_link_button", None)
+            delete_bot_setting("custom_link_button")
+            delete_bot_setting("custom_link_button_url")
+            delete_bot_setting("custom_link_button_text")
+            set_bot_setting("custom_link_buttons", "[]")
+            set_bot_setting("custom_link_buttons_cleared", "1")
+        local_data.update(saved_bot_data)
+    else:
+        for k, v in saved_bot_data.items():
+            if k not in local_data:
+                local_data[k] = v
+
+    custom_url = local_data.get("thirdwave_base_url") or local_data.get("base_url")
+    if custom_url and "client" in globals():
+        client.update_base_url(custom_url)
+        set_bot_setting("thirdwave_base_url", custom_url)
+    custom_key = local_data.get("thirdwave_api_key") or local_data.get("api_key")
+    if custom_key and "client" in globals():
+        client.update_api_key(custom_key)
+        set_bot_setting("thirdwave_api_key", custom_key)
+
+    save_stored_data(local_data, from_gist=True)
+    return local_data
 
 def normalize_button_url(raw_url: str) -> Optional[str]:
     """
@@ -705,6 +748,27 @@ def get_all_admin_details() -> List[Dict[str, Any]]:
         pass
     return results
 
+def _get_revoked_admins_map() -> Dict[str, float]:
+    raw = get_bot_setting("revoked_admins", "{}")
+    try:
+        parsed = json.loads(raw) if raw else {}
+        if isinstance(parsed, dict):
+            return {str(k): float(v) for k, v in parsed.items()}
+    except Exception:
+        pass
+    return {}
+
+def _mark_admin_active(user_id: int):
+    revoked = _get_revoked_admins_map()
+    if str(user_id) in revoked:
+        revoked.pop(str(user_id), None)
+        set_bot_setting("revoked_admins", json.dumps(revoked))
+
+def _mark_admin_revoked(user_id: int):
+    revoked = _get_revoked_admins_map()
+    revoked[str(user_id)] = time.time()
+    set_bot_setting("revoked_admins", json.dumps(revoked))
+
 def add_admin(user_id: int, added_by: int = 0, username: str = "", first_name: str = "") -> bool:
     """Adds a new admin to the database and syncs to cloud Gist."""
     try:
@@ -717,6 +781,7 @@ def add_admin(user_id: int, added_by: int = 0, username: str = "", first_name: s
                     first_name = CASE WHEN excluded.first_name != '' THEN excluded.first_name ELSE bot_admins.first_name END;
             """, (user_id, added_by, username or "", first_name or ""))
             conn.commit()
+        _mark_admin_active(user_id)
         if "gist_storage" in globals() and gist_storage.enabled:
             try:
                 asyncio.create_task(sync_admins_to_gist())
@@ -735,6 +800,7 @@ def remove_admin(user_id: int) -> bool:
         with get_db_connection() as conn:
             conn.execute("DELETE FROM bot_admins WHERE user_id = ?;", (user_id,))
             conn.commit()
+        _mark_admin_revoked(user_id)
         if "gist_storage" in globals() and gist_storage.enabled:
             try:
                 asyncio.create_task(sync_admins_to_gist())
@@ -843,8 +909,20 @@ async def sync_admins_to_gist():
 # ==========================================
 # 6. GitHub Gist Cloud Storage (28-Hour Retention)
 # ==========================================
+def _resolve_gist_tokens() -> List[str]:
+    """Returns candidate GitHub tokens ordered by Gist capability (PATs before ephemeral ghs_ tokens)."""
+    candidates = []
+    for env_key in ("GIST_TOKEN", "PAT", "GH_TOKEN", "GITHUB_TOKEN"):
+        val = os.getenv(env_key, "").strip()
+        if val and val.lower() not in ("true", "false", "null", "none") and val not in candidates:
+            candidates.append(val)
+    pats = [t for t in candidates if not t.startswith("ghs_")]
+    ephemeral = [t for t in candidates if t.startswith("ghs_")]
+    return pats + ephemeral
+
 GIST_ID    = os.getenv("GIST_ID", os.getenv("GITHUB_GIST_ID", "")).strip()
-GIST_TOKEN = os.getenv("GIST_TOKEN", os.getenv("GH_TOKEN", os.getenv("GITHUB_TOKEN", ""))).strip()
+_GIST_CANDIDATE_TOKENS = _resolve_gist_tokens()
+GIST_TOKEN = _GIST_CANDIDATE_TOKENS[0] if _GIST_CANDIDATE_TOKENS else ""
 seen_message_ids: Set[str] = set()
 seen_timestamps: Dict[str, float] = {}
 seen_content_signatures: Dict[str, float] = {}
@@ -864,74 +942,109 @@ class GistStorage:
     def __init__(self, gist_id: str, token: str, filename: str = "thirdwave_seen_messages.json",
                  description: str = "Thirdwave SMS Wave OTP Bot — 28h persistent storage"):
         self.gist_id = gist_id
-        self.token = token
+        self._candidate_tokens = list(_GIST_CANDIDATE_TOKENS) if _GIST_CANDIDATE_TOKENS else ([token] if token else [])
+        self.token = self._candidate_tokens[0] if self._candidate_tokens else token
         self.filename = filename
         self.description = description
         self.bot_name = "THIRDWAVE_OTP_WAVE"
-        self.enabled = bool(token)
+        self.enabled = bool(self.token)
         self.api_url = f"https://api.github.com/gists/{gist_id}" if gist_id else ""
 
-    def _auth_headers(self) -> Dict[str, str]:
-        return {**GIST_HEADERS, "Authorization": f"Bearer {self.token}"}
+    def _auth_headers(self, token_override: str = "") -> Dict[str, str]:
+        tok = token_override or self.token
+        return {**GIST_HEADERS, "Authorization": f"Bearer {tok}"}
 
     async def ensure_gist(self) -> bool:
         """Finds existing Gist matching filename, deletes any duplicate Gists, or creates a new one."""
-        if not self.token:
+        if not self._candidate_tokens:
             return False
-        try:
-            async with httpx.AsyncClient(timeout=15.0) as http:
-                res = await http.get("https://api.github.com/gists?per_page=100", headers=self._auth_headers())
-                if res.is_success:
-                    gists = res.json()
-                    matching_gists = []
-                    for g in gists:
-                        files = g.get("files", {})
-                        if self.filename in files:
-                            matching_gists.append(g)
-
-                    if matching_gists:
-                        primary = matching_gists[0]
-                        self.gist_id = primary.get("id", "")
-                        self.api_url = f"https://api.github.com/gists/{self.gist_id}"
-                        logger.info(f"☁️ Reusing primary Gist ID: {self.gist_id}")
-
-                        # Clean up any stale duplicate Gists
-                        for dup in matching_gists[1:]:
-                            dup_id = dup.get("id")
-                            if dup_id:
-                                try:
-                                    del_res = await http.delete(f"https://api.github.com/gists/{dup_id}", headers=self._auth_headers())
-                                    if del_res.status_code == 204:
-                                        logger.info(f"🧹 Cleaned up duplicate Gist ID: {dup_id}")
-                                except Exception as de:
-                                    logger.warning(f"Error deleting duplicate Gist {dup_id}: {de}")
-                        return True
-
-                # Create fresh Gist if none found
-                payload = {
-                    "description": self.description,
-                    "public": False,
-                    "files": {
-                        self.filename: {
-                            "content": json.dumps({"seen": {}, "bot": self.bot_name})
-                        }
-                    }
-                }
-                res = await http.post(
-                    "https://api.github.com/gists",
-                    headers=self._auth_headers(),
-                    json=payload
-                )
-                if res.is_success:
-                    data = res.json()
-                    self.gist_id = data.get("id", "")
+        if not self.gist_id:
+            try:
+                saved_id = get_bot_setting("gist_id", "")
+                if saved_id:
+                    self.gist_id = saved_id.strip()
                     self.api_url = f"https://api.github.com/gists/{self.gist_id}"
-                    logger.info(f"☁️ Auto-created new storage Gist: {self.gist_id}")
-                    return True
-                else:
-                    logger.warning(f"Failed to auto-create Gist: {res.status_code} {res.text[:100]}")
-        except Exception as e:
-            logger.warning(f"Gist ensure error: {e}")
+            except Exception:
+                pass
+
+        for tok in list(self._candidate_tokens):
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as http:
+                    if self.gist_id:
+                        chk = await http.get(f"https://api.github.com/gists/{self.gist_id}", headers=self._auth_headers(tok))
+                        if chk.is_success:
+                            self.token = tok
+                            self.api_url = f"https://api.github.com/gists/{self.gist_id}"
+                            try:
+                                set_bot_setting("gist_id", self.gist_id)
+                            except Exception:
+                                pass
+                            return True
+                        elif chk.status_code == 404:
+                            self.gist_id = ""
+                            self.api_url = ""
+
+                    res = await http.get("https://api.github.com/gists?per_page=100", headers=self._auth_headers(tok))
+                    if res.is_success:
+                        self.token = tok
+                        gists = res.json()
+                        matching_gists = []
+                        for g in gists:
+                            files = g.get("files", {})
+                            if self.filename in files:
+                                matching_gists.append(g)
+
+                        if matching_gists:
+                            primary = matching_gists[0]
+                            self.gist_id = primary.get("id", "")
+                            self.api_url = f"https://api.github.com/gists/{self.gist_id}"
+                            try:
+                                set_bot_setting("gist_id", self.gist_id)
+                            except Exception:
+                                pass
+                            logger.info(f"☁️ Reusing primary Gist ID: {self.gist_id}")
+
+                            # Clean up any stale duplicate Gists
+                            for dup in matching_gists[1:]:
+                                dup_id = dup.get("id")
+                                if dup_id:
+                                    try:
+                                        del_res = await http.delete(f"https://api.github.com/gists/{dup_id}", headers=self._auth_headers(tok))
+                                        if del_res.status_code == 204:
+                                            logger.info(f"🧹 Cleaned up duplicate Gist ID: {dup_id}")
+                                    except Exception as de:
+                                        logger.warning(f"Error deleting duplicate Gist {dup_id}: {de}")
+                            return True
+
+                        # Create fresh Gist if none found
+                        payload = {
+                            "description": self.description,
+                            "public": False,
+                            "files": {
+                                self.filename: {
+                                    "content": json.dumps({"seen": {}, "bot": self.bot_name})
+                                }
+                            }
+                        }
+                        c_res = await http.post(
+                            "https://api.github.com/gists",
+                            headers=self._auth_headers(tok),
+                            json=payload
+                        )
+                        if c_res.is_success:
+                            data = c_res.json()
+                            self.gist_id = data.get("id", "")
+                            self.api_url = f"https://api.github.com/gists/{self.gist_id}"
+                            try:
+                                set_bot_setting("gist_id", self.gist_id)
+                            except Exception:
+                                pass
+                            logger.info(f"☁️ Auto-created new storage Gist: {self.gist_id}")
+                            return True
+                        else:
+                            logger.warning(f"Failed to auto-create Gist: {c_res.status_code} {c_res.text[:100]}")
+            except Exception as e:
+                logger.warning(f"Gist ensure error: {e}")
         return False
 
     async def load_state(self) -> dict:
@@ -944,9 +1057,17 @@ class GistStorage:
             return {}
         try:
             async with httpx.AsyncClient(timeout=15.0) as http:
-                res = await http.get(self.api_url, headers=self._auth_headers())
+                res = None
+                for tok in list(self._candidate_tokens):
+                    res = await http.get(self.api_url, headers=self._auth_headers(tok))
+                    if res.is_success:
+                        self.token = tok
+                        break
+                if res is None:
+                    return {}
                 if res.status_code == 404:
                     logger.warning("Gist 404 (deleted on GitHub). Auto-recreating new Gist...")
+                    self.gist_id = ""
                     self.api_url = ""
                     await self.ensure_gist()
                     return {}
@@ -961,14 +1082,27 @@ class GistStorage:
                             cutoff = datetime.now(timezone.utc).timestamp() - (28 * 3600)
                             valid_seen = {k: float(v) for k, v in seen_map.items() if float(v) >= cutoff}
 
-                            # Reconcile bot admins (insert active & remove revoked admins from stale cache)
+                            # Merge revoked_admins map so explicit revocations are respected
+                            local_revoked = _get_revoked_admins_map()
+                            cloud_revoked = parsed.get("revoked_admins", {})
+                            if isinstance(cloud_revoked, dict):
+                                for k, v in cloud_revoked.items():
+                                    try:
+                                        ts = float(v)
+                                        if ts > float(local_revoked.get(str(k), 0.0)):
+                                            local_revoked[str(k)] = ts
+                                    except Exception:
+                                        pass
+                                set_bot_setting("revoked_admins", json.dumps(local_revoked))
+
+                            # Reconcile bot admins (insert active & remove only explicitly revoked admins)
                             admins_data = parsed.get("admins", [])
                             if isinstance(admins_data, list):
                                 try:
                                     with get_db_connection() as aconn:
                                         for a in admins_data:
                                             aid = a.get("user_id")
-                                            if aid and not a.get("is_super"):
+                                            if aid and not a.get("is_super") and str(aid) not in local_revoked:
                                                 aconn.execute("""
                                                     INSERT INTO bot_admins (user_id, added_by, username, first_name)
                                                     VALUES (?, ?, ?, ?)
@@ -976,12 +1110,10 @@ class GistStorage:
                                                         username = CASE WHEN excluded.username != '' THEN excluded.username ELSE bot_admins.username END,
                                                         first_name = CASE WHEN excluded.first_name != '' THEN excluded.first_name ELSE bot_admins.first_name END;
                                                 """, (aid, a.get("added_by", 0), a.get("username", ""), a.get("first_name", "")))
-                                        if parsed.get("updated_at"):
-                                            cloud_aids = {int(a["user_id"]) for a in admins_data if a.get("user_id")}
-                                            local_admins = [r[0] for r in aconn.execute("SELECT user_id FROM bot_admins;").fetchall()]
-                                            for l_aid in local_admins:
-                                                if l_aid not in cloud_aids and l_aid not in ADMIN_USER_IDS:
-                                                    aconn.execute("DELETE FROM bot_admins WHERE user_id = ?;", (l_aid,))
+                                        local_admins = [r[0] for r in aconn.execute("SELECT user_id FROM bot_admins;").fetchall()]
+                                        for l_aid in local_admins:
+                                            if str(l_aid) in local_revoked and (not ADMIN_USER_IDS or l_aid not in ADMIN_USER_IDS):
+                                                aconn.execute("DELETE FROM bot_admins WHERE user_id = ?;", (l_aid,))
                                         aconn.commit()
                                 except Exception as ae:
                                     logger.warning(f"Error restoring admins from Gist: {ae}")
@@ -1051,6 +1183,7 @@ class GistStorage:
                 "base_url": base_url or "",
                 "bot_data": load_stored_data(),
                 "admins": admins_list,
+                "revoked_admins": _get_revoked_admins_map(),
                 "manual_restart": bool(kwargs.get("manual_restart", False)),
                 "last_notified_commit": str(kwargs.get("last_notified_commit") or get_bot_setting("last_notified_commit", "")),
             }
@@ -1063,11 +1196,14 @@ class GistStorage:
                 }
             }
             async with httpx.AsyncClient(timeout=15.0) as http:
-                res = await http.patch(self.api_url, headers=self._auth_headers(), json=payload)
-                if res.is_success:
-                    logger.info(f"☁️ Synced {len(cleaned)} messages to GitHub Gist (handover={is_handover}).")
-                    return True
-                else:
+                res = None
+                for tok in list(self._candidate_tokens):
+                    res = await http.patch(self.api_url, headers=self._auth_headers(tok), json=payload)
+                    if res.is_success:
+                        self.token = tok
+                        logger.info(f"☁️ Synced {len(cleaned)} messages to GitHub Gist (handover={is_handover}).")
+                        return True
+                if res is not None:
                     logger.warning(f"Gist sync status {res.status_code}: {res.text[:100]}")
         except Exception as e:
             logger.warning(f"Gist sync error: {e}")
@@ -2894,27 +3030,7 @@ async def poll_incoming_messages(application: Application):
         # Restore bot configuration settings secretly from cloud database
         saved_bot_data = gist_state.get("bot_data")
         if isinstance(saved_bot_data, dict) and saved_bot_data:
-            local_data = load_stored_data()
-            if saved_bot_data.get("custom_link_buttons_cleared") or saved_bot_data.get("custom_link_buttons") == []:
-                local_data["custom_link_buttons"] = []
-                local_data["custom_link_buttons_cleared"] = True
-                local_data.pop("custom_link_button", None)
-                delete_bot_setting("custom_link_button")
-                delete_bot_setting("custom_link_button_url")
-                delete_bot_setting("custom_link_button_text")
-                set_bot_setting("custom_link_buttons", "[]")
-                set_bot_setting("custom_link_buttons_cleared", "1")
-            # Restore custom API URL and Key if configured by admin
-            custom_url = saved_bot_data.get("thirdwave_base_url") or saved_bot_data.get("base_url")
-            if custom_url and "client" in globals():
-                client.update_base_url(custom_url)
-                set_bot_setting("thirdwave_base_url", custom_url)
-            custom_key = saved_bot_data.get("thirdwave_api_key") or saved_bot_data.get("api_key")
-            if custom_key and "client" in globals():
-                client.update_api_key(custom_key)
-                set_bot_setting("thirdwave_api_key", custom_key)
-            local_data.update(saved_bot_data)
-            save_stored_data(local_data)
+            local_data = merge_gist_bot_data(saved_bot_data)
             custom_name = local_data.get("bot_name") or local_data.get("default_bot_name")
             if custom_name:
                 try:
@@ -6067,6 +6183,7 @@ async def main():
     start_health_server()
 
     try:
+        init_db()
         await application.initialize()
         await application.start()
 
@@ -6107,27 +6224,7 @@ async def main():
                 # Pre-restore bot configuration settings from cloud database BEFORE tasks start
                 saved_bot_data = gist_state.get("bot_data")
                 if isinstance(saved_bot_data, dict) and saved_bot_data:
-                    local_data = load_stored_data()
-                    if saved_bot_data.get("custom_link_buttons_cleared") or saved_bot_data.get("custom_link_buttons") == []:
-                        local_data["custom_link_buttons"] = []
-                        local_data["custom_link_buttons_cleared"] = True
-                        local_data.pop("custom_link_button", None)
-                        delete_bot_setting("custom_link_button")
-                        delete_bot_setting("custom_link_button_url")
-                        delete_bot_setting("custom_link_button_text")
-                        set_bot_setting("custom_link_buttons", "[]")
-                        set_bot_setting("custom_link_buttons_cleared", "1")
-                    # Restore custom API URL and Key if configured by admin
-                    custom_url = saved_bot_data.get("thirdwave_base_url") or saved_bot_data.get("base_url")
-                    if custom_url and "client" in globals():
-                        client.update_base_url(custom_url)
-                        set_bot_setting("thirdwave_base_url", custom_url)
-                    custom_key = saved_bot_data.get("thirdwave_api_key") or saved_bot_data.get("api_key")
-                    if custom_key and "client" in globals():
-                        client.update_api_key(custom_key)
-                        set_bot_setting("thirdwave_api_key", custom_key)
-                    local_data.update(saved_bot_data)
-                    save_stored_data(local_data)
+                    merge_gist_bot_data(saved_bot_data)
             except Exception as e:
                 logger.debug(f"Initial Gist check notice: {e}")
 
