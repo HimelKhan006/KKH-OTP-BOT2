@@ -2333,9 +2333,8 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
 EXPANDABLE_SMS_LABEL = "📩 <b>View Full SMS:</b>"
 # Centered collapsed hint without icon (calibrated to exact optical center between left bar and quote mark)
 COLLAPSED_SMS_HINT = "\u2800" * 7 + "  " + "<b>Tap to read...</b>"
-# Symmetrical card divider (26 characters) to ensure cards have unified horizontal width across devices
-CARD_DIVIDER = "━" * 20
-QUOTE_DIVIDER = "━" * 18
+# Symmetrical card divider (23 characters) to ensure Short & Long format cards have identical horizontal width (245px)
+CARD_DIVIDER = "━" * 23
 
 def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 28) -> str:
     """
