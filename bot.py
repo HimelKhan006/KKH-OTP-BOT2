@@ -2559,13 +2559,13 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     country_name  = get_country_full_name(iso, item)
 
     if iso != "XX" and country_name and country_name != "Global":
-        country_raw = f"{country_name} ({iso})"
+        reg_display = f"{html.escape(to_noncopy_mono(country_name))} {flag} ({html.escape(to_noncopy_mono(iso))})"
     elif country_name and country_name != "Global":
-        country_raw = f"{country_name}"
+        reg_display = f"{html.escape(to_noncopy_mono(country_name))} {flag}"
     elif iso != "XX":
-        country_raw = f"{iso}"
+        reg_display = f"{flag} ({html.escape(to_noncopy_mono(iso))})"
     else:
-        country_raw = "Global"
+        reg_display = f"{html.escape(to_noncopy_mono('Global'))} {flag}"
 
     # Smart service detection + strict length cap so the App row never stretches the card
     low_source = raw_source.lower()
@@ -2597,14 +2597,13 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         source_raw = clean_src
 
     # Convert to non-copyable Unicode Mathematical Monospace BEFORE HTML escaping
-    source_mono  = html.escape(to_noncopy_mono(source_raw))
-    country_mono = html.escape(to_noncopy_mono(country_raw))
-    num_mono     = html.escape(to_noncopy_mono(masked_raw if masked_raw else country_name))
+    source_mono = html.escape(to_noncopy_mono(source_raw))
+    num_mono    = html.escape(to_noncopy_mono(masked_raw if masked_raw else country_name))
 
     # Fixed-width non-copyable monospace alignment (tapping does NOT copy App/Reg/Num; ONLY OTP code is copyable)
     info_block = (
         f"✦ 𝙰𝚙𝚙: {source_mono}\n"
-        f"✦ 𝚁𝚎𝚐: {country_mono} {flag}\n"
+        f"✦ 𝚁𝚎𝚐: {reg_display}\n"
         f"✦ 𝙽𝚞𝚖: {num_mono}"
     )
 
@@ -3542,7 +3541,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "🎟️ <b>VERIFICATION PASS</b>\n"
             f"{CARD_DIVIDER}\n"
             "✦ 𝙰𝚙𝚙: 𝚆𝚑𝚊𝚝𝚜𝙰𝚙𝚙\n"
-            "✦ 𝚁𝚎𝚐: 𝙽𝚎𝚙𝚊𝚕 (𝙽𝙿) 🇳🇵\n"
+            "✦ 𝚁𝚎𝚐: 𝙽𝚎𝚙𝚊𝚕 🇳🇵 (𝙽𝙿)\n"
             "✦ 𝙽𝚞𝚖: +𝟿𝟽𝟽𝟿𝟾𝟶****𝟺𝟻𝟼\n"
             f"{CARD_DIVIDER}\n"
             "🎯 <b>CODE:</b> <code>492810</code>\n\n"
@@ -3557,7 +3556,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "🎟️ <b>VERIFICATION PASS</b>\n"
             f"{CARD_DIVIDER}\n"
             "✦ 𝙰𝚙𝚙: 𝚆𝚑𝚊𝚝𝚜𝙰𝚙𝚙\n"
-            "✦ 𝚁𝚎𝚐: 𝙽𝚎𝚙𝚊𝚕 (𝙽𝙿) 🇳🇵\n"
+            "✦ 𝚁𝚎𝚐: 𝙽𝚎𝚙𝚊𝚕 🇳🇵 (𝙽𝙿)\n"
             "✦ 𝙽𝚞𝚖: +𝟿𝟽𝟽𝟿𝟾𝟶****𝟺𝟻𝟼\n"
             f"{CARD_DIVIDER}\n"
             "🎯 <b>CODE:</b> <code>492810</code>\n\n"
