@@ -2604,7 +2604,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     # Fixed-width non-copyable monospace alignment (tapping does NOT copy App/Reg/Num; ONLY OTP code is copyable)
     info_block = (
         f"✦ 𝙰𝚙𝚙: {source_mono}\n"
-        f"✦ 𝚁𝚎𝚐: {flag} {country_mono}\n"
+        f"✦ 𝚁𝚎𝚐: {country_mono} {flag}\n"
         f"✦ 𝙽𝚞𝚖: {num_mono}"
     )
 
@@ -3542,7 +3542,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "🎟️ <b>VERIFICATION PASS</b>\n"
             f"{CARD_DIVIDER}\n"
             "✦ 𝙰𝚙𝚙: 𝚆𝚑𝚊𝚝𝚜𝙰𝚙𝚙\n"
-            "✦ 𝚁𝚎𝚐: 🇳🇵 𝙽𝚎𝚙𝚊𝚕 (𝙽𝙿)\n"
+            "✦ 𝚁𝚎𝚐: 𝙽𝚎𝚙𝚊𝚕 (𝙽𝙿) 🇳🇵\n"
             "✦ 𝙽𝚞𝚖: +𝟿𝟽𝟽𝟿𝟾𝟶****𝟺𝟻𝟼\n"
             f"{CARD_DIVIDER}\n"
             "🎯 <b>CODE:</b> <code>492810</code>\n\n"
@@ -3557,7 +3557,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "🎟️ <b>VERIFICATION PASS</b>\n"
             f"{CARD_DIVIDER}\n"
             "✦ 𝙰𝚙𝚙: 𝚆𝚑𝚊𝚝𝚜𝙰𝚙𝚙\n"
-            "✦ 𝚁𝚎𝚐: 🇳🇵 𝙽𝚎𝚙𝚊𝚕 (𝙽𝙿)\n"
+            "✦ 𝚁𝚎𝚐: 𝙽𝚎𝚙𝚊𝚕 (𝙽𝙿) 🇳🇵\n"
             "✦ 𝙽𝚞𝚖: +𝟿𝟽𝟽𝟿𝟾𝟶****𝟺𝟻𝟼\n"
             f"{CARD_DIVIDER}\n"
             "🎯 <b>CODE:</b> <code>492810</code>\n\n"
