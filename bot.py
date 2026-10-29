@@ -2480,6 +2480,15 @@ CARD_DIVIDER = "━" * 23
 # Inner quote divider (19 characters) compensating for blockquote border/padding so Long cards never stretch wider than Short cards
 QUOTE_DIVIDER = "━" * 19
 
+_MONO_TABLE = str.maketrans(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+    "𝙰𝙱𝙲𝙳𝙴𝙵𝙶𝙷𝙸𝙹𝙺𝙻𝙼𝙽𝙾𝙿𝚀𝚁𝚂𝚃𝚄𝚅𝚆𝚇𝚈𝚉𝚊𝚋𝚌𝚍𝚎𝚏𝚐𝚑𝚒𝚓𝚔𝚕𝚖𝚗𝚘𝚙𝚚𝚛𝚜𝚝𝚞𝚟𝚠𝚡𝚢𝚣𝟶𝟷𝟸𝟹𝟺𝟻𝟼𝟽𝟾𝟿",
+)
+
+def to_noncopy_mono(text: str) -> str:
+    """Converts ASCII letters/digits to fixed-width Unicode Mathematical Monospace so columns align without tap-to-copy <code>."""
+    return str(text).translate(_MONO_TABLE) if text else ""
+
 def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 28) -> str:
     """
     Wraps SMS lines cleanly and highlights ONLY the OTP code inside a copyable <code> tag,
@@ -2539,7 +2548,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
 
     raw_source    = str(item.get("sender_id") or item.get("sourceAddress") or item.get("source") or item.get("caller") or item.get("sender") or "SMS Service").strip()
     raw_number    = str(item.get("number") or item.get("destinationNumber") or item.get("range_template") or item.get("rangeTemplate") or item.get("template") or item.get("dst") or "")
-    masked_number = html.escape(mask_phone_number(raw_number)) if raw_number else ""
+    masked_raw    = mask_phone_number(raw_number) if raw_number else ""
     raw_message   = str(item.get("sms") or item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "")
     otp_code      = extract_otp_code(raw_message)
 
@@ -2550,13 +2559,13 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     country_name  = get_country_full_name(iso, item)
 
     if iso != "XX" and country_name and country_name != "Global":
-        country_text = f"{html.escape(country_name)} ({iso})"
+        country_raw = f"{country_name} ({iso})"
     elif country_name and country_name != "Global":
-        country_text = f"{html.escape(country_name)}"
+        country_raw = f"{country_name}"
     elif iso != "XX":
-        country_text = f"{iso}"
+        country_raw = f"{iso}"
     else:
-        country_text = "Global"
+        country_raw = "Global"
 
     # Smart service detection + strict length cap so the App row never stretches the card
     low_source = raw_source.lower()
@@ -2564,38 +2573,39 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     wa_keywords = ["whatsapp", "‏واتساب‏", "واتساب", "ватсап", "wa code", "wa.me"]
     tg_keywords = ["telegram", "telegram code", "t.me"]
     if "whatsapp" in low_source or any(k in low_msg for k in wa_keywords):
-        source = "WhatsApp"
+        source_raw = "WhatsApp"
     elif "telegram" in low_source or any(k in low_msg for k in tg_keywords):
-        source = "Telegram"
+        source_raw = "Telegram"
     elif "google" in low_source or "google" in low_msg or raw_message.startswith("G-"):
-        source = "Google"
+        source_raw = "Google"
     elif "facebook" in low_source or "facebook" in low_msg or "fb-" in low_msg:
-        source = "Facebook"
+        source_raw = "Facebook"
     elif "instagram" in low_source or "instagram" in low_msg:
-        source = "Instagram"
+        source_raw = "Instagram"
     elif "tiktok" in low_source or "tiktok" in low_msg:
-        source = "TikTok"
+        source_raw = "TikTok"
     elif "microsoft" in low_source or "microsoft" in low_msg:
-        source = "Microsoft"
+        source_raw = "Microsoft"
     elif "apple" in low_source or "apple id" in low_msg:
-        source = "Apple"
+        source_raw = "Apple"
     elif "discord" in low_source or "discord" in low_msg:
-        source = "Discord"
+        source_raw = "Discord"
     else:
         clean_src = re.sub(r"\s+", " ", raw_source).strip()
         if len(clean_src) > 15:
             clean_src = clean_src[:14].rstrip() + "."
-        source = html.escape(clean_src)
+        source_raw = clean_src
 
-    # Display number / fallback to country name (safely HTML escaped)
-    num_plain    = masked_number if masked_number else html.escape(country_name)
-    source_plain = source  # Already safely escaped / canonical name
+    # Convert to non-copyable Unicode Mathematical Monospace BEFORE HTML escaping
+    source_mono  = html.escape(to_noncopy_mono(source_raw))
+    country_mono = html.escape(to_noncopy_mono(country_raw))
+    num_mono     = html.escape(to_noncopy_mono(masked_raw if masked_raw else country_name))
 
-    # Fixed-width monospace alignment so ✦, App/Reg/Num, colons ':', and values align to the exact pixel
+    # Fixed-width non-copyable monospace alignment (tapping does NOT copy App/Reg/Num; ONLY OTP code is copyable)
     info_block = (
-        f"<code>✦ App: {source_plain}</code>\n"
-        f"<code>✦ Reg: </code>{flag} <code>{country_text}</code>\n"
-        f"<code>✦ Num: {num_plain}</code>"
+        f"✦ 𝙰𝚙𝚙: {source_mono}\n"
+        f"✦ 𝚁𝚎𝚐: {flag} {country_mono}\n"
+        f"✦ 𝙽𝚞𝚖: {num_mono}"
     )
 
     clean_msg = raw_message.strip()
@@ -3531,9 +3541,9 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "<b>📺 Live Preview — Short:</b>\n\n"
             "🔐 <b>OTP PASS</b>\n"
             f"{CARD_DIVIDER}\n"
-            "<code>✦ App: WhatsApp</code>\n"
-            "<code>✦ Reg: </code>🇳🇵 <code>Nepal (NP)</code>\n"
-            "<code>✦ Num: +977980****456</code>\n"
+            "✦ 𝙰𝚙𝚙: 𝚆𝚑𝚊𝚝𝚜𝙰𝚙𝚙\n"
+            "✦ 𝚁𝚎𝚐: 🇳🇵 𝙽𝚎𝚙𝚊𝚕 (𝙽𝙿)\n"
+            "✦ 𝙽𝚞𝚖: +𝟿𝟽𝟽𝟿𝟾𝟶****𝟺𝟻𝟼\n"
             f"{CARD_DIVIDER}\n"
             "🎯 <b>CODE:</b> <code>492810</code>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
@@ -3546,9 +3556,9 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "<b>📺 Live Preview — Long:</b>\n\n"
             "🔐 <b>OTP PASS</b>\n"
             f"{CARD_DIVIDER}\n"
-            "<code>✦ App: WhatsApp</code>\n"
-            "<code>✦ Reg: </code>🇳🇵 <code>Nepal (NP)</code>\n"
-            "<code>✦ Num: +977980****456</code>\n"
+            "✦ 𝙰𝚙𝚙: 𝚆𝚑𝚊𝚝𝚜𝙰𝚙𝚙\n"
+            "✦ 𝚁𝚎𝚐: 🇳🇵 𝙽𝚎𝚙𝚊𝚕 (𝙽𝙿)\n"
+            "✦ 𝙽𝚞𝚖: +𝟿𝟽𝟽𝟿𝟾𝟶****𝟺𝟻𝟼\n"
             f"{CARD_DIVIDER}\n"
             "🎯 <b>CODE:</b> <code>492810</code>\n\n"
             f"{EXPANDABLE_SMS_LABEL}\n"
