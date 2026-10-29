@@ -2628,7 +2628,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
 
     if otp_code:
         full_text = (
-            f"🔐 <b>OTP PASS</b>\n"
+            f"🎟️ <b>VERIFICATION PASS</b>\n"
             f"{CARD_DIVIDER}\n"
             f"{info_block}\n"
             f"{CARD_DIVIDER}\n"
@@ -2638,7 +2638,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     elif clean_msg:
         if sms_format == "short":
             full_text = (
-                f"🔐 <b>OTP PASS</b>\n"
+                f"🎟️ <b>VERIFICATION PASS</b>\n"
                 f"{CARD_DIVIDER}\n"
                 f"{info_block}\n"
                 f"{CARD_DIVIDER}\n"
@@ -2646,7 +2646,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             )
         else:
             full_text = (
-                f"🔐 <b>OTP PASS</b>\n"
+                f"🎟️ <b>VERIFICATION PASS</b>\n"
                 f"{CARD_DIVIDER}\n"
                 f"{info_block}\n"
                 f"{CARD_DIVIDER}"
@@ -2654,7 +2654,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             )
     else:
         full_text = (
-            f"🔐 <b>OTP PASS</b>\n"
+            f"🎟️ <b>VERIFICATION PASS</b>\n"
             f"{CARD_DIVIDER}\n"
             f"{info_block}"
         )
@@ -3539,7 +3539,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Short:</b>\n\n"
-            "🔐 <b>OTP PASS</b>\n"
+            "🎟️ <b>VERIFICATION PASS</b>\n"
             f"{CARD_DIVIDER}\n"
             "✦ 𝙰𝚙𝚙: 𝚆𝚑𝚊𝚝𝚜𝙰𝚙𝚙\n"
             "✦ 𝚁𝚎𝚐: 🇳🇵 𝙽𝚎𝚙𝚊𝚕 (𝙽𝙿)\n"
@@ -3554,7 +3554,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
-            "🔐 <b>OTP PASS</b>\n"
+            "🎟️ <b>VERIFICATION PASS</b>\n"
             f"{CARD_DIVIDER}\n"
             "✦ 𝙰𝚙𝚙: 𝚆𝚑𝚊𝚝𝚜𝙰𝚙𝚙\n"
             "✦ 𝚁𝚎𝚐: 🇳🇵 𝙽𝚎𝚙𝚊𝚕 (𝙽𝙿)\n"
