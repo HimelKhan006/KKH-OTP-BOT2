@@ -2470,15 +2470,11 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
     return "Global"
 
 # ==========================================
-# 10. Clean OTP Notification Formatter (No Language)
-# Professional label matching the card's icon alignment (column 0)
+# 10. Clean OTP Notification Formatter (Minimalist Floating Ticket)
 EXPANDABLE_SMS_LABEL = "📩 <b>View Full SMS:</b>"
-# Centered collapsed hint inside the quote box
-COLLAPSED_SMS_HINT = "\u2800" * 6 + "<b>Tap to read...</b>"
-# Symmetrical outer card divider (23 characters = 245px) locking the exact horizontal width of all cards
-CARD_DIVIDER = "━" * 23
-# Inner quote divider (19 characters) compensating for blockquote border/padding so Long cards never stretch wider than Short cards
-QUOTE_DIVIDER = "━" * 19
+COLLAPSED_SMS_HINT = "<b>Tap to read SMS...</b>"
+CARD_DIVIDER = "━" * 20
+QUOTE_DIVIDER = "━" * 18
 
 _MONO_TABLE = str.maketrans(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
@@ -2489,7 +2485,7 @@ def to_noncopy_mono(text: str) -> str:
     """Converts ASCII letters/digits to fixed-width Unicode Mathematical Monospace so columns align without tap-to-copy <code>."""
     return str(text).translate(_MONO_TABLE) if text else ""
 
-def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 28) -> str:
+def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 22) -> str:
     """
     Wraps SMS lines cleanly and highlights ONLY the OTP code inside a copyable <code> tag,
     leaving the rest of the SMS as plain text so tapping copies ONLY the OTP code.
@@ -2538,7 +2534,13 @@ def wrap_sms_for_card(text: str, width: int = 22) -> str:
     return "\n".join(lines)
 
 def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = None) -> tuple:
-    """Returns (text, otp_code, raw_message) with a fully professional layout."""
+    """
+    Returns (text, otp_code, raw_message) using the clean minimalist layout without emojis:
+    - Top title: ✦ New SMS Received
+    - Service & Country: WhatsApp (NP)
+    - Masked phone number: +977970****563
+    - OTP code on the dedicated copy button below (plus expandable ✦ SMS Content quote in Long mode)
+    """
     if not sms_format:
         try:
             sms_format = load_stored_data().get("sms_format", "long")
@@ -2554,20 +2556,17 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
 
     country_iso   = get_country_iso_display(item).strip()
     parts = country_iso.split(maxsplit=1)
-    flag  = parts[0] if parts else "🌐"
     iso   = parts[1] if len(parts) > 1 else "XX"
     country_name  = get_country_full_name(iso, item)
 
-    if iso != "XX" and country_name and country_name != "Global":
-        reg_display = f"{html.escape(to_noncopy_mono(country_name))} {flag} ({html.escape(to_noncopy_mono(iso))})"
+    if iso != "XX":
+        country_part = f"({html.escape(iso)})"
     elif country_name and country_name != "Global":
-        reg_display = f"{html.escape(to_noncopy_mono(country_name))} {flag}"
-    elif iso != "XX":
-        reg_display = f"{flag} ({html.escape(to_noncopy_mono(iso))})"
+        country_part = f"({html.escape(country_name)})"
     else:
-        reg_display = f"{html.escape(to_noncopy_mono('Global'))} {flag}"
+        country_part = "(Global)"
 
-    # Smart service detection + strict length cap so the App row never stretches the card
+    # Smart service detection + strict length cap so the service row stays compact
     low_source = raw_source.lower()
     low_msg    = raw_message.lower()
     wa_keywords = ["whatsapp", "‏واتساب‏", "واتساب", "ватсап", "wa code", "wa.me"]
@@ -2594,70 +2593,33 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         clean_src = re.sub(r"\s+", " ", raw_source).strip()
         if len(clean_src) > 15:
             clean_src = clean_src[:14].rstrip() + "."
-        source_raw = clean_src
+        source_raw = clean_src or "SMS Service"
 
-    # Convert to non-copyable Unicode Mathematical Monospace BEFORE HTML escaping
-    source_mono = html.escape(to_noncopy_mono(source_raw))
-    num_mono    = html.escape(to_noncopy_mono(masked_raw if masked_raw else country_name))
+    source_escaped = html.escape(source_raw)
+    num_plain      = html.escape(masked_raw if masked_raw else country_name)
+    clean_msg      = raw_message.strip()
 
-    # Fixed-width non-copyable monospace alignment (tapping does NOT copy App/Reg/Num; ONLY OTP code is copyable)
-    info_block = (
-        f"✦ 𝙰𝚙𝚙: {source_mono}\n"
-        f"✦ 𝚁𝚎𝚐: {reg_display}\n"
-        f"✦ 𝙽𝚞𝚖: {num_mono}"
-    )
+    lines = [
+        "✦ <b>New SMS Received</b>",
+        f"<b>{source_escaped}</b> {country_part}",
+        f"<b>{num_plain}</b>",
+    ]
 
-    clean_msg = raw_message.strip()
-
-    # Expandable quote block: only included in Long format
-    quote_block = ""
     if sms_format != "short" and clean_msg:
         # Cap SMS display length to 3000 chars to strictly stay within Telegram's 4096 limit
         display_sms = clean_msg if len(clean_msg) <= 3000 else (clean_msg[:3000] + "... [truncated]")
-        styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=23)
-        quote_block = (
-            f"\n\n{EXPANDABLE_SMS_LABEL}\n"
+        styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=22)
+        lines.append("")
+        lines.append(
             f"<blockquote expandable>⠀\n"
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
             f"{QUOTE_DIVIDER}\n"
-            f"💬 <b>Message Body:</b>\n"
+            f"✦ <b>SMS Content:</b>\n"
             f"{styled_sms}</blockquote>"
         )
 
-    if otp_code:
-        full_text = (
-            f"🎟️ <b>VERIFICATION PASS</b>\n"
-            f"{CARD_DIVIDER}\n"
-            f"{info_block}\n"
-            f"{CARD_DIVIDER}\n"
-            f"🎯 <b>CODE:</b> <code>{html.escape(otp_code)}</code>"
-            f"{quote_block}"
-        )
-    elif clean_msg:
-        if sms_format == "short":
-            full_text = (
-                f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"{CARD_DIVIDER}\n"
-                f"{info_block}\n"
-                f"{CARD_DIVIDER}\n"
-                f"🎯 <b>CODE:</b> <i>See full SMS</i>"
-            )
-        else:
-            full_text = (
-                f"🎟️ <b>VERIFICATION PASS</b>\n"
-                f"{CARD_DIVIDER}\n"
-                f"{info_block}\n"
-                f"{CARD_DIVIDER}"
-                f"{quote_block}"
-            )
-    else:
-        full_text = (
-            f"🎟️ <b>VERIFICATION PASS</b>\n"
-            f"{CARD_DIVIDER}\n"
-            f"{info_block}"
-        )
-
+    full_text = "\n".join(lines)
     return full_text, otp_code, raw_message
 
 # ==========================================
@@ -3526,46 +3488,37 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
     msg = (
         "📋 <b>SMS Format Configuration</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"🟢 <b>Active Mode:</b>   {'Short ⚡' if curr_fmt == 'short' else 'Long 📜'}\n\n"
+        f"🟢 <b>Active Mode:</b>   {'Short ⚡ (Without View Full SMS)' if curr_fmt == 'short' else 'Long 📜 (With View Full SMS)'}\n\n"
         "<b>Available Modes:</b>\n"
         f"• <b>Short</b> {short_active}\n"
-        "  Compact card with From / To / OTP highlighted.\n\n"
+        "  Minimalist card with Service, Country, Masked Number & Copy OTP button.\n\n"
         f"• <b>Long</b> {long_active}\n"
-        "  Full card with expandable '📩 View Full SMS' on the card.\n"
+        "  Minimalist card with expandable '✦ SMS Content' blockquote.\n"
     )
 
     if preview_mode == "short":
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Short:</b>\n\n"
-            "🎟️ <b>VERIFICATION PASS</b>\n"
-            f"{CARD_DIVIDER}\n"
-            "✦ 𝙰𝚙𝚙: 𝚆𝚑𝚊𝚝𝚜𝙰𝚙𝚙\n"
-            "✦ 𝚁𝚎𝚐: 𝙽𝚎𝚙𝚊𝚕 🇳🇵 (𝙽𝙿)\n"
-            "✦ 𝙽𝚞𝚖: +𝟿𝟽𝟽𝟿𝟾𝟶****𝟺𝟻𝟼\n"
-            f"{CARD_DIVIDER}\n"
-            "🎯 <b>CODE:</b> <code>492810</code>\n\n"
+            "✦ <b>New SMS Received</b>\n"
+            "<b>WhatsApp</b> (NP)\n"
+            "<b>+977970****563</b>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "long":
         sample_sms = "Your WhatsApp verification code is 492-810. Do not share this code with anyone."
-        styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=23)
+        styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=22)
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
-            "🎟️ <b>VERIFICATION PASS</b>\n"
-            f"{CARD_DIVIDER}\n"
-            "✦ 𝙰𝚙𝚙: 𝚆𝚑𝚊𝚝𝚜𝙰𝚙𝚙\n"
-            "✦ 𝚁𝚎𝚐: 𝙽𝚎𝚙𝚊𝚕 🇳🇵 (𝙽𝙿)\n"
-            "✦ 𝙽𝚞𝚖: +𝟿𝟽𝟽𝟿𝟾𝟶****𝟺𝟻𝟼\n"
-            f"{CARD_DIVIDER}\n"
-            "🎯 <b>CODE:</b> <code>492810</code>\n\n"
-            f"{EXPANDABLE_SMS_LABEL}\n"
+            "✦ <b>New SMS Received</b>\n"
+            "<b>WhatsApp</b> (NP)\n"
+            "<b>+977970****563</b>\n\n"
             f"<blockquote expandable>⠀\n"
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
             f"{QUOTE_DIVIDER}\n"
-            f"💬 <b>Message Body:</b>\n"
+            f"✦ <b>SMS Content:</b>\n"
             f"{styled_sample}</blockquote>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
