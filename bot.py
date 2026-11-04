@@ -2603,8 +2603,8 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     lines = [
         f"📩 <b>New Sms • {country_part}</b>",
         "",
-        f"<b>• {source_escaped}</b>",
-        f"<b>• {num_plain}</b>",
+        f"<b>•\u00a0\u00a0{source_escaped}</b>",
+        f"<b>•\u00a0\u00a0{num_plain}</b>",
     ]
 
     if sms_format != "short" and clean_msg:
@@ -2617,7 +2617,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
             f"{QUOTE_DIVIDER}\n"
-            f"💬 <b>SMS Content:</b>\n"
+            f"💬 <b>Full Sms</b>\n"
             f"{styled_sms}</blockquote>"
         )
 
@@ -3495,7 +3495,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         f"• <b>Short</b> {short_active}\n"
         "  Minimalist card with Service, Country, Masked Number & Copy OTP button.\n\n"
         f"• <b>Long</b> {long_active}\n"
-        "  Minimalist card with expandable '💬 SMS Content' blockquote.\n"
+        "  Minimalist card with expandable '💬 Full Sms' blockquote.\n"
     )
 
     if preview_mode == "short":
@@ -3503,8 +3503,8 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Short:</b>\n\n"
             "📩 <b>New Sms • (DE 🇩🇪)</b>\n\n"
-            "<b>• WhatsApp</b>\n"
-            "<b>• +49178****151</b>\n\n"
+            "<b>•\u00a0\u00a0WhatsApp</b>\n"
+            "<b>•\u00a0\u00a0+49178****151</b>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "long":
@@ -3514,13 +3514,13 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
             "📩 <b>New Sms • (DE 🇩🇪)</b>\n\n"
-            "<b>• WhatsApp</b>\n"
-            "<b>• +49178****151</b>\n\n"
+            "<b>•\u00a0\u00a0WhatsApp</b>\n"
+            "<b>•\u00a0\u00a0+49178****151</b>\n\n"
             f"<blockquote expandable>⠀\n"
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
             f"{QUOTE_DIVIDER}\n"
-            f"💬 <b>SMS Content:</b>\n"
+            f"💬 <b>Full Sms</b>\n"
             f"{styled_sample}</blockquote>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
