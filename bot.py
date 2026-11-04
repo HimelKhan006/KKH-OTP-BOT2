@@ -2472,7 +2472,7 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
 # ==========================================
 # 10. Clean OTP Notification Formatter (Minimalist Floating Ticket)
 EXPANDABLE_SMS_LABEL = "📩 <b>View Full SMS:</b>"
-COLLAPSED_SMS_HINT = "<b>✦\u00a0\u00a0Tap to read SMS...</b>"
+COLLAPSED_SMS_HINT = "<b>✦\u00a0\u00a0Tap to read Sms..</b>"
 CARD_DIVIDER = "━" * 20
 QUOTE_DIVIDER = "━" * 18
 
