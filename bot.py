@@ -2472,7 +2472,7 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
 # ==========================================
 # 10. Clean OTP Notification Formatter (Minimalist Floating Ticket)
 EXPANDABLE_SMS_LABEL = "📩 <b>View Full SMS:</b>"
-COLLAPSED_SMS_HINT = "<b>✦\u00a0\u00a0Tap to read Sms..</b>"
+COLLAPSED_SMS_HINT = "<b>✦\u00a0\u00a0TAP TO READ SMS..</b>"
 CARD_DIVIDER = "━" * 20
 QUOTE_DIVIDER = "━" * 18
 
@@ -2601,7 +2601,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     clean_msg      = raw_message.strip()
 
     lines = [
-        f"📩 <b>New Sms • {country_part}</b>",
+        f"📩 <b>NEW SMS • {country_part}</b>",
         "",
         f"<b>✦\u00a0\u00a0{source_escaped}</b>",
         f"<b>✦\u00a0\u00a0{num_plain}</b>",
@@ -2617,7 +2617,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
             f"{QUOTE_DIVIDER}\n"
-            f"💬 <b>Full Sms</b>\n"
+            f"💬 <b>FULL SMS</b>\n"
             f"{styled_sms}</blockquote>"
         )
 
@@ -3495,14 +3495,14 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         f"• <b>Short</b> {short_active}\n"
         "  Minimalist card with Service, Country, Masked Number & Copy OTP button.\n\n"
         f"• <b>Long</b> {long_active}\n"
-        "  Minimalist card with expandable '💬 Full Sms' blockquote.\n"
+        "  Minimalist card with expandable '💬 FULL SMS' blockquote.\n"
     )
 
     if preview_mode == "short":
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Short:</b>\n\n"
-            "📩 <b>New Sms • (DE 🇩🇪)</b>\n\n"
+            "📩 <b>NEW SMS • (DE 🇩🇪)</b>\n\n"
             "<b>✦\u00a0\u00a0WhatsApp</b>\n"
             "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
@@ -3513,14 +3513,14 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
-            "📩 <b>New Sms • (DE 🇩🇪)</b>\n\n"
+            "📩 <b>NEW SMS • (DE 🇩🇪)</b>\n\n"
             "<b>✦\u00a0\u00a0WhatsApp</b>\n"
             "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
             f"<blockquote expandable>⠀\n"
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
             f"{QUOTE_DIVIDER}\n"
-            f"💬 <b>Full Sms</b>\n"
+            f"💬 <b>FULL SMS</b>\n"
             f"{styled_sample}</blockquote>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
