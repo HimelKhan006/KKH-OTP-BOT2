@@ -2472,7 +2472,7 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
 # ==========================================
 # 10. Clean OTP Notification Formatter (Minimalist Floating Ticket)
 EXPANDABLE_SMS_LABEL = "📩 <b>View Full SMS:</b>"
-COLLAPSED_SMS_HINT = "<b>Tap to read SMS...</b>"
+COLLAPSED_SMS_HINT = "<b>✦\u00a0\u00a0Tap to read SMS...</b>"
 CARD_DIVIDER = "━" * 20
 QUOTE_DIVIDER = "━" * 18
 
@@ -2536,10 +2536,10 @@ def wrap_sms_for_card(text: str, width: int = 22) -> str:
 def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = None) -> tuple:
     """
     Returns (text, otp_code, raw_message) using the clean minimalist layout:
-    - Top title: 📩 New Sms • (DE 🇩🇪)
-    - Service: • WhatsApp
-    - Masked phone number: • +49178****151
-    - OTP code on the dedicated copy button below (plus expandable 💬 SMS Content quote in Long mode)
+    - Top title: 📩 New Sms
+    - Service & Country: ✦  WhatsApp (DE 🇩🇪)
+    - Masked phone number: ✦  +49178****151
+    - OTP code on the dedicated copy button below (plus expandable 💬 Full Sms quote in Long mode)
     """
     if not sms_format:
         try:
@@ -2601,10 +2601,10 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     clean_msg      = raw_message.strip()
 
     lines = [
-        f"📩 <b>New Sms • {country_part}</b>",
+        "📩 <b>New Sms</b>",
         "",
-        f"<b>•\u00a0\u00a0{source_escaped}</b>",
-        f"<b>•\u00a0\u00a0{num_plain}</b>",
+        f"<b>✦\u00a0\u00a0{source_escaped} {country_part}</b>",
+        f"<b>✦\u00a0\u00a0{num_plain}</b>",
     ]
 
     if sms_format != "short" and clean_msg:
@@ -3502,9 +3502,9 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Short:</b>\n\n"
-            "📩 <b>New Sms • (DE 🇩🇪)</b>\n\n"
-            "<b>•\u00a0\u00a0WhatsApp</b>\n"
-            "<b>•\u00a0\u00a0+49178****151</b>\n\n"
+            "📩 <b>New Sms</b>\n\n"
+            "<b>✦\u00a0\u00a0WhatsApp (DE 🇩🇪)</b>\n"
+            "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "long":
@@ -3513,9 +3513,9 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
-            "📩 <b>New Sms • (DE 🇩🇪)</b>\n\n"
-            "<b>•\u00a0\u00a0WhatsApp</b>\n"
-            "<b>•\u00a0\u00a0+49178****151</b>\n\n"
+            "📩 <b>New Sms</b>\n\n"
+            "<b>✦\u00a0\u00a0WhatsApp (DE 🇩🇪)</b>\n"
+            "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
             f"<blockquote expandable>⠀\n"
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
