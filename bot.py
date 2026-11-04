@@ -2535,11 +2535,11 @@ def wrap_sms_for_card(text: str, width: int = 22) -> str:
 
 def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = None) -> tuple:
     """
-    Returns (text, otp_code, raw_message) using the clean minimalist layout without emojis:
-    - Top title: ✦ New SMS Received
-    - Service & Country: WhatsApp (NP)
-    - Masked phone number: +977970****563
-    - OTP code on the dedicated copy button below (plus expandable ✦ SMS Content quote in Long mode)
+    Returns (text, otp_code, raw_message) using the clean minimalist layout:
+    - Top title: 📩 New Sms • (DE 🇩🇪)
+    - Service: • WhatsApp
+    - Masked phone number: • +49178****151
+    - OTP code on the dedicated copy button below (plus expandable 💬 SMS Content quote in Long mode)
     """
     if not sms_format:
         try:
@@ -2556,15 +2556,16 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
 
     country_iso   = get_country_iso_display(item).strip()
     parts = country_iso.split(maxsplit=1)
+    flag  = parts[0] if parts else "🌐"
     iso   = parts[1] if len(parts) > 1 else "XX"
     country_name  = get_country_full_name(iso, item)
 
     if iso != "XX":
-        country_part = f"({html.escape(iso)})"
+        country_part = f"({html.escape(iso)} {flag})"
     elif country_name and country_name != "Global":
-        country_part = f"({html.escape(country_name)})"
+        country_part = f"({html.escape(country_name)} {flag})"
     else:
-        country_part = "(Global)"
+        country_part = f"({flag})"
 
     # Smart service detection + strict length cap so the service row stays compact
     low_source = raw_source.lower()
@@ -2600,9 +2601,10 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     clean_msg      = raw_message.strip()
 
     lines = [
-        "✦ <b>New SMS Received</b>",
-        f"<b>{source_escaped}</b> {country_part}",
-        f"<b>{num_plain}</b>",
+        f"📩 <b>New Sms • {country_part}</b>",
+        "",
+        f"<b>• {source_escaped}</b>",
+        f"<b>• {num_plain}</b>",
     ]
 
     if sms_format != "short" and clean_msg:
@@ -2615,7 +2617,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
             f"{QUOTE_DIVIDER}\n"
-            f"✦ <b>SMS Content:</b>\n"
+            f"💬 <b>SMS Content:</b>\n"
             f"{styled_sms}</blockquote>"
         )
 
@@ -3493,16 +3495,16 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         f"• <b>Short</b> {short_active}\n"
         "  Minimalist card with Service, Country, Masked Number & Copy OTP button.\n\n"
         f"• <b>Long</b> {long_active}\n"
-        "  Minimalist card with expandable '✦ SMS Content' blockquote.\n"
+        "  Minimalist card with expandable '💬 SMS Content' blockquote.\n"
     )
 
     if preview_mode == "short":
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Short:</b>\n\n"
-            "✦ <b>New SMS Received</b>\n"
-            "<b>WhatsApp</b> (NP)\n"
-            "<b>+977970****563</b>\n\n"
+            "📩 <b>New Sms • (DE 🇩🇪)</b>\n\n"
+            "<b>• WhatsApp</b>\n"
+            "<b>• +49178****151</b>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "long":
@@ -3511,14 +3513,14 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
-            "✦ <b>New SMS Received</b>\n"
-            "<b>WhatsApp</b> (NP)\n"
-            "<b>+977970****563</b>\n\n"
+            "📩 <b>New Sms • (DE 🇩🇪)</b>\n\n"
+            "<b>• WhatsApp</b>\n"
+            "<b>• +49178****151</b>\n\n"
             f"<blockquote expandable>⠀\n"
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
             f"{QUOTE_DIVIDER}\n"
-            f"✦ <b>SMS Content:</b>\n"
+            f"💬 <b>SMS Content:</b>\n"
             f"{styled_sample}</blockquote>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
