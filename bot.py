@@ -2536,8 +2536,8 @@ def wrap_sms_for_card(text: str, width: int = 22) -> str:
 def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = None) -> tuple:
     """
     Returns (text, otp_code, raw_message) using the clean minimalist layout:
-    - Top title: 📩 New Sms
-    - Service & Country: ✦  WhatsApp (DE 🇩🇪)
+    - Top title: 📩 New Sms • (DE 🇩🇪)
+    - Service: ✦  WhatsApp
     - Masked phone number: ✦  +49178****151
     - OTP code on the dedicated copy button below (plus expandable 💬 Full Sms quote in Long mode)
     """
@@ -2601,9 +2601,9 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     clean_msg      = raw_message.strip()
 
     lines = [
-        "📩 <b>New Sms</b>",
+        f"📩 <b>New Sms • {country_part}</b>",
         "",
-        f"<b>✦\u00a0\u00a0{source_escaped} {country_part}</b>",
+        f"<b>✦\u00a0\u00a0{source_escaped}</b>",
         f"<b>✦\u00a0\u00a0{num_plain}</b>",
     ]
 
@@ -3502,8 +3502,8 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Short:</b>\n\n"
-            "📩 <b>New Sms</b>\n\n"
-            "<b>✦\u00a0\u00a0WhatsApp (DE 🇩🇪)</b>\n"
+            "📩 <b>New Sms • (DE 🇩🇪)</b>\n\n"
+            "<b>✦\u00a0\u00a0WhatsApp</b>\n"
             "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
@@ -3513,8 +3513,8 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Long:</b>\n\n"
-            "📩 <b>New Sms</b>\n\n"
-            "<b>✦\u00a0\u00a0WhatsApp (DE 🇩🇪)</b>\n"
+            "📩 <b>New Sms • (DE 🇩🇪)</b>\n\n"
+            "<b>✦\u00a0\u00a0WhatsApp</b>\n"
             "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
             f"<blockquote expandable>⠀\n"
             f"{COLLAPSED_SMS_HINT}\n"
