@@ -2623,6 +2623,8 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             f"💬 <b>FULL SMS</b>\n"
             f"{styled_sms}</blockquote>"
         )
+    else:
+        lines.append("⠀")
 
     full_text = "\n".join(lines)
     return full_text, otp_code, raw_message
@@ -3507,7 +3509,8 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "<b>📺 Live Preview — Short:</b>\n\n"
             f"📩 <b>NEW SMS • (DE 🇩🇪){CARD_WIDTH_PAD}</b>\n\n"
             "<b>✦\u00a0\u00a0WhatsApp</b>\n"
-            "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
+            "<b>✦\u00a0\u00a0+49178****151</b>\n"
+            "⠀\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "long":
