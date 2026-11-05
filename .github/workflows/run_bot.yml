@@ -217,6 +217,20 @@ jobs:
             echo -e "❌ Missing secrets:${MISSING}"
             exit 1
           fi
+
+          echo "🔍 Validating Telegram Bot Token with Telegram API..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe")
+          if [ "$HTTP_CODE" = "401" ]; then
+            echo "=========================================================================="
+            echo "❌ CRITICAL ERROR: TELEGRAM_BOT_TOKEN is INVALID or REVOKED (HTTP 401)!"
+            echo "👉 The token stored in GitHub Secrets was revoked or reset on @BotFather."
+            echo "👉 Solution: Open @BotFather in Telegram, copy your new token (or generate one with /token),"
+            echo "   then go to GitHub -> Settings -> Secrets and variables -> Actions"
+            echo "   and update TELEGRAM_BOT_TOKEN with your new bot token."
+            echo "=========================================================================="
+            exit 1
+          fi
+          echo "✅ Telegram Bot Token verified successfully (HTTP $HTTP_CODE)."
           echo "✅ All required secrets present!"
           echo "🌐 Active API Base URL: $THIRDWAVE_BASE_URL"
           if [ -n "${{ secrets.THIRDWAVE_BASE_URL }}" ]; then
@@ -297,6 +311,9 @@ jobs:
 
           # Instantly exit when GitHub sends cancellation signals (SIGTERM/SIGINT)
           trap "echo '🛑 Immediate cancellation signal received. Halting runner.'; exit 0" SIGTERM SIGINT
+
+          # Prevent set -e from killing the runner loop on transient bot crashes
+          set +e
 
           while true; do
             REMAINING=$((END_TIME - SECONDS))

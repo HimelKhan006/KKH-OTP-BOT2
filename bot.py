@@ -111,7 +111,7 @@ from telegram import (
     MenuButtonDefault,
 )
 from telegram.constants import ParseMode
-from telegram.error import RetryAfter, TimedOut, NetworkError, Conflict, BadRequest
+from telegram.error import RetryAfter, TimedOut, NetworkError, Conflict, BadRequest, InvalidToken
 from telegram.request import HTTPXRequest
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
@@ -6001,8 +6001,10 @@ def validate_config():
     else:
         try:
             r = httpx.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getMe", timeout=6.0)
-            if r.status_code == 401 or not r.json().get("ok"):
-                logger.warning("⚠️ Notice: Telegram token check returned 401 Unauthorized. Ensure token is valid from @BotFather.")
+            if r.status_code == 401:
+                errors.append("TELEGRAM_BOT_TOKEN is invalid or revoked (HTTP 401 Unauthorized). Please update with a valid token from @BotFather.")
+            elif not r.json().get("ok"):
+                logger.warning(f"⚠️ Telegram token check returned: {r.text}")
         except Exception:
             pass
     if not THIRDWAVE_API_KEY:
@@ -6364,6 +6366,10 @@ if __name__ == "__main__":
             logger.error(f"Bot exited with error code {se.code}")
             sys.exit(se.code)
         logger.info("Bot stopped cleanly.")
+    except InvalidToken as it:
+        logger.critical(f"❌ FATAL: Telegram Bot Token is invalid or revoked: {it}")
+        logger.critical("👉 Update TELEGRAM_BOT_TOKEN in GitHub Secrets / .env with a valid token from @BotFather.")
+        sys.exit(1)
     except Exception as fatal_err:
         logger.error(f"Fatal error in bot main: {fatal_err}")
         sys.exit(2)
