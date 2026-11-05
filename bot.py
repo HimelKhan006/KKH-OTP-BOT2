@@ -5323,9 +5323,10 @@ async def send_startup_announcement(application: Application):
     current_commit = get_current_commit()
     last_notified_commit = get_bot_setting("last_notified_commit", "")
 
-    # Only trust manual_restart if IS_MANUAL_RESTART env was explicitly set to true
-    # by the bot's own restart-dispatch call. Never trust it from Gist alone.
-    manual_restart = _manual_restart  # already set from IS_MANUAL_RESTART env at startup
+    # Check environment variable, local restart file, or persistent DB flag
+    file_manual = os.path.exists(".manual_restart")
+    db_manual = (get_bot_setting("manual_restart", "0") == "1")
+    manual_restart = bool(_manual_restart or file_manual or db_manual)
 
     # ── Rule 1: Scheduled safety-net → always silent ──────────────────────────
     if STARTUP_TYPE == "schedule" and not manual_restart:
@@ -5397,6 +5398,11 @@ async def send_startup_announcement(application: Application):
     if manual_restart:
         _manual_restart = False
         set_bot_setting("manual_restart", "0")
+        try:
+            if os.path.exists(".manual_restart"):
+                os.remove(".manual_restart")
+        except Exception:
+            pass
         if gist_storage.enabled:
             try:
                 today_total, total_28h, active_countries = get_dashboard_stats()
@@ -5446,12 +5452,12 @@ async def send_startup_announcement(application: Application):
     bot_name = get_bot_name()
     time_str, date_str = format_bangladesh_12h()
 
-    if manual_restart and not is_new_update:
-        trigger_label = "\U0001f501 <b>Admin Manual Restart</b>"
+    if manual_restart:
+        trigger_label = "🔄 <b>Admin Manual Restart</b>"
     elif is_git_push:
-        trigger_label = "\U0001f680 <b>New Update Deployed</b>"
+        trigger_label = "🚀 <b>New Update Deployed</b>"
     else:
-        trigger_label = "\U0001f4e6 <b>Code Update Detected</b>"
+        trigger_label = "📦 <b>Code Update Detected</b>"
 
     admin_msg = (
         f"✅ <b>{html.escape(bot_name)}</b> is now <b>LIVE</b>\n"
