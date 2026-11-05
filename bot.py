@@ -2476,6 +2476,7 @@ COLLAPSED_SMS_HINT = "<b>✦\u00a0\u00a0TAP TO READ SMS..</b>"
 CARD_DIVIDER = "━" * 20
 QUOTE_DIVIDER = "━" * 14
 CARD_WIDTH_PAD = "\u2800" * 7
+CARD_WIDTH_PAD_CLASSIC = "\u2800" * 18
 
 _MONO_TABLE = str.maketrans(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
@@ -2602,6 +2603,17 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     source_escaped = html.escape(source_raw)
     num_plain      = html.escape(masked_raw if masked_raw else country_name)
     clean_msg      = raw_message.strip()
+
+    if sms_format in ("classic_short", "old_short", "classic"):
+        lines = [
+            f"📩 <b>NEW SMS{CARD_WIDTH_PAD_CLASSIC}</b>",
+            "",
+            f"<b>✦\u00a0\u00a0{source_escaped} {country_part}</b>",
+            f"<b>✦\u00a0\u00a0{num_plain}</b>",
+            "⠀",
+        ]
+        full_text = "\n".join(lines)
+        return full_text, otp_code, raw_message
 
     lines = [
         f"📩 <b>NEW SMS • {country_part}{CARD_WIDTH_PAD}</b>",
@@ -3195,7 +3207,12 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     data = load_stored_data()
     active_bot_name = get_bot_name()
     active_format = data.get("sms_format", "long")
-    fmt_label = "Short (Modern ⚡)" if active_format == "short" else "Long (Detailed 📜)"
+    if active_format == "classic_short":
+        fmt_label = "Classic Short (Service Country ⏳)"
+    elif active_format == "short":
+        fmt_label = "Short (Header Country ⚡)"
+    else:
+        fmt_label = "Long (Detailed 📜)"
 
     custom_buttons = get_custom_link_buttons()
     if custom_buttons:
@@ -3487,28 +3504,48 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, InlineKeyboardMarkup]:
     """Builds interactive configuration & live preview panel for SMS delivery format."""
     data = load_stored_data()
-    curr_fmt = data.get("sms_format", "long")
+    curr_fmt = str(data.get("sms_format", "long")).lower().strip()
 
     short_active = "✅ (Active)" if curr_fmt == "short" else "⚪"
     long_active  = "✅ (Active)" if curr_fmt == "long" else "⚪"
+    classic_active = "✅ (Active)" if curr_fmt == "classic_short" else "⚪"
+
+    if curr_fmt == "short":
+        active_label = "Short ⚡ (Header Country)"
+    elif curr_fmt == "classic_short":
+        active_label = "Classic Short ⏳ (Service Country)"
+    else:
+        active_label = "Long 📜 (With View Full SMS)"
 
     msg = (
         "📋 <b>SMS Format Configuration</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"🟢 <b>Active Mode:</b>   {'Short ⚡ (Without View Full SMS)' if curr_fmt == 'short' else 'Long 📜 (With View Full SMS)'}\n\n"
+        f"🟢 <b>Active Mode:</b>   {active_label}\n\n"
         "<b>Available Modes:</b>\n"
-        f"• <b>Short</b> {short_active}\n"
-        "  Minimalist card with Service, Country, Masked Number & Copy OTP button.\n\n"
-        f"• <b>Long</b> {long_active}\n"
-        "  Minimalist card with expandable '💬 FULL SMS' blockquote.\n"
+        f"• <b>Short (Header Country)</b> {short_active}\n"
+        "  Country in header (NEW SMS • DE 🇩🇪), Service & Number with ✦ icon, Copy OTP button.\n\n"
+        f"• <b>Long (With Full SMS)</b> {long_active}\n"
+        "  Full card with expandable '💬 FULL SMS' blockquote.\n\n"
+        f"• <b>Classic Short (Service Country)</b> {classic_active}\n"
+        "  Previous layout with Service + Country on line 2, styled with new ✦ icon.\n"
     )
 
     if preview_mode == "short":
         msg += (
             f"\n{CARD_DIVIDER}\n"
-            "<b>📺 Live Preview — Short:</b>\n\n"
+            "<b>📺 Live Preview — Short (Header Country):</b>\n\n"
             f"📩 <b>NEW SMS • (DE 🇩🇪){CARD_WIDTH_PAD}</b>\n\n"
             "<b>✦\u00a0\u00a0WhatsApp</b>\n"
+            "<b>✦\u00a0\u00a0+49178****151</b>\n"
+            "⠀\n\n"
+            "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
+        )
+    elif preview_mode == "classic_short":
+        msg += (
+            f"\n{CARD_DIVIDER}\n"
+            "<b>📺 Live Preview — Classic Short (Service Country):</b>\n\n"
+            f"📩 <b>NEW SMS{CARD_WIDTH_PAD_CLASSIC}</b>\n\n"
+            "<b>✦\u00a0\u00a0WhatsApp (DE 🇩🇪)</b>\n"
             "<b>✦\u00a0\u00a0+49178****151</b>\n"
             "⠀\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
@@ -3518,7 +3555,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=18)
         msg += (
             f"\n{CARD_DIVIDER}\n"
-            "<b>📺 Live Preview — Long:</b>\n\n"
+            "<b>📺 Live Preview — Long (With View Full SMS):</b>\n\n"
             f"📩 <b>NEW SMS • (DE 🇩🇪){CARD_WIDTH_PAD}</b>\n\n"
             "<b>✦\u00a0\u00a0WhatsApp</b>\n"
             "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
@@ -3535,12 +3572,14 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
 
     kb = [
         [
-            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'short' else ''}⚡ Short Format", callback_data="fmt_set_short"),
-            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'long' else ''}📜 Long Format", callback_data="fmt_set_long"),
+            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'short' else ''}⚡ Short", callback_data="fmt_set_short"),
+            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'long' else ''}📜 Long", callback_data="fmt_set_long"),
+            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'classic_short' else ''}⏳ Classic Short", callback_data="fmt_set_classic_short"),
         ],
         [
             InlineKeyboardButton("📺 Preview Short", callback_data="fmt_preview_short"),
             InlineKeyboardButton("📺 Preview Long", callback_data="fmt_preview_long"),
+            InlineKeyboardButton("📺 Preview Classic", callback_data="fmt_preview_classic_short"),
         ],
         [
             InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")
@@ -3629,17 +3668,23 @@ async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYP
     # If called with an argument e.g. /format short or /format long:
     if context and context.args:
         arg = context.args[0].strip().lower()
-        if arg in ("short", "long"):
+        if arg in ("short", "long", "classic_short", "classic", "old", "old_short"):
+            target_fmt = "classic_short" if arg in ("classic_short", "classic", "old", "old_short") else arg
             data = load_stored_data()
-            data["sms_format"] = arg
+            data["sms_format"] = target_fmt
             save_stored_data(data)
             asyncio.create_task(sync_data_to_secret_db())
-            mode_label = "Long (Detailed with SMS Content 📜)" if arg == "long" else "Short (Modern Bullet ⚡)"
+            if target_fmt == "long":
+                mode_label = "Long (Detailed with SMS Content 📜)"
+            elif target_fmt == "classic_short":
+                mode_label = "Classic Short (Service Country with ✦ ⏳)"
+            else:
+                mode_label = "Short (Header Country ⚡)"
             await msg_obj.reply_text(
                 f"✅ <b>SMS Delivery Format Updated!</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"• <b>Active Mode:</b> <code>{mode_label}</code>\n"
-                f"• <b>Format Setting:</b> <code>{html.escape(arg)}</code>\n"
+                f"• <b>Format Setting:</b> <code>{html.escape(target_fmt)}</code>\n"
                 f"• <b>Database:</b> <code>Saved Secretly to Cloud Store 🔒</code>",
                 parse_mode=ParseMode.HTML
             )
@@ -4221,12 +4266,19 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     if query.data == "toggle_format":
         data = load_stored_data()
         curr = str(data.get("sms_format", "long")).lower().strip()
-        new_fmt = "long" if curr == "short" else "short"
+        if curr == "long":
+            new_fmt = "short"
+            mode_label = "Short (Header Country ⚡)"
+        elif curr == "short":
+            new_fmt = "classic_short"
+            mode_label = "Classic Short (Service Country ⏳)"
+        else:
+            new_fmt = "long"
+            mode_label = "Long (Detailed 📜)"
         data["sms_format"] = new_fmt
         save_stored_data(data)
         asyncio.create_task(sync_data_to_secret_db())
 
-        mode_label = "Long (Detailed 📜)" if new_fmt == "long" else "Short (Modern ⚡)"
         try:
             await query.answer(f"Format switched to: {mode_label}", show_alert=False)
         except Exception:
@@ -4775,7 +4827,16 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         data["sms_format"] = "short"
         save_stored_data(data)
         asyncio.create_task(sync_data_to_secret_db())
-        await query.answer("SMS Format set to Short ⚡")
+        await query.answer("SMS Format set to Short ⚡ (Header Country)")
+        text_view, markup = build_sms_format_view()
+        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data == "fmt_set_classic_short":
+        data = load_stored_data()
+        data["sms_format"] = "classic_short"
+        save_stored_data(data)
+        asyncio.create_task(sync_data_to_secret_db())
+        await query.answer("SMS Format set to Classic Short ⏳ (Service Country)")
         text_view, markup = build_sms_format_view()
         await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
 
@@ -4784,17 +4845,22 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         data["sms_format"] = "long"
         save_stored_data(data)
         asyncio.create_task(sync_data_to_secret_db())
-        await query.answer("SMS Format set to Long 📜")
+        await query.answer("SMS Format set to Long 📜 (With View Full SMS)")
         text_view, markup = build_sms_format_view()
         await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
 
     elif query.data == "fmt_preview_short":
-        await query.answer("Previewing Short Format")
+        await query.answer("Previewing Short Format (Header Country)")
         text_view, markup = build_sms_format_view(preview_mode="short")
         await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
 
+    elif query.data == "fmt_preview_classic_short":
+        await query.answer("Previewing Classic Short Format (Service Country)")
+        text_view, markup = build_sms_format_view(preview_mode="classic_short")
+        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
     elif query.data == "fmt_preview_long":
-        await query.answer("Previewing Long Format")
+        await query.answer("Previewing Long Format (With View Full SMS)")
         text_view, markup = build_sms_format_view(preview_mode="long")
         await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
 
