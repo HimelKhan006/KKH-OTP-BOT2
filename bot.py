@@ -2622,7 +2622,6 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         if clean_msg:
             display_sms = clean_msg if len(clean_msg) <= 3000 else (clean_msg[:3000] + "... [truncated]")
             styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=18)
-            lines.append("")
             lines.append(
                 f"<blockquote expandable>⠀\n"
                 f"{COLLAPSED_SMS_HINT}\n"
@@ -3583,7 +3582,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "<b>📺 Live Preview — Classic Long (Compact + Full SMS):</b>\n\n"
             f"📩 <b>NEW SMS • (DE 🇩🇪){CARD_WIDTH_PAD}</b>\n"
             "<b>✦\u00a0\u00a0WhatsApp</b>\n"
-            "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
+            "<b>✦\u00a0\u00a0+49178****151</b>\n"
             f"<blockquote expandable>⠀\n"
             f"{COLLAPSED_SMS_HINT}\n"
             f"⠀\n"
