@@ -2613,6 +2613,27 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         full_text = "\n".join(lines)
         return full_text, otp_code, raw_message
 
+    if sms_format in ("classic_long", "old_long"):
+        lines = [
+            f"📩 <b>NEW SMS • {country_part}{CARD_WIDTH_PAD}</b>",
+            f"<b>✦\u00a0\u00a0{source_escaped}</b>",
+            f"<b>✦\u00a0\u00a0{num_plain}</b>",
+        ]
+        if clean_msg:
+            display_sms = clean_msg if len(clean_msg) <= 3000 else (clean_msg[:3000] + "... [truncated]")
+            styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=18)
+            lines.append("")
+            lines.append(
+                f"<blockquote expandable>⠀\n"
+                f"{COLLAPSED_SMS_HINT}\n"
+                f"⠀\n"
+                f"{QUOTE_DIVIDER}\n"
+                f"💬 <b>FULL SMS</b>\n"
+                f"{styled_sms}</blockquote>"
+            )
+        full_text = "\n".join(lines)
+        return full_text, otp_code, raw_message
+
     lines = [
         f"📩 <b>NEW SMS • {country_part}{CARD_WIDTH_PAD}</b>",
         "",
@@ -3205,8 +3226,10 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     data = load_stored_data()
     active_bot_name = get_bot_name()
     active_format = data.get("sms_format", "long")
-    if active_format == "classic_short":
-        fmt_label = "Classic Short (Service Country ⏳)"
+    if active_format == "classic_long":
+        fmt_label = "Classic Long (Compact + Full SMS ⏳)"
+    elif active_format == "classic_short":
+        fmt_label = "Classic Short (Compact ⏳)"
     elif active_format == "short":
         fmt_label = "Short (Header Country ⚡)"
     else:
@@ -3507,11 +3530,14 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
     short_active = "✅ (Active)" if curr_fmt == "short" else "⚪"
     long_active  = "✅ (Active)" if curr_fmt == "long" else "⚪"
     classic_active = "✅ (Active)" if curr_fmt == "classic_short" else "⚪"
+    classic_long_active = "✅ (Active)" if curr_fmt == "classic_long" else "⚪"
 
     if curr_fmt == "short":
         active_label = "Short ⚡ (Header Country)"
     elif curr_fmt == "classic_short":
         active_label = "Classic Short ⏳ (Compact, No Extra Space)"
+    elif curr_fmt == "classic_long":
+        active_label = "Classic Long ⏳ (Compact + Full SMS)"
     else:
         active_label = "Long 📜 (With View Full SMS)"
 
@@ -3525,7 +3551,9 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         f"• <b>Long (With Full SMS)</b> {long_active}\n"
         "  Full card with expandable '💬 FULL SMS' blockquote.\n\n"
         f"• <b>Classic Short (Compact)</b> {classic_active}\n"
-        "  Country in header (NEW SMS • DE 🇩🇪), Service & Number with ✦, without extra spacing.\n"
+        "  Country in header (NEW SMS • DE 🇩🇪), Service & Number with ✦, without extra spacing.\n\n"
+        f"• <b>Classic Long (Compact + Full SMS)</b> {classic_long_active}\n"
+        "  Compact layout with ✦ marks and expandable '💬 FULL SMS' blockquote.\n"
     )
 
     if preview_mode == "short":
@@ -3545,6 +3573,23 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             f"📩 <b>NEW SMS • (DE 🇩🇪){CARD_WIDTH_PAD}</b>\n"
             "<b>✦\u00a0\u00a0WhatsApp</b>\n"
             "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
+            "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
+        )
+    elif preview_mode == "classic_long":
+        sample_sms = "Your WhatsApp verification code is 492-810. Do not share this code with anyone."
+        styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=18)
+        msg += (
+            f"\n{CARD_DIVIDER}\n"
+            "<b>📺 Live Preview — Classic Long (Compact + Full SMS):</b>\n\n"
+            f"📩 <b>NEW SMS • (DE 🇩🇪){CARD_WIDTH_PAD}</b>\n"
+            "<b>✦\u00a0\u00a0WhatsApp</b>\n"
+            "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
+            f"<blockquote expandable>⠀\n"
+            f"{COLLAPSED_SMS_HINT}\n"
+            f"⠀\n"
+            f"{QUOTE_DIVIDER}\n"
+            f"💬 <b>FULL SMS</b>\n"
+            f"{styled_sample}</blockquote>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "long":
@@ -3574,13 +3619,15 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         ],
         [
             InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'classic_short' else ''}⏳ Classic Short", callback_data="fmt_set_classic_short"),
+            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'classic_long' else ''}⏳ Classic Long", callback_data="fmt_set_classic_long"),
         ],
         [
             InlineKeyboardButton("📺 Preview Short", callback_data="fmt_preview_short"),
             InlineKeyboardButton("📺 Preview Long", callback_data="fmt_preview_long"),
         ],
         [
-            InlineKeyboardButton("📺 Preview Classic", callback_data="fmt_preview_classic_short"),
+            InlineKeyboardButton("📺 Classic Short", callback_data="fmt_preview_classic_short"),
+            InlineKeyboardButton("📺 Classic Long", callback_data="fmt_preview_classic_long"),
         ],
         [
             InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")
@@ -3669,16 +3716,23 @@ async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYP
     # If called with an argument e.g. /format short or /format long:
     if context and context.args:
         arg = context.args[0].strip().lower()
-        if arg in ("short", "long", "classic_short", "classic", "old", "old_short"):
-            target_fmt = "classic_short" if arg in ("classic_short", "classic", "old", "old_short") else arg
+        if arg in ("short", "long", "classic_short", "classic", "old", "old_short", "classic_long", "old_long"):
+            if arg in ("classic_long", "old_long"):
+                target_fmt = "classic_long"
+            elif arg in ("classic_short", "classic", "old", "old_short"):
+                target_fmt = "classic_short"
+            else:
+                target_fmt = arg
             data = load_stored_data()
             data["sms_format"] = target_fmt
             save_stored_data(data)
             asyncio.create_task(sync_data_to_secret_db())
             if target_fmt == "long":
                 mode_label = "Long (Detailed with SMS Content 📜)"
+            elif target_fmt == "classic_long":
+                mode_label = "Classic Long (Compact + Full SMS ⏳)"
             elif target_fmt == "classic_short":
-                mode_label = "Classic Short (Service Country with ✦ ⏳)"
+                mode_label = "Classic Short (Compact, No Extra Space ⏳)"
             else:
                 mode_label = "Short (Header Country ⚡)"
             await msg_obj.reply_text(
@@ -4272,7 +4326,10 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             mode_label = "Short (Header Country ⚡)"
         elif curr == "short":
             new_fmt = "classic_short"
-            mode_label = "Classic Short (Service Country ⏳)"
+            mode_label = "Classic Short (Compact ⏳)"
+        elif curr == "classic_short":
+            new_fmt = "classic_long"
+            mode_label = "Classic Long (Compact + Full SMS ⏳)"
         else:
             new_fmt = "long"
             mode_label = "Long (Detailed 📜)"
@@ -4837,7 +4894,16 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         data["sms_format"] = "classic_short"
         save_stored_data(data)
         asyncio.create_task(sync_data_to_secret_db())
-        await query.answer("SMS Format set to Classic Short ⏳ (Service Country)")
+        await query.answer("SMS Format set to Classic Short ⏳ (Compact, No Extra Space)")
+        text_view, markup = build_sms_format_view()
+        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data == "fmt_set_classic_long":
+        data = load_stored_data()
+        data["sms_format"] = "classic_long"
+        save_stored_data(data)
+        asyncio.create_task(sync_data_to_secret_db())
+        await query.answer("SMS Format set to Classic Long ⏳ (Compact + Full SMS)")
         text_view, markup = build_sms_format_view()
         await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
 
@@ -4856,8 +4922,13 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
 
     elif query.data == "fmt_preview_classic_short":
-        await query.answer("Previewing Classic Short Format (Service Country)")
+        await query.answer("Previewing Classic Short Format (Compact, No Extra Space)")
         text_view, markup = build_sms_format_view(preview_mode="classic_short")
+        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data == "fmt_preview_classic_long":
+        await query.answer("Previewing Classic Long Format (Compact + Full SMS)")
+        text_view, markup = build_sms_format_view(preview_mode="classic_long")
         await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
 
     elif query.data == "fmt_preview_long":
