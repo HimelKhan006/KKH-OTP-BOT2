@@ -5323,18 +5323,20 @@ async def send_startup_announcement(application: Application):
     current_commit = get_current_commit()
     last_notified_commit = get_bot_setting("last_notified_commit", "")
 
-    # Check environment variable, local restart file, or persistent DB flag
+    # Only trust explicit env flag from GitHub Actions dispatch or local one-shot file.
+    # Stale SQLite DB settings must NEVER trigger an alert across runner sessions!
     file_manual = os.path.exists(".manual_restart")
-    db_manual = (get_bot_setting("manual_restart", "0") == "1")
-    manual_restart = bool(_manual_restart or file_manual or db_manual)
+    manual_restart = bool(_manual_restart or file_manual)
+    # Always reset DB setting so no stale flag is ever cached across handovers
+    set_bot_setting("manual_restart", "0")
 
     # ── Rule 1: Scheduled safety-net → always silent ──────────────────────────
-    if STARTUP_TYPE == "schedule" and not manual_restart:
+    if STARTUP_TYPE == "schedule" and not _manual_restart:
         logger.info("\U0001f92b Scheduled safety-net (STARTUP_TYPE=schedule): startup notification suppressed.")
         return
 
     # ── Rule 2: Session handover → always silent unless IS_MANUAL_RESTART=true ─
-    if _is_handover and not manual_restart:
+    if _is_handover and not _manual_restart:
         logger.info(
             f"\U0001f92b Automated 24/7 session handover (IS_HANDOVER=true, commit={current_commit or 'unknown'}): "
             f"startup notification suppressed (zero-downtime mode)."
