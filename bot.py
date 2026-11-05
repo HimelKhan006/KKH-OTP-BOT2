@@ -2606,11 +2606,9 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
 
     if sms_format in ("classic_short", "old_short", "classic"):
         lines = [
-            f"📩 <b>NEW SMS{CARD_WIDTH_PAD_CLASSIC}</b>",
-            "",
-            f"<b>✦\u00a0\u00a0{source_escaped} {country_part}</b>",
+            f"📩 <b>NEW SMS • {country_part}{CARD_WIDTH_PAD}</b>",
+            f"<b>✦\u00a0\u00a0{source_escaped}</b>",
             f"<b>✦\u00a0\u00a0{num_plain}</b>",
-            "⠀",
         ]
         full_text = "\n".join(lines)
         return full_text, otp_code, raw_message
@@ -3513,7 +3511,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
     if curr_fmt == "short":
         active_label = "Short ⚡ (Header Country)"
     elif curr_fmt == "classic_short":
-        active_label = "Classic Short ⏳ (Service Country)"
+        active_label = "Classic Short ⏳ (Compact, No Extra Space)"
     else:
         active_label = "Long 📜 (With View Full SMS)"
 
@@ -3523,11 +3521,11 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         f"🟢 <b>Active Mode:</b>   {active_label}\n\n"
         "<b>Available Modes:</b>\n"
         f"• <b>Short (Header Country)</b> {short_active}\n"
-        "  Country in header (NEW SMS • DE 🇩🇪), Service & Number with ✦ icon, Copy OTP button.\n\n"
+        "  Country in header (NEW SMS • DE 🇩🇪), Service & Number with ✦, clean spacing.\n\n"
         f"• <b>Long (With Full SMS)</b> {long_active}\n"
         "  Full card with expandable '💬 FULL SMS' blockquote.\n\n"
-        f"• <b>Classic Short (Service Country)</b> {classic_active}\n"
-        "  Previous layout with Service + Country on line 2, styled with new ✦ icon.\n"
+        f"• <b>Classic Short (Compact)</b> {classic_active}\n"
+        "  Country in header (NEW SMS • DE 🇩🇪), Service & Number with ✦, without extra spacing.\n"
     )
 
     if preview_mode == "short":
@@ -3543,11 +3541,10 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
     elif preview_mode == "classic_short":
         msg += (
             f"\n{CARD_DIVIDER}\n"
-            "<b>📺 Live Preview — Classic Short (Service Country):</b>\n\n"
-            f"📩 <b>NEW SMS{CARD_WIDTH_PAD_CLASSIC}</b>\n\n"
-            "<b>✦\u00a0\u00a0WhatsApp (DE 🇩🇪)</b>\n"
-            "<b>✦\u00a0\u00a0+49178****151</b>\n"
-            "⠀\n\n"
+            "<b>📺 Live Preview — Classic Short (Compact, No Extra Space):</b>\n\n"
+            f"📩 <b>NEW SMS • (DE 🇩🇪){CARD_WIDTH_PAD}</b>\n"
+            "<b>✦\u00a0\u00a0WhatsApp</b>\n"
+            "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "long":
@@ -3574,11 +3571,15 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         [
             InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'short' else ''}⚡ Short", callback_data="fmt_set_short"),
             InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'long' else ''}📜 Long", callback_data="fmt_set_long"),
+        ],
+        [
             InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'classic_short' else ''}⏳ Classic Short", callback_data="fmt_set_classic_short"),
         ],
         [
             InlineKeyboardButton("📺 Preview Short", callback_data="fmt_preview_short"),
             InlineKeyboardButton("📺 Preview Long", callback_data="fmt_preview_long"),
+        ],
+        [
             InlineKeyboardButton("📺 Preview Classic", callback_data="fmt_preview_classic_short"),
         ],
         [
