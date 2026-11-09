@@ -18,8 +18,8 @@ on:
         required: false
         default: 'false'
   schedule:
-    # 4-hour safety net — fires every 4h ONLY if bot ever stops unexpectedly
-    - cron: '0 */4 * * *'
+    # Backup safety net — fires every 30m ONLY if bot ever stops
+    - cron: '*/30 * * * *'
 
 # Only ONE bot instance ever runs at a time — guaranteed by shared concurrency group.
 # Push/dispatch/handover: cancel-in-progress=true  → instantly kills old bot, starts new one (zero delay).
@@ -27,7 +27,7 @@ on:
 # This prevents TWO bots ever running simultaneously (which caused Telegram polling conflicts & crashes).
 concurrency:
   group: otp-wave-bot-single-instance
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 permissions:
   actions: write
@@ -381,10 +381,11 @@ jobs:
           key: bot1-database-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Self-Trigger Next Run (Zero Downtime Restart)
-        if: ${{ !cancelled() && steps.run_bot.outcome == 'success' }}
+        if: ${{ !cancelled() }}
         env:
+          PAT_TOKEN: ${{ secrets.PAT || secrets.WORKFLOW_TOKEN || secrets.GH_PAT }}
           GH_TOKEN: ${{ github.token }}
-          ALT_TOKEN: ${{ secrets.PAT || secrets.GH_TOKEN || secrets.GIST_TOKEN }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
         run: |
           if [ -f ".handover_dispatched" ]; then
             echo "✅ Proactive handover was already dispatched in advance by bot.py. Skipping duplicate trigger."
@@ -396,27 +397,60 @@ jobs:
             IS_MANUAL="true"
           fi
 
-          echo "🔄 Triggering next bot session immediately to avoid downtime (is_manual_restart=$IS_MANUAL)..."
-          HTTP_CODE=$(curl -s -o /tmp/dispatch_out.txt -w "%{http_code}" -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/run_bot.yml/dispatches" \
-            -d "{\"ref\":\"main\",\"inputs\":{\"is_handover\":\"true\",\"is_manual_restart\":\"$IS_MANUAL\"}}")
+          DISPATCH_BODY="{\"ref\":\"main\",\"inputs\":{\"is_handover\":\"true\",\"is_manual_restart\":\"$IS_MANUAL\"}}"
+          URL="https://api.github.com/repos/${{ github.repository }}/actions/workflows/run_bot.yml/dispatches"
 
-          if [ "$HTTP_CODE" != "204" ] && [ -n "$ALT_TOKEN" ]; then
-            echo "ℹ️ Retrying dispatch with auxiliary token..."
+          echo "🔄 Triggering next session immediately (is_manual_restart=$IS_MANUAL)..."
+          TRIGGERED="false"
+
+          # 1. Try Personal Access Token (PAT) first — required for workflow dispatch permissions
+          if [ -n "$PAT_TOKEN" ]; then
+            echo "🔑 Attempting dispatch with PAT..."
             HTTP_CODE=$(curl -s -o /tmp/dispatch_out.txt -w "%{http_code}" -X POST \
-              -H "Authorization: Bearer $ALT_TOKEN" \
+              -H "Authorization: Bearer $PAT_TOKEN" \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/workflows/run_bot.yml/dispatches" \
-              -d "{\"ref\":\"main\",\"inputs\":{\"is_handover\":\"true\",\"is_manual_restart\":\"$IS_MANUAL\"}}")
+              "$URL" -d "$DISPATCH_BODY")
+            if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
+              TRIGGERED="true"
+            else
+              echo "ℹ️ PAT dispatch returned HTTP $HTTP_CODE: $(cat /tmp/dispatch_out.txt 2>/dev/null)"
+            fi
           fi
 
-          if [ "$HTTP_CODE" = "204" ]; then
+          # 2. Try GITHUB_TOKEN if PAT wasn't provided or failed
+          if [ "$TRIGGERED" != "true" ] && [ -n "$GH_TOKEN" ]; then
+            echo "🔑 Attempting dispatch with GH_TOKEN..."
+            HTTP_CODE=$(curl -s -o /tmp/dispatch_out.txt -w "%{http_code}" -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$URL" -d "$DISPATCH_BODY")
+            if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
+              TRIGGERED="true"
+            else
+              echo "ℹ️ GH_TOKEN dispatch returned HTTP $HTTP_CODE"
+            fi
+          fi
+
+          # 3. Try GIST_TOKEN fallback
+          if [ "$TRIGGERED" != "true" ] && [ -n "$GIST_TOKEN" ]; then
+            echo "🔑 Attempting dispatch with GIST_TOKEN..."
+            HTTP_CODE=$(curl -s -o /tmp/dispatch_out.txt -w "%{http_code}" -X POST \
+              -H "Authorization: Bearer $GIST_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$URL" -d "$DISPATCH_BODY")
+            if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
+              TRIGGERED="true"
+            else
+              echo "ℹ️ GIST_TOKEN dispatch returned HTTP $HTTP_CODE"
+            fi
+          fi
+
+          if [ "$TRIGGERED" = "true" ]; then
             echo "✅ Next run triggered! Bot continues with new server session."
           else
-            echo "⚠️ Self-trigger returned HTTP $HTTP_CODE (backup cron will pick up)."
-            cat /tmp/dispatch_out.txt 2>/dev/null || true
+            echo "⚠️ Direct self-trigger did not succeed (HTTP $HTTP_CODE). Safety-net cron (every 30m) will catch and resume this run automatically."
+            echo "💡 Tip: Add a GitHub Secret named PAT with 'workflow' / 'repo' scope for instant 0s handover."
           fi
