@@ -2855,13 +2855,11 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         ]
         if sms_format in ("glass_long", "direct_long", "direct", "glass") and clean_msg:
             display_sms = clean_msg if len(clean_msg) <= 3000 else (clean_msg[:3000] + "... [truncated]")
-            styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=18)
-            indented_sms = "\n".join(f"\u00a0\u00a0{ln}" if ln else "" for ln in styled_sms.splitlines())
+            styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=26)
+            compact_sms = "\n".join(ln for ln in styled_sms.splitlines() if ln.strip())
             lines.append("")
             lines.append("<b>▸\u00a0\u00a0💬 Full SMS</b>")
-            lines.append(indented_sms)
-        else:
-            lines.append("⠀")
+            lines.append(compact_sms)
         return "\n".join(lines), otp_code, raw_message
 
     if sms_format in ("classic_short", "old_short", "classic"):
@@ -3887,21 +3885,20 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Direct Short (Signal Ticket):</b>\n\n"
             f"📩\u00a0\u00a0<b>DE 🇩🇪\u00a0\u00a0✦\u00a0\u00a0WhatsApp</b>{CARD_WIDTH_PAD}\n\n"
-            "<b>✦\u00a0\u00a0+49178****151</b>\n"
-            "⠀\n\n"
+            "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
             "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "glass_long":
         sample_sms = "Your WhatsApp verification code is 492-810. Do not share this code with anyone."
-        styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=18)
-        indented_sample = "\n".join(f"\u00a0\u00a0{ln}" if ln else "" for ln in styled_sample.splitlines())
+        styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=26)
+        compact_sample = "\n".join(ln for ln in styled_sample.splitlines() if ln.strip())
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Direct Full (Open SMS Card):</b>\n\n"
             f"📩\u00a0\u00a0<b>DE 🇩🇪\u00a0\u00a0✦\u00a0\u00a0WhatsApp</b>{CARD_WIDTH_PAD}\n\n"
             "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
             "<b>▸\u00a0\u00a0💬 Full SMS</b>\n"
-            f"{indented_sample}\n\n"
+            f"{compact_sample}\n\n"
             "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
         )
     else:
