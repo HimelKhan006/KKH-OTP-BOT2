@@ -2719,28 +2719,12 @@ def wrap_sms_for_card(text: str, width: int = 22) -> str:
             lines.append("")
     return "\n".join(lines)
 
-def build_fixed_width_direct_header(source_raw: str, iso_fixed: str, flag: str, target_units: float = 23.0) -> str:
+def build_fixed_width_direct_header(source_raw: str, iso_fixed: str, flag: str) -> str:
     """
-    Builds '📩 <b>{Service} • {ISO} {Flag}</b>' as a single non-breaking line padded with
-    Word-Joined Braille spaces inside <b> and a trailing ZWNJ (\u200c) matching Long's card width.
+    Builds '📩 <b>{Service} • {ISO} {Flag}</b>' with CARD_WIDTH_PAD (7 Braille blanks) inside <b>
+    and NBSP before {Flag} so mobile Telegram never wraps onto an extra blank line.
     """
-    vw = 2.0  # leading envelope emoji + space
-    plain_head = f"{source_raw} • {iso_fixed} "
-    for ch in plain_head:
-        if ch in "ijlItrf1!|.,:;• ":
-            vw += 0.62
-        elif ch in "WMGOQ@#%&":
-            vw += 1.32
-        elif ch.isupper() or ch.isdigit():
-            vw += 1.08
-        elif ord(ch) > 127:
-            vw += 1.6
-        else:
-            vw += 0.92
-    vw += 2.0  # country flag width
-    pad_count = max(7, round((target_units - vw) / 0.55))
-    fixed_pad = ("\u2060\u2800" * pad_count) + "\u200c"
-    return f"📩\u00a0<b>{html.escape(source_raw)}\u00a0•\u00a0{html.escape(iso_fixed)}\u00a0{flag}{fixed_pad}</b>"
+    return f"📩 <b>{html.escape(source_raw)} • {html.escape(iso_fixed)}\u00a0{flag}{CARD_WIDTH_PAD}</b>"
 
 def detect_service_name(raw_source: str, raw_message: str) -> str:
     """
