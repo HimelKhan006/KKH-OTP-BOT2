@@ -2719,10 +2719,10 @@ def wrap_sms_for_card(text: str, width: int = 22) -> str:
             lines.append("")
     return "\n".join(lines)
 
-def build_fixed_width_direct_header(source_raw: str, iso_fixed: str, flag: str, target_units: float = 21.5) -> str:
+def build_fixed_width_direct_header(source_raw: str, iso_fixed: str, flag: str, target_units: float = 23.0) -> str:
     """
-    Builds '📩 <b>{Service} • {ISO} {Flag}</b>' with non-breaking spaces before {ISO} and {Flag}
-    so the flag stays on line 1, plus clean Braille padding to lock card width like Long/Classic.
+    Builds '📩 <b>{Service} • {ISO} {Flag}</b>' as a single non-breaking line padded with
+    Word-Joined Braille spaces inside <b> and a trailing ZWNJ (\u200c) matching Long's card width.
     """
     vw = 2.0  # leading envelope emoji + space
     plain_head = f"{source_raw} • {iso_fixed} "
@@ -2738,9 +2738,9 @@ def build_fixed_width_direct_header(source_raw: str, iso_fixed: str, flag: str, 
         else:
             vw += 0.92
     vw += 2.0  # country flag width
-    pad_count = max(6, round((target_units - vw) / 0.55))
-    fixed_pad = "\u2800" * pad_count
-    return f"📩 <b>{html.escape(source_raw)}\u00a0•\u00a0{html.escape(iso_fixed)}\u00a0{flag}{fixed_pad}</b>"
+    pad_count = max(7, round((target_units - vw) / 0.55))
+    fixed_pad = ("\u2060\u2800" * pad_count) + "\u200c"
+    return f"📩\u00a0<b>{html.escape(source_raw)}\u00a0•\u00a0{html.escape(iso_fixed)}\u00a0{flag}{fixed_pad}</b>"
 
 def detect_service_name(raw_source: str, raw_message: str) -> str:
     """
