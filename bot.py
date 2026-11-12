@@ -2860,7 +2860,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
             styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=24)
             compact_sms = "\n".join(ln for ln in styled_sms.splitlines() if ln.strip())
             lines.append("")
-            lines.append(compact_sms)
+            lines.append(f"💬 <b>Full SMS</b>\n{compact_sms}")
         return "\n".join(lines), otp_code, raw_message
 
     if sms_format in ("classic_short", "old_short", "classic"):
@@ -3900,7 +3900,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "<b>📺 Live Preview — Direct Full (Open SMS Card):</b>\n\n"
             f"📩 <b>WhatsApp • DE 🇩🇪</b>{glass_pad}\n\n"
             "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
-            f"{compact_sample}\n\n"
+            f"💬 <b>Full SMS</b>\n{compact_sample}\n\n"
             "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
         )
     else:
