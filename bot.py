@@ -1357,14 +1357,11 @@ def init_db():
 
 def is_message_duplicate(mid: str, item: Optional[Dict[str, Any]] = None) -> bool:
     """
-    Professional 4-layer duplicate and repeat forwarding guard:
+    4-layer duplicate and repeat forwarding guard:
     1. Fast in-memory message ID cache (seen_message_ids)
-    2. Fast in-memory content signatures (seen_content_signatures: phone+OTP & phone+SMS body)
+    2. Fast in-memory burst signature guard (20s window if received_at is present, 28h if absent)
     3. Primary Key check in SQLite DB (id = ?)
-    4. SQLite active content signature check:
-       - (same phone number + same OTP code within active 28h window)
-       - (same phone number + identical SMS body within active 28h window)
-    Guarantees that on bot restarts, workflow handovers, or API repeats, NO duplicate OTP is EVER sent!
+    4. SQLite burst content signature guard (prevents API jitter duplicates without blocking legitimate resends).
     """
     if mid and mid in seen_message_ids:
         return True
@@ -1374,6 +1371,7 @@ def is_message_duplicate(mid: str, item: Optional[Dict[str, Any]] = None) -> boo
     raw_msg = ""
     otp_code = ""
     digits = ""
+    item_ts = 0.0
     if item:
         raw_num = str(item.get("number") or item.get("destinationNumber") or item.get("range_template") or item.get("rangeTemplate") or item.get("dst") or "").strip()
         if raw_num:
@@ -1381,22 +1379,28 @@ def is_message_duplicate(mid: str, item: Optional[Dict[str, Any]] = None) -> boo
             digits = re.sub(r"\D", "", raw_num)
         raw_msg = str(item.get("sms") or item.get("messageBody") or item.get("message") or item.get("text") or item.get("body") or item.get("otp") or "").strip()
         otp_code = extract_otp_code(raw_msg)
+        raw_recv = str(item.get("received_at") or item.get("receivedAt") or item.get("messageTime") or item.get("createdAt") or "").strip()
+        item_ts = parse_message_timestamp(raw_recv)
 
-    # Layer 2: Fast in-memory content signature check
+    # Layer 2: Fast in-memory content signature check (burst guard within 20s if timestamped)
     if digits:
         if otp_code:
             sig_otp = f"otp:{digits}:{otp_code}"
             if sig_otp in seen_content_signatures:
-                if mid:
-                    seen_message_ids.add(mid)
-                return True
+                prev_ts = seen_content_signatures[sig_otp]
+                if item_ts <= 0 or prev_ts <= 0 or abs(item_ts - prev_ts) <= 20.0:
+                    if mid:
+                        seen_message_ids.add(mid)
+                    return True
         if raw_msg:
             clean_b = re.sub(r"\s+", " ", raw_msg).strip()
             sig_body = f"body:{digits}:{clean_b}"
             if sig_body in seen_content_signatures:
-                if mid:
-                    seen_message_ids.add(mid)
-                return True
+                prev_ts = seen_content_signatures[sig_body]
+                if item_ts <= 0 or prev_ts <= 0 or abs(item_ts - prev_ts) <= 20.0:
+                    if mid:
+                        seen_message_ids.add(mid)
+                    return True
 
     num_variants = []
     if raw_num:
@@ -1413,46 +1417,65 @@ def is_message_duplicate(mid: str, item: Optional[Dict[str, Any]] = None) -> boo
     try:
         now_epoch = datetime.now(timezone.utc).timestamp()
         with get_db_connection() as conn:
-            # Check 1: Primary ID match
+            # Check 1: Primary ID match (exact SMS ID / number+timestamp+sender+sms hash)
             if mid:
                 cur = conn.execute("SELECT 1 FROM processed_otps WHERE id = ? LIMIT 1;", (mid,))
                 if cur.fetchone() is not None:
                     seen_message_ids.add(mid)
                     return True
 
-            # Check 2: Phone number variants + OTP code match (active within 28h window)
+            # Check 2 & 3: Burst duplicate guard (only within 20s window if timestamped, or 28h if untimestamped)
             if otp_code and num_variants:
                 placeholders = ",".join(["?"] * len(num_variants))
-                cur = conn.execute(
-                    f"""SELECT 1 FROM processed_otps 
-                       WHERE number IN ({placeholders}) AND otp_code = ? 
-                         AND (expires_at_epoch IS NULL OR expires_at_epoch > ?)
-                       LIMIT 1;""",
-                    (*num_variants, otp_code, now_epoch)
-                )
+                if item_ts > 0:
+                    cur = conn.execute(
+                        f"""SELECT 1 FROM processed_otps 
+                           WHERE number IN ({placeholders}) AND otp_code = ? 
+                             AND received_at_epoch IS NOT NULL
+                             AND ABS(received_at_epoch - ?) <= 20.0
+                           LIMIT 1;""",
+                        (*num_variants, otp_code, item_ts)
+                    )
+                else:
+                    cur = conn.execute(
+                        f"""SELECT 1 FROM processed_otps 
+                           WHERE number IN ({placeholders}) AND otp_code = ? 
+                             AND (expires_at_epoch IS NULL OR expires_at_epoch > ?)
+                           LIMIT 1;""",
+                        (*num_variants, otp_code, now_epoch)
+                    )
                 if cur.fetchone() is not None:
                     if mid:
                         seen_message_ids.add(mid)
                     if digits:
-                        seen_content_signatures[f"otp:{digits}:{otp_code}"] = now_epoch
+                        seen_content_signatures[f"otp:{digits}:{otp_code}"] = item_ts if item_ts > 0 else now_epoch
                     return True
 
-            # Check 3: Phone number variants + identical SMS body match (active within 28h window)
             if raw_msg and num_variants:
                 placeholders = ",".join(["?"] * len(num_variants))
-                cur = conn.execute(
-                    f"""SELECT 1 FROM processed_otps 
-                       WHERE number IN ({placeholders}) AND TRIM(raw_message) = ? 
-                         AND (expires_at_epoch IS NULL OR expires_at_epoch > ?)
-                       LIMIT 1;""",
-                    (*num_variants, raw_msg, now_epoch)
-                )
+                if item_ts > 0:
+                    cur = conn.execute(
+                        f"""SELECT 1 FROM processed_otps 
+                           WHERE number IN ({placeholders}) AND TRIM(raw_message) = ? 
+                             AND received_at_epoch IS NOT NULL
+                             AND ABS(received_at_epoch - ?) <= 20.0
+                           LIMIT 1;""",
+                        (*num_variants, raw_msg, item_ts)
+                    )
+                else:
+                    cur = conn.execute(
+                        f"""SELECT 1 FROM processed_otps 
+                           WHERE number IN ({placeholders}) AND TRIM(raw_message) = ? 
+                             AND (expires_at_epoch IS NULL OR expires_at_epoch > ?)
+                           LIMIT 1;""",
+                        (*num_variants, raw_msg, now_epoch)
+                    )
                 if cur.fetchone() is not None:
                     if mid:
                         seen_message_ids.add(mid)
                     if digits:
                         clean_b = re.sub(r"\s+", " ", raw_msg).strip()
-                        seen_content_signatures[f"body:{digits}:{clean_b}"] = now_epoch
+                        seen_content_signatures[f"body:{digits}:{clean_b}"] = item_ts if item_ts > 0 else now_epoch
                     return True
 
     except Exception as e:
@@ -1898,7 +1921,7 @@ class ThirdwaveClient:
                 pass
             self._client = None
 
-    async def fetch_incoming_messages(self, limit: int = 50) -> List[Dict[str, Any]]:
+    async def fetch_incoming_messages(self, limit: int = 100) -> List[Dict[str, Any]]:
         """
         Fetch most recent incoming messages from Thirdwave API.
         Respects the 30 req/min rate limit and query param api_key authentication.
@@ -1914,7 +1937,7 @@ class ThirdwaveClient:
             return []
 
         endpoint = f"{self.base_url}/api/v1/traffic"
-        safe_limit = min(max(1, limit), 60)
+        safe_limit = min(max(1, limit), 100)
         params = {
             "api_key": self.api_key,
             "limit": safe_limit,
@@ -2352,39 +2375,161 @@ def mask_phone_number(num_str: str) -> str:
     return f"+{digits}"
 
 def extract_otp_code(text: str) -> str:
+    """
+    Extracts numeric, space-separated, hyphenated, prefixed, or alphanumeric verification OTP code
+    across WhatsApp and all other global services (Instagram, Facebook, Google, Telegram, TikTok,
+    Apple, Microsoft, PayPal, Steam, Binance, etc.) in English and international languages.
+    """
     if not text:
         return ""
-    # 1. Google style format: G-123456
-    g_match = re.search(r"\b([Gg]-\d{4,8})\b", text)
-    if g_match:
-        return g_match.group(1).upper()
 
-    # 2. Pattern: "<CODE> is your <service> verification code/otp/login code"
-    pre_match = re.search(r"\b([A-Za-z0-9\-]{3,10})\s+is\s+your\b", text, re.IGNORECASE)
-    if pre_match:
-        cand = pre_match.group(1).strip()
-        if any(c.isdigit() for c in cand):
+    clean_text = re.sub(r"[\u200b-\u200f\u202a-\u202e\ufeff]", "", str(text))
+
+    def _is_duration_after(s: str, end_pos: int) -> bool:
+        tail = s[end_pos:end_pos + 16]
+        return bool(re.match(r"^\s*(?:min(?:ute)?s?|sec(?:ond)?s?|hours?|hrs?|days?|weeks?|months?|years?|%)\b", tail, re.IGNORECASE))
+
+    def _is_date_or_time_or_phone(s: str, start_pos: int, end_pos: int, tok: str) -> bool:
+        before = s[max(0, start_pos - 12):start_pos]
+        after = s[end_pos:end_pos + 6]
+        if before.endswith(":") or after.startswith(":"):
+            return True
+        if before.endswith(("/", "=", "?", "$", "€", "£", "₹")):
+            return True
+        if re.search(r"https?://\S*$", before, re.IGNORECASE):
+            return True
+        if re.search(r"\+\d{0,4}[\s\-]?$", before):
+            return True
+        if re.match(r"^\d{4}$", tok) and (after.startswith("-") or after.startswith("/") or before.endswith("-") or before.endswith("/")):
+            return True
+        if re.match(r"^\d{1,2}[-/]\d{1,2}$", tok):
+            return True
+        if _is_duration_after(s, end_pos):
+            return True
+        return False
+
+    # 1. Explicit service-prefixed codes: G-123456, FB-12345, IG-123456, WA-123456, etc.
+    prefixed_match = re.search(
+        r"(?<![A-Za-z0-9/=\-])([Gg]-\d{4,8}|[A-Z]{1,4}-\d{4,8})\b",
+        clean_text,
+    )
+    if prefixed_match:
+        return prefixed_match.group(1).upper()
+
+    # 2. Pre-keyword patterns: "<CODE> is your ...", "<CODE> es tu ...", "<CODE> est votre ...", etc.
+    pre_phrase = (
+        r"(?:is\s+(?:your|the)|es\s+tu|est\s+(?:votre|le)|é\s+(?:o\s+)?seu|"
+        r"adalah\s+kode|merupakan\s+kode|doğrulama|untuk\s+memverifikasi|"
+        r"to\s+verify|as\s+(?:your|a)|for\s+(?:your|the)\s+(?:\w+\s+){0,2}(?:code|otp|pin|verification|account|login))"
+    )
+    pre_spaced = re.search(
+        rf"(?<![\d\-+])(\d{{2,4}}(?:[ \t]+\d{{2,4}}){{1,2}})\s+{pre_phrase}\b",
+        clean_text,
+        re.IGNORECASE,
+    )
+    if pre_spaced:
+        collapsed = re.sub(r"\s+", "", pre_spaced.group(1))
+        if 4 <= len(collapsed) <= 8:
+            return collapsed
+
+    pre_single = re.search(
+        rf"(?<![A-Za-z0-9/=+])([A-Za-z0-9\-]{{4,10}})\s+{pre_phrase}\b",
+        clean_text,
+        re.IGNORECASE,
+    )
+    if pre_single:
+        cand = pre_single.group(1).strip("-")
+        if any(c.isdigit() for c in cand) and not _is_date_or_time_or_phone(clean_text, pre_single.start(1), pre_single.end(1), cand):
             return cand
 
-    # 3. Keyword followed by code: "code: 123456", "otp is 1234", "pin - 123456"
-    kw_match = re.search(
-        r"(?:code|otp|pin|passcode|secret|verif\w*|kod\w*|codigo|clave|is)[:\s\-]+([A-Za-z0-9\-]{3,10})\b",
-        text, re.IGNORECASE,
+    # 3. Keyword-anchored extraction across ALL keyword occurrences
+    kw_regex = re.compile(
+        r"(?:\b(?:code|otp|pin|passcode|password|secret|token|verif\w*|confirm\w*|security|login|auth\w*|kod\w*|codigo|código|clave|kode|mã|رمز|كود|код|пароль)\b|验证码|校验码|动态码|認証コード|인증번호)",
+        re.IGNORECASE,
     )
-    if kw_match:
-        code = kw_match.group(1).strip()
-        if any(c.isdigit() for c in code):
-            return code
+    code_patterns = [
+        ("spaced", re.compile(r"(?<![\d\-+])(\d{2,4}(?:[ \t]+\d{2,4}){1,2})(?![\d\-])")),
+        ("hyphen", re.compile(r"(?<![\d\-])(\d{3}-\d{3}|\d{3}-\d{4}|\d{4}-\d{4})(?![\d\-])")),
+        ("digits", re.compile(r"(?<![\dA-Za-z\-])(\d{4,8})(?![\dA-Za-z\-])")),
+        ("alnum", re.compile(r"(?<![A-Za-z0-9/=\-])([A-Za-z0-9]{4,9}(?:-[A-Za-z0-9]{2,6})?)(?![A-Za-z0-9])")),
+    ]
 
-    # 4. Hyphenated codes: 123-456, 1234-5678
-    hyphen_match = re.findall(r"\b\d{3}-\d{3}\b|\b\d{3}-\d{4}\b|\b\d{4}-\d{4}\b", text)
+    best_strict = None
+    for kw_m in kw_regex.finditer(clean_text):
+        tail_raw = clean_text[kw_m.end():kw_m.end() + 48]
+        sent_end = re.search(r"[\n]|(?<!\d)\.(?!\d)", tail_raw)
+        window = tail_raw[:sent_end.start()] if sent_end else tail_raw
+        window_offset = kw_m.end()
+
+        for kind, pat in code_patterns:
+            for cm in pat.finditer(window):
+                raw_cand = cm.group(1)
+                prefix_between = window[:cm.start()]
+                abs_start = window_offset + cm.start(1)
+                abs_end = window_offset + cm.end(1)
+
+                if _is_date_or_time_or_phone(clean_text, abs_start, abs_end, raw_cand):
+                    continue
+
+                if kind == "alnum":
+                    if not (any(c.isdigit() for c in raw_cand) and any(c.isalpha() for c in raw_cand)):
+                        continue
+                    if not re.match(r"^(?:\s+(?:is|are|was|es|est|é|adalah|هو))?\s*[:\-\u2013\u2014=#\[\(\*«\"'\s：]*$", prefix_between, re.IGNORECASE):
+                        continue
+                    if re.search(r"\b(?:for|from|on|at|to|in|via|with)\s+$", prefix_between, re.IGNORECASE):
+                        continue
+                    if re.match(r"^(?:\d+[a-z]{1,3}|[0-9]fa)$", raw_cand, re.IGNORECASE):
+                        continue
+                    cand_val = raw_cand
+                    prio = 4
+                elif kind == "spaced":
+                    collapsed = re.sub(r"\s+", "", raw_cand)
+                    if not (4 <= len(collapsed) <= 8):
+                        continue
+                    cand_val = collapsed
+                    prio = 1
+                elif kind == "hyphen":
+                    cand_val = raw_cand
+                    prio = 1
+                else:
+                    cand_val = raw_cand
+                    prio = 2
+                    if re.search(r"\b(?:is|are|was|es|est|é|adalah|هو)\b|[:=\-：]", prefix_between, re.IGNORECASE):
+                        prio = 1
+
+                if re.match(r"^(?:\s+(?:is|are|was|es|est|é|adalah|هو))?\s*[:\-\u2013\u2014=#\[\(\*«\"'\s：]*$", prefix_between, re.IGNORECASE):
+                    prio -= 0.5
+
+                score = (prio, abs_start)
+                if best_strict is None or score < (best_strict[0], best_strict[1]):
+                    best_strict = (prio, abs_start, cand_val)
+
+    if best_strict is not None:
+        return best_strict[2]
+
+    # 4. Standalone fallback (sanitize dates, times, phones, URLs, durations first)
+    sanitized = clean_text
+    sanitized = re.sub(r"https?://\S+", " ", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b", " ", sanitized)
+    sanitized = re.sub(r"\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b", " ", sanitized)
+    sanitized = re.sub(r"\b\d{1,2}:\d{2}(?::\d{2})?\b", " ", sanitized)
+    sanitized = re.sub(r"\+\d[\d\s\-]{5,}", " ", sanitized)
+    sanitized = re.sub(r"\b\d+\s*(?:min(?:ute)?s?|sec(?:ond)?s?|hours?|hrs?|days?|weeks?|months?|years?)\b", " ", sanitized, flags=re.IGNORECASE)
+
+    hyphen_match = re.findall(r"(?<![\d\-])(?:\d{3}-\d{3}|\d{3}-\d{4}|\d{4}-\d{4})(?![\d\-])", sanitized)
     if hyphen_match:
         return hyphen_match[0]
 
-    # 5. Standalone 4-8 digit numbers
-    digits_match = re.findall(r"\b[0-9]{4,8}\b", text)
+    spaced_matches = re.findall(r"(?<![\d\-])(\d{2,4}(?:[ \t]+\d{2,4}){1,2})(?![\d\-])", sanitized)
+    for sm in spaced_matches:
+        collapsed = re.sub(r"\s+", "", sm)
+        if 4 <= len(collapsed) <= 8:
+            return collapsed
+
+    digits_match = re.findall(r"(?<![\dA-Za-z\-])[0-9]{4,8}(?![\dA-Za-z\-])", sanitized)
     if digits_match:
-        return digits_match[0]
+        non_years = [d for d in digits_match if not (len(d) == 4 and 2020 <= int(d) <= 2035)]
+        return non_years[0] if non_years else digits_match[0]
     return ""
 
 def parse_message_timestamp(time_str: str) -> float:
@@ -2491,35 +2636,44 @@ def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 18) -> str:
     """
     Wraps SMS lines cleanly and highlights ONLY the OTP code inside a copyable <code> tag,
     leaving the rest of the SMS as plain text so tapping copies ONLY the OTP code.
-    Handles exact match, hyphenated variations (e.g. 492-810 vs 492810), and spaced variations.
+    Protects spaced/hyphenated OTP codes from breaking across lines and handles exact,
+    hyphenated, spaced, and alphanumeric OTP formats.
     """
     if not msg:
         return ""
+    raw_otp = (otp or "").strip()
+    otp_alnum = re.sub(r'[^A-Za-z0-9]', '', raw_otp)
+    otp_span_pattern = (
+        re.compile(r'(?<![\dA-Za-z])' + r'[-\s]?'.join(re.escape(c) for c in otp_alnum) + r'(?![\dA-Za-z])')
+        if len(otp_alnum) >= 3 else None
+    )
+
     lines = []
     for paragraph in str(msg).splitlines():
         p = paragraph.strip()
         if p:
-            lines.extend(textwrap.wrap(p, width=width, break_long_words=True))
+            if otp_span_pattern:
+                p = otp_span_pattern.sub(lambda m: re.sub(r'[ \t]+', '\u00a0', m.group(0)), p)
+            wrapped_para = textwrap.wrap(p, width=width, break_long_words=True, break_on_hyphens=False)
+            lines.extend(wrapped_para)
         else:
             lines.append("")
     wrapped = "\n".join(lines)
     escaped = html.escape(wrapped, quote=False)
-    if otp:
-        raw_otp = otp.strip()
+    if raw_otp:
         esc_otp = html.escape(raw_otp, quote=False)
         if esc_otp and esc_otp in escaped:
             escaped = escaped.replace(esc_otp, f"<code>{esc_otp}</code>", 1)
-        else:
-            digits = re.sub(r'\D', '', raw_otp)
-            if digits and len(digits) >= 3:
-                pattern = re.compile(r'\b' + r'[-\s]?'.join(re.escape(d) for d in digits) + r'\b')
-                m = pattern.search(escaped)
-                if m:
-                    matched_str = m.group(0)
-                    escaped = escaped[:m.start()] + f"<code>{matched_str}</code>" + escaped[m.end():]
-                elif esc_otp.replace("-", "") in escaped:
-                    raw_c = esc_otp.replace("-", "")
-                    escaped = escaped.replace(raw_c, f"<code>{raw_c}</code>", 1)
+        elif otp_span_pattern:
+            flex_pat = re.compile(r'(?<![\dA-Za-z])' + r'[-\s\u00a0]?'.join(re.escape(c) for c in otp_alnum) + r'(?![\dA-Za-z])')
+            m = flex_pat.search(escaped)
+            if m:
+                matched_str = m.group(0).replace('\u00a0', ' ')
+                escaped = escaped[:m.start()] + f"<code>{matched_str}</code>" + escaped[m.end():]
+            elif esc_otp.replace("-", "") in escaped:
+                raw_c = esc_otp.replace("-", "")
+                escaped = escaped.replace(raw_c, f"<code>{raw_c}</code>", 1)
+    escaped = escaped.replace('\u00a0', ' ')
     return escaped
 
 def wrap_sms_for_card(text: str, width: int = 22) -> str:
@@ -2530,10 +2684,95 @@ def wrap_sms_for_card(text: str, width: int = 22) -> str:
     for paragraph in str(text).splitlines():
         p = paragraph.strip()
         if p:
-            lines.extend(textwrap.wrap(p, width=width, break_long_words=True))
+            lines.extend(textwrap.wrap(p, width=width, break_long_words=True, break_on_hyphens=False))
         else:
             lines.append("")
     return "\n".join(lines)
+
+def detect_service_name(raw_source: str, raw_message: str) -> str:
+    """
+    Identifies originating service accurately across 40+ services.
+    Checks the SMS body BEFORE sender_id so shared aggregator sender IDs
+    (e.g. 'Facebook' sending Instagram OTPs) are labeled with the true service.
+    """
+    low_src = (raw_source or "").lower()
+    low_msg = (raw_message or "").lower()
+
+    service_rules = [
+        ("WhatsApp", ["whatsapp", "‏واتساب‏", "واتساب", "ватсап", "wa code", "wa.me"], ["whatsapp", "wa.me"]),
+        ("Instagram", ["instagram", "ig code"], ["instagram"]),
+        ("Telegram", ["telegram", "telegram code", "t.me"], ["telegram", "t.me"]),
+        ("Facebook", ["facebook", "fb-", "fb code", "fb.me"], ["facebook"]),
+        ("Google", ["google", "g-"], ["google"]),
+        ("TikTok", ["tiktok", "bytedance"], ["tiktok"]),
+        ("Microsoft", ["microsoft", "live.com", "outlook", "msft"], ["microsoft"]),
+        ("Apple", ["apple id", "apple account", "icloud", "apple"], ["apple"]),
+        ("Discord", ["discord"], ["discord"]),
+        ("PayPal", ["paypal"], ["paypal"]),
+        ("Binance", ["binance"], ["binance"]),
+        ("Coinbase", ["coinbase"], ["coinbase"]),
+        ("Bybit", ["bybit"], ["bybit"]),
+        ("OKX", ["okx"], ["okx"]),
+        ("OpenAI", ["openai", "chatgpt"], ["openai"]),
+        ("Amazon", ["amazon", "aws"], ["amazon"]),
+        ("Snapchat", ["snapchat", "snap code"], ["snapchat"]),
+        ("Twitter (X)", ["twitter", "x.com"], ["twitter"]),
+        ("Steam", ["steam", "steam guard"], ["steam"]),
+        ("Uber", ["uber"], ["uber"]),
+        ("Bolt", ["bolt"], ["bolt"]),
+        ("Grab", ["grab"], ["grab"]),
+        ("Netflix", ["netflix"], ["netflix"]),
+        ("Spotify", ["spotify"], ["spotify"]),
+        ("IMO", ["imo"], ["imo"]),
+        ("Viber", ["viber"], ["viber"]),
+        ("Signal", ["signal"], ["signal"]),
+        ("LINE", ["line"], ["line"]),
+        ("WeChat", ["wechat", "weixin"], ["wechat"]),
+        ("Zalo", ["zalo"], ["zalo"]),
+        ("Tinder", ["tinder"], ["tinder"]),
+        ("Bumble", ["bumble"], ["bumble"]),
+        ("LinkedIn", ["linkedin"], ["linkedin"]),
+        ("Reddit", ["reddit"], ["reddit"]),
+        ("VK", ["vkontakte", "vk.com", "vk id"], ["vk"]),
+        ("eBay", ["ebay"], ["ebay"]),
+        ("Yahoo", ["yahoo"], ["yahoo"]),
+        ("Twitch", ["twitch"], ["twitch"]),
+        ("Roblox", ["roblox"], ["roblox"]),
+        ("Shopee", ["shopee"], ["shopee"]),
+        ("Lazada", ["lazada"], ["lazada"]),
+        ("Temu", ["temu"], ["temu"]),
+        ("AliExpress", ["aliexpress"], ["aliexpress"]),
+        ("Revolut", ["revolut"], ["revolut"]),
+        ("Wise", ["wise"], ["wise"]),
+        ("1xBet", ["1xbet"], ["1xbet"]),
+    ]
+
+    # Pass 1: Match explicit service keyword in SMS content first
+    for label, msg_keys, _ in service_rules:
+        if label == "Google" and (raw_message or "").strip().upper().startswith("G-"):
+            return "Google"
+        for k in msg_keys:
+            if k == "g-":
+                continue
+            if len(k) <= 4 and k.isalpha():
+                if re.search(rf"\b{re.escape(k)}\b", low_msg):
+                    return label
+            elif k in low_msg:
+                return label
+
+    # Pass 2: Match sender_id
+    for label, _, src_keys in service_rules:
+        for k in src_keys:
+            if len(k) <= 3 and k.isalpha():
+                if low_src == k or re.search(rf"\b{re.escape(k)}\b", low_src):
+                    return label
+            elif k in low_src:
+                return label
+
+    clean_src = re.sub(r"\s+", " ", raw_source or "").strip()
+    if len(clean_src) > 15:
+        clean_src = clean_src[:14].rstrip() + "."
+    return clean_src or "SMS Service"
 
 def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = None) -> tuple:
     """
@@ -2571,34 +2810,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     iso_fixed = iso if (iso and iso != "XX" and len(iso) == 2) else "GL"
     country_part = f"({html.escape(iso_fixed)} {flag})"
 
-    # Smart service detection + strict length cap so the service row stays compact
-    low_source = raw_source.lower()
-    low_msg    = raw_message.lower()
-    wa_keywords = ["whatsapp", "‏واتساب‏", "واتساب", "ватсап", "wa code", "wa.me"]
-    tg_keywords = ["telegram", "telegram code", "t.me"]
-    if "whatsapp" in low_source or any(k in low_msg for k in wa_keywords):
-        source_raw = "WhatsApp"
-    elif "telegram" in low_source or any(k in low_msg for k in tg_keywords):
-        source_raw = "Telegram"
-    elif "google" in low_source or "google" in low_msg or raw_message.startswith("G-"):
-        source_raw = "Google"
-    elif "facebook" in low_source or "facebook" in low_msg or "fb-" in low_msg:
-        source_raw = "Facebook"
-    elif "instagram" in low_source or "instagram" in low_msg:
-        source_raw = "Instagram"
-    elif "tiktok" in low_source or "tiktok" in low_msg:
-        source_raw = "TikTok"
-    elif "microsoft" in low_source or "microsoft" in low_msg:
-        source_raw = "Microsoft"
-    elif "apple" in low_source or "apple id" in low_msg:
-        source_raw = "Apple"
-    elif "discord" in low_source or "discord" in low_msg:
-        source_raw = "Discord"
-    else:
-        clean_src = re.sub(r"\s+", " ", raw_source).strip()
-        if len(clean_src) > 15:
-            clean_src = clean_src[:14].rstrip() + "."
-        source_raw = clean_src or "SMS Service"
+    source_raw = detect_service_name(raw_source, raw_message)
 
     source_escaped = html.escape(source_raw)
     num_plain      = html.escape(masked_raw if masked_raw else country_name)
@@ -2906,8 +3118,8 @@ async def run_startup_reconciliation(
     logger.info("=" * 70)
 
     # ── STEP 1: Query recent traffic feed from Thirdwave API ───────────────────
-    logger.info("📡 [API Scan] Fetching recent traffic ledger from Thirdwave API (limit=60)...")
-    all_api_messages = await client.fetch_incoming_messages(limit=60)
+    logger.info("📡 [API Scan] Fetching recent traffic ledger from Thirdwave API (limit=100)...")
+    all_api_messages = await client.fetch_incoming_messages(limit=100)
     logger.info(f"📥 [API Scan] Retrieved {len(all_api_messages)} recent messages from Thirdwave API.")
 
     # ── STEP 2: Cross-reference with database & sort chronologically ───────────
