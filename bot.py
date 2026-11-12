@@ -2408,22 +2408,26 @@ def extract_otp_code(text: str) -> str:
             return True
         return False
 
-    # 1. Explicit service-prefixed codes: G-123456, FB-12345, IG-123456, WA-123456, etc.
+    # 1. Explicit service-prefixed codes (G-123456, FB-12345, IG-123456, WA-123456, VK-123456, etc.)
+    # Restrict global pre-keyword matching to known OTP prefixes so "Ref ID-10293" or "SMS-2026" won't hijack.
     prefixed_match = re.search(
-        r"(?<![A-Za-z0-9/=\-])([Gg]-\d{4,8}|[A-Z]{1,4}-\d{4,8})\b",
+        r"(?<![A-Za-z0-9/=\-])((?:G|FB|IG|WA|VK|TG|TK|MS|GOOG|OTP|PIN|AUTH)-\d{4,8})\b",
         clean_text,
+        re.IGNORECASE,
     )
     if prefixed_match:
         return prefixed_match.group(1).upper()
 
-    # 2. Pre-keyword patterns: "<CODE> is your ...", "<CODE> es tu ...", "<CODE> est votre ...", etc.
+    # 2. Pre-keyword patterns across global languages: "<CODE> is your ...", "<CODE> ist Ihr ...", etc.
     pre_phrase = (
-        r"(?:is\s+(?:your|the)|es\s+tu|est\s+(?:votre|le)|é\s+(?:o\s+)?seu|"
-        r"adalah\s+kode|merupakan\s+kode|doğrulama|untuk\s+memverifikasi|"
+        r"(?:is\s+(?:your|the|one-time|je|uw)|ist\s+(?:dein|ihr)|è\s+(?:il\s+)?tuo|"
+        r"es\s+(?:tu|su)|est\s+(?:votre|le)|é\s+(?:o\s+)?seu|"
+        r"adalah\s+kode|merupakan\s+kode|doğrulama|onay|kodunuz|"
+        r"untuk\s+memverifikasi|là\s+mã|هو\s+رمز|(?:—|-)?\s*(?:это\s+)?ваш\s+код|"
         r"to\s+verify|as\s+(?:your|a)|for\s+(?:your|the)\s+(?:\w+\s+){0,2}(?:code|otp|pin|verification|account|login))"
     )
     pre_spaced = re.search(
-        rf"(?<![\d\-+])(\d{{2,4}}(?:[ \t]+\d{{2,4}}){{1,2}})\s+{pre_phrase}\b",
+        rf"(?<![\d\-+])(\d{{2,4}}(?:[ \t]+\d{{2,4}}){{1,3}}|\d(?:[ \t]+\d){{3,7}})\s+{pre_phrase}\b",
         clean_text,
         re.IGNORECASE,
     )
@@ -2433,7 +2437,7 @@ def extract_otp_code(text: str) -> str:
             return collapsed
 
     pre_single = re.search(
-        rf"(?<![A-Za-z0-9/=+])([A-Za-z0-9\-]{{4,10}})\s+{pre_phrase}\b",
+        rf"(?<![A-Za-z0-9/=+])([A-Za-z0-9\-]{{4,12}})\s+{pre_phrase}\b",
         clean_text,
         re.IGNORECASE,
     )
@@ -2448,7 +2452,8 @@ def extract_otp_code(text: str) -> str:
         re.IGNORECASE,
     )
     code_patterns = [
-        ("spaced", re.compile(r"(?<![\d\-+])(\d{2,4}(?:[ \t]+\d{2,4}){1,2})(?![\d\-])")),
+        ("prefixed", re.compile(r"(?<![A-Za-z0-9/=\-])([A-Za-z]{1,4}-\d{4,8})(?![\d\-])")),
+        ("spaced", re.compile(r"(?<![\d\-+])(\d{2,4}(?:[ \t]+\d{2,4}){1,3}|\d(?:[ \t]+\d){3,7})(?![\d\-])")),
         ("hyphen", re.compile(r"(?<![\d\-])(\d{3}-\d{3}|\d{3}-\d{4}|\d{4}-\d{4})(?![\d\-])")),
         ("digits", re.compile(r"(?<![\dA-Za-z\-])(\d{4,8})(?![\dA-Za-z\-])")),
         ("alnum", re.compile(r"(?<![A-Za-z0-9/=\-])([A-Za-z0-9]{4,9}(?:-[A-Za-z0-9]{2,6})?)(?![A-Za-z0-9])")),
@@ -2456,9 +2461,16 @@ def extract_otp_code(text: str) -> str:
 
     best_strict = None
     for kw_m in kw_regex.finditer(clean_text):
-        tail_raw = clean_text[kw_m.end():kw_m.end() + 48]
-        sent_end = re.search(r"[\n]|(?<!\d)\.(?!\d)", tail_raw)
-        window = tail_raw[:sent_end.start()] if sent_end else tail_raw
+        tail_raw = clean_text[kw_m.end():kw_m.end() + 72]
+        # Advance past immediate connectors & a single newline (e.g. "Verification code:\n114 648")
+        lead_m = re.match(
+            r"^(?:\s+(?:is|are|was|es|est|é|ist|è|là|هو|adalah))?\s*[:.\-\u2013\u2014=#\[\(\*«\"'\s：]*(?:\r?\n\s*)?",
+            tail_raw,
+            re.IGNORECASE,
+        )
+        scan_start = lead_m.end() if lead_m else 0
+        sent_end = re.search(r"[\n]|(?<!\d)\.(?!\d)", tail_raw[scan_start:])
+        window = tail_raw[:scan_start + sent_end.start()] if sent_end else tail_raw
         window_offset = kw_m.end()
 
         for kind, pat in code_patterns:
@@ -2471,14 +2483,23 @@ def extract_otp_code(text: str) -> str:
                 if _is_date_or_time_or_phone(clean_text, abs_start, abs_end, raw_cand):
                     continue
 
-                if kind == "alnum":
+                if kind == "prefixed":
+                    cand_val = raw_cand.upper()
+                    prio = 1
+                elif kind == "alnum":
                     if not (any(c.isdigit() for c in raw_cand) and any(c.isalpha() for c in raw_cand)):
                         continue
-                    if not re.match(r"^(?:\s+(?:is|are|was|es|est|é|adalah|هو))?\s*[:\-\u2013\u2014=#\[\(\*«\"'\s：]*$", prefix_between, re.IGNORECASE):
+                    if not re.match(
+                        r"^(?:\s+(?:for|of|from|to)\s+(?:[A-Za-z0-9_.\-]+\s+){1,3})?"
+                        r"(?:\s*(?:is|are|was|es|est|é|ist|è|adalah|là|هو))?"
+                        r"\s*[:.\-\u2013\u2014=#\[\(\*«\"'\s：]*$",
+                        prefix_between,
+                        re.IGNORECASE,
+                    ):
                         continue
                     if re.search(r"\b(?:for|from|on|at|to|in|via|with)\s+$", prefix_between, re.IGNORECASE):
                         continue
-                    if re.match(r"^(?:\d+[a-z]{1,3}|[0-9]fa)$", raw_cand, re.IGNORECASE):
+                    if re.match(r"^(?:\d+[a-z]{1,3}|[a-z]{1,3}\d{1,2}|[0-9]fa|ios\d+|v\d.*)$", raw_cand, re.IGNORECASE):
                         continue
                     cand_val = raw_cand
                     prio = 4
@@ -2494,10 +2515,10 @@ def extract_otp_code(text: str) -> str:
                 else:
                     cand_val = raw_cand
                     prio = 2
-                    if re.search(r"\b(?:is|are|was|es|est|é|adalah|هو)\b|[:=\-：]", prefix_between, re.IGNORECASE):
+                    if re.search(r"\b(?:is|are|was|es|est|é|ist|è|adalah|là|هو)\b|[:=\-：]", prefix_between, re.IGNORECASE):
                         prio = 1
 
-                if re.match(r"^(?:\s+(?:is|are|was|es|est|é|adalah|هو))?\s*[:\-\u2013\u2014=#\[\(\*«\"'\s：]*$", prefix_between, re.IGNORECASE):
+                if re.match(r"^(?:\s+(?:is|are|was|es|est|é|ist|è|adalah|là|هو))?\s*[:.\-\u2013\u2014=#\[\(\*«\"'\s：]*$", prefix_between, re.IGNORECASE):
                     prio -= 0.5
 
                 score = (prio, abs_start)
@@ -2520,7 +2541,7 @@ def extract_otp_code(text: str) -> str:
     if hyphen_match:
         return hyphen_match[0]
 
-    spaced_matches = re.findall(r"(?<![\d\-])(\d{2,4}(?:[ \t]+\d{2,4}){1,2})(?![\d\-])", sanitized)
+    spaced_matches = re.findall(r"(?<![\d\-])(\d{2,4}(?:[ \t]+\d{2,4}){1,3}|\d(?:[ \t]+\d){3,7})(?![\d\-])", sanitized)
     for sm in spaced_matches:
         collapsed = re.sub(r"\s+", "", sm)
         if 4 <= len(collapsed) <= 8:
@@ -2530,6 +2551,11 @@ def extract_otp_code(text: str) -> str:
     if digits_match:
         non_years = [d for d in digits_match if not (len(d) == 4 and 2020 <= int(d) <= 2035)]
         return non_years[0] if non_years else digits_match[0]
+    alnum_fallback = re.findall(r"(?<![A-Za-z0-9/=\-])([A-Z0-9]{5,8})(?![A-Za-z0-9])", sanitized)
+    for af in alnum_fallback:
+        if any(c.isdigit() for c in af) and any(c.isalpha() for c in af):
+            if not re.match(r"^(?:\d+[A-Z]{1,3}|[A-Z]{1,3}\d{1,2}|[0-9]FA)$", af):
+                return af
     return ""
 
 def parse_message_timestamp(time_str: str) -> float:
@@ -2662,14 +2688,17 @@ def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 18) -> str:
     escaped = html.escape(wrapped, quote=False)
     if raw_otp:
         esc_otp = html.escape(raw_otp, quote=False)
-        if esc_otp and esc_otp in escaped:
-            escaped = escaped.replace(esc_otp, f"<code>{esc_otp}</code>", 1)
+        exact_pat = re.compile(rf'(?<![\dA-Za-z]){re.escape(esc_otp)}(?![\dA-Za-z])') if esc_otp else None
+        if exact_pat and exact_pat.search(escaped):
+            escaped = exact_pat.sub(lambda _: f"<code>{esc_otp}</code>", escaped, count=1)
         elif otp_span_pattern:
             flex_pat = re.compile(r'(?<![\dA-Za-z])' + r'[-\s\u00a0]?'.join(re.escape(c) for c in otp_alnum) + r'(?![\dA-Za-z])')
             m = flex_pat.search(escaped)
             if m:
                 matched_str = m.group(0).replace('\u00a0', ' ')
                 escaped = escaped[:m.start()] + f"<code>{matched_str}</code>" + escaped[m.end():]
+            elif esc_otp and esc_otp in escaped:
+                escaped = escaped.replace(esc_otp, f"<code>{esc_otp}</code>", 1)
             elif esc_otp.replace("-", "") in escaped:
                 raw_c = esc_otp.replace("-", "")
                 escaped = escaped.replace(raw_c, f"<code>{raw_c}</code>", 1)
