@@ -2641,9 +2641,10 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
     return "Global"
 
 # ==========================================
-# 10. Clean OTP Notification Formatter (Minimalist Glass Ticket)
+# 10. Clean OTP Notification Formatter (Minimalist Floating Ticket + Minimalist Glass)
 EXPANDABLE_SMS_LABEL = "📩 <b>View Full SMS:</b>"
-COLLAPSED_SMS_HINT = "<b>▾\u00a0\u00a0SMS Content</b>"
+COLLAPSED_SMS_HINT = "<b>✦\u00a0\u00a0TAP TO READ SMS..</b>"
+GLASS_SMS_HINT = "<b>▾\u00a0\u00a0SMS Content</b>"
 CARD_DIVIDER = "━" * 20
 QUOTE_DIVIDER = "━" * 14
 CARD_WIDTH_PAD = "\u2800" * 7
@@ -2845,35 +2846,59 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     num_plain      = html.escape(masked_raw if masked_raw else country_name)
     clean_msg      = raw_message.strip()
 
-    header_line = f"📩 <b>{source_escaped}\u00a0\u00a0•\u00a0\u00a0{html.escape(iso_fixed)} {flag}{CARD_WIDTH_PAD}</b>"
+    if sms_format in ("glass_short", "glass_long"):
+        header_line = f"📩 <b>{source_escaped}\u00a0\u00a0•\u00a0\u00a0{html.escape(iso_fixed)} {flag}{CARD_WIDTH_PAD}</b>"
+        lines = [
+            header_line,
+            "",
+            f"<b>{num_plain}</b>",
+        ]
+        if sms_format == "glass_long" and clean_msg:
+            display_sms = clean_msg if len(clean_msg) <= 3000 else (clean_msg[:3000] + "... [truncated]")
+            styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=18)
+            lines.append("")
+            lines.append(
+                f"<blockquote expandable>{GLASS_SMS_HINT}\n"
+                f"{styled_sms}</blockquote>"
+            )
+        else:
+            lines.append("⠀")
+        return "\n".join(lines), otp_code, raw_message
 
     if sms_format in ("classic_short", "old_short", "classic"):
         lines = [
-            header_line,
-            f"<b>{num_plain}</b>",
+            f"📩 <b>NEW SMS • {country_part}{CARD_WIDTH_PAD}</b>",
+            f"<b>✦\u00a0\u00a0{source_escaped}</b>",
+            f"<b>✦\u00a0\u00a0{num_plain}</b>",
         ]
         full_text = "\n".join(lines)
         return full_text, otp_code, raw_message
 
     if sms_format in ("classic_long", "old_long"):
         lines = [
-            header_line,
-            f"<b>{num_plain}</b>",
+            f"📩 <b>NEW SMS • {country_part}{CARD_WIDTH_PAD}</b>",
+            f"<b>✦\u00a0\u00a0{source_escaped}</b>",
+            f"<b>✦\u00a0\u00a0{num_plain}</b>",
         ]
         if clean_msg:
             display_sms = clean_msg if len(clean_msg) <= 3000 else (clean_msg[:3000] + "... [truncated]")
             styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=18)
             lines.append(
-                f"<blockquote expandable>{COLLAPSED_SMS_HINT}\n"
+                f"<blockquote expandable>⠀\n"
+                f"{COLLAPSED_SMS_HINT}\n"
+                f"⠀\n"
+                f"{QUOTE_DIVIDER}\n"
+                f"💬 <b>FULL SMS</b>\n"
                 f"{styled_sms}</blockquote>"
             )
         full_text = "\n".join(lines)
         return full_text, otp_code, raw_message
 
     lines = [
-        header_line,
+        f"📩 <b>NEW SMS • {country_part}{CARD_WIDTH_PAD}</b>",
         "",
-        f"<b>{num_plain}</b>",
+        f"<b>✦\u00a0\u00a0{source_escaped}</b>",
+        f"<b>✦\u00a0\u00a0{num_plain}</b>",
     ]
 
     if sms_format != "short" and clean_msg:
@@ -2882,7 +2907,11 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=18)
         lines.append("")
         lines.append(
-            f"<blockquote expandable>{COLLAPSED_SMS_HINT}\n"
+            f"<blockquote expandable>⠀\n"
+            f"{COLLAPSED_SMS_HINT}\n"
+            f"⠀\n"
+            f"{QUOTE_DIVIDER}\n"
+            f"💬 <b>FULL SMS</b>\n"
             f"{styled_sms}</blockquote>"
         )
     else:
@@ -3457,7 +3486,11 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     data = load_stored_data()
     active_bot_name = get_bot_name()
     active_format = data.get("sms_format", "long")
-    if active_format == "classic_long":
+    if active_format == "glass_long":
+        fmt_label = "Glass Long (Minimalist + SMS 🪞)"
+    elif active_format == "glass_short":
+        fmt_label = "Glass Short (Minimalist 🪞)"
+    elif active_format == "classic_long":
         fmt_label = "Classic Long (Compact + Full SMS ⏳)"
     elif active_format == "classic_short":
         fmt_label = "Classic Short (Compact ⏳)"
@@ -3762,6 +3795,8 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
     long_active  = "✅ (Active)" if curr_fmt == "long" else "⚪"
     classic_active = "✅ (Active)" if curr_fmt == "classic_short" else "⚪"
     classic_long_active = "✅ (Active)" if curr_fmt == "classic_long" else "⚪"
+    glass_short_active = "✅ (Active)" if curr_fmt == "glass_short" else "⚪"
+    glass_long_active = "✅ (Active)" if curr_fmt == "glass_long" else "⚪"
 
     if curr_fmt == "short":
         active_label = "Short ⚡ (Header Country)"
@@ -3769,64 +3804,105 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         active_label = "Classic Short ⏳ (Compact, No Extra Space)"
     elif curr_fmt == "classic_long":
         active_label = "Classic Long ⏳ (Compact + Full SMS)"
+    elif curr_fmt == "glass_short":
+        active_label = "Glass Short 🪞 (Minimalist Glass)"
+    elif curr_fmt == "glass_long":
+        active_label = "Glass Long 🪞 (Minimalist Glass + SMS)"
     else:
         active_label = "Long 📜 (With View Full SMS)"
 
     msg = (
-        "📋 <b>SMS Format Configuration (Minimalist Glass)</b>\n"
+        "📋 <b>SMS Format Configuration</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"🟢 <b>Active Mode:</b>   {active_label}\n\n"
         "<b>Available Modes:</b>\n"
-        f"• <b>Short (Minimalist Glass)</b> {short_active}\n"
-        "  Service & Country on top (📩 WhatsApp • DE 🇩🇪), number below, airy spacing.\n\n"
-        f"• <b>Long (Minimalist Glass + SMS)</b> {long_active}\n"
-        "  Airy Minimalist Glass card with expandable '▾ SMS Content' blockquote.\n\n"
-        f"• <b>Classic Short (Compact Glass)</b> {classic_active}\n"
-        "  Tight layout without extra blank spacing.\n\n"
-        f"• <b>Classic Long (Compact + SMS)</b> {classic_long_active}\n"
-        "  Tight Minimalist Glass layout with expandable '▾ SMS Content' blockquote.\n"
+        f"• <b>Short (Header Country)</b> {short_active}\n"
+        "  Country in header (NEW SMS • DE 🇩🇪), Service & Number with ✦, clean spacing.\n\n"
+        f"• <b>Long (With Full SMS)</b> {long_active}\n"
+        "  Full card with expandable '💬 FULL SMS' blockquote.\n\n"
+        f"• <b>Classic Short (Compact)</b> {classic_active}\n"
+        "  Country in header (NEW SMS • DE 🇩🇪), Service & Number with ✦, without extra spacing.\n\n"
+        f"• <b>Classic Long (Compact + Full SMS)</b> {classic_long_active}\n"
+        "  Compact layout with ✦ marks and expandable '💬 FULL SMS' blockquote.\n\n"
+        f"• <b>Glass Short (Minimalist Glass)</b> {glass_short_active}\n"
+        "  Service & Country on top (📩 WhatsApp • DE 🇩🇪), number below, ultra-clean.\n\n"
+        f"• <b>Glass Long (Minimalist Glass + SMS)</b> {glass_long_active}\n"
+        "  Minimalist Glass layout with expandable '▾ SMS Content' blockquote.\n"
     )
 
     if preview_mode == "short":
         msg += (
             f"\n{CARD_DIVIDER}\n"
-            "<b>📺 Live Preview — Short (Minimalist Glass):</b>\n\n"
-            f"📩 <b>WhatsApp\u00a0\u00a0•\u00a0\u00a0DE 🇩🇪{CARD_WIDTH_PAD}</b>\n\n"
-            "<b>+49178****151</b>\n"
+            "<b>📺 Live Preview — Short (Header Country):</b>\n\n"
+            f"📩 <b>NEW SMS • (DE 🇩🇪){CARD_WIDTH_PAD}</b>\n\n"
+            "<b>✦\u00a0\u00a0WhatsApp</b>\n"
+            "<b>✦\u00a0\u00a0+49178****151</b>\n"
             "⠀\n\n"
-            "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
+            "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "classic_short":
         msg += (
             f"\n{CARD_DIVIDER}\n"
-            "<b>📺 Live Preview — Classic Short (Compact Glass):</b>\n\n"
-            f"📩 <b>WhatsApp\u00a0\u00a0•\u00a0\u00a0DE 🇩🇪{CARD_WIDTH_PAD}</b>\n"
-            "<b>+49178****151</b>\n\n"
-            "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
+            "<b>📺 Live Preview — Classic Short (Compact, No Extra Space):</b>\n\n"
+            f"📩 <b>NEW SMS • (DE 🇩🇪){CARD_WIDTH_PAD}</b>\n"
+            "<b>✦\u00a0\u00a0WhatsApp</b>\n"
+            "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
+            "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "classic_long":
         sample_sms = "Your WhatsApp verification code is 492-810. Do not share this code with anyone."
         styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=18)
         msg += (
             f"\n{CARD_DIVIDER}\n"
-            "<b>📺 Live Preview — Classic Long (Compact + SMS):</b>\n\n"
-            f"📩 <b>WhatsApp\u00a0\u00a0•\u00a0\u00a0DE 🇩🇪{CARD_WIDTH_PAD}</b>\n"
-            "<b>+49178****151</b>\n"
-            f"<blockquote expandable>{COLLAPSED_SMS_HINT}\n"
+            "<b>📺 Live Preview — Classic Long (Compact + Full SMS):</b>\n\n"
+            f"📩 <b>NEW SMS • (DE 🇩🇪){CARD_WIDTH_PAD}</b>\n"
+            "<b>✦\u00a0\u00a0WhatsApp</b>\n"
+            "<b>✦\u00a0\u00a0+49178****151</b>\n"
+            f"<blockquote expandable>⠀\n"
+            f"{COLLAPSED_SMS_HINT}\n"
+            f"⠀\n"
+            f"{QUOTE_DIVIDER}\n"
+            f"💬 <b>FULL SMS</b>\n"
             f"{styled_sample}</blockquote>\n\n"
-            "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
+            "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "long":
         sample_sms = "Your WhatsApp verification code is 492-810. Do not share this code with anyone."
         styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=18)
         msg += (
             f"\n{CARD_DIVIDER}\n"
-            "<b>📺 Live Preview — Long (Minimalist Glass + SMS):</b>\n\n"
+            "<b>📺 Live Preview — Long (With View Full SMS):</b>\n\n"
+            f"📩 <b>NEW SMS • (DE 🇩🇪){CARD_WIDTH_PAD}</b>\n\n"
+            "<b>✦\u00a0\u00a0WhatsApp</b>\n"
+            "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
+            f"<blockquote expandable>⠀\n"
+            f"{COLLAPSED_SMS_HINT}\n"
+            f"⠀\n"
+            f"{QUOTE_DIVIDER}\n"
+            f"💬 <b>FULL SMS</b>\n"
+            f"{styled_sample}</blockquote>\n\n"
+            "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
+        )
+    elif preview_mode == "glass_short":
+        msg += (
+            f"\n{CARD_DIVIDER}\n"
+            "<b>📺 Live Preview — Glass Short (Minimalist Glass):</b>\n\n"
+            f"📩 <b>WhatsApp\u00a0\u00a0•\u00a0\u00a0DE 🇩🇪{CARD_WIDTH_PAD}</b>\n\n"
+            "<b>+49178****151</b>\n"
+            "⠀\n\n"
+            "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
+        )
+    elif preview_mode == "glass_long":
+        sample_sms = "Your WhatsApp verification code is 492-810. Do not share this code with anyone."
+        styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=18)
+        msg += (
+            f"\n{CARD_DIVIDER}\n"
+            "<b>📺 Live Preview — Glass Long (Minimalist Glass + SMS):</b>\n\n"
             f"📩 <b>WhatsApp\u00a0\u00a0•\u00a0\u00a0DE 🇩🇪{CARD_WIDTH_PAD}</b>\n\n"
             "<b>+49178****151</b>\n\n"
-            f"<blockquote expandable>{COLLAPSED_SMS_HINT}\n"
+            f"<blockquote expandable>{GLASS_SMS_HINT}\n"
             f"{styled_sample}</blockquote>\n\n"
-            "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
+            "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
         )
     else:
         msg += "\n<i>Choose an option below to set the format or preview it live:</i>"
@@ -3841,12 +3917,20 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'classic_long' else ''}⏳ Classic Long", callback_data="fmt_set_classic_long"),
         ],
         [
+            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'glass_short' else ''}🪞 Glass Short", callback_data="fmt_set_glass_short"),
+            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'glass_long' else ''}🪞 Glass Long", callback_data="fmt_set_glass_long"),
+        ],
+        [
             InlineKeyboardButton("📺 Preview Short", callback_data="fmt_preview_short"),
             InlineKeyboardButton("📺 Preview Long", callback_data="fmt_preview_long"),
         ],
         [
             InlineKeyboardButton("📺 Classic Short", callback_data="fmt_preview_classic_short"),
             InlineKeyboardButton("📺 Classic Long", callback_data="fmt_preview_classic_long"),
+        ],
+        [
+            InlineKeyboardButton("📺 Glass Short", callback_data="fmt_preview_glass_short"),
+            InlineKeyboardButton("📺 Glass Long", callback_data="fmt_preview_glass_long"),
         ],
         [
             InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")
@@ -3935,11 +4019,15 @@ async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYP
     # If called with an argument e.g. /format short or /format long:
     if context and context.args:
         arg = context.args[0].strip().lower()
-        if arg in ("short", "long", "classic_short", "classic", "old", "old_short", "classic_long", "old_long"):
+        if arg in ("short", "long", "classic_short", "classic", "old", "old_short", "classic_long", "old_long", "glass_short", "glass_long", "glass"):
             if arg in ("classic_long", "old_long"):
                 target_fmt = "classic_long"
             elif arg in ("classic_short", "classic", "old", "old_short"):
                 target_fmt = "classic_short"
+            elif arg in ("glass_long", "glass"):
+                target_fmt = "glass_long"
+            elif arg == "glass_short":
+                target_fmt = "glass_short"
             else:
                 target_fmt = arg
             data = load_stored_data()
@@ -3952,6 +4040,10 @@ async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYP
                 mode_label = "Classic Long (Compact + Full SMS ⏳)"
             elif target_fmt == "classic_short":
                 mode_label = "Classic Short (Compact, No Extra Space ⏳)"
+            elif target_fmt == "glass_long":
+                mode_label = "Glass Long (Minimalist Glass + SMS 🪞)"
+            elif target_fmt == "glass_short":
+                mode_label = "Glass Short (Minimalist Glass 🪞)"
             else:
                 mode_label = "Short (Header Country ⚡)"
             await msg_obj.reply_text(
@@ -4549,6 +4641,12 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         elif curr == "classic_short":
             new_fmt = "classic_long"
             mode_label = "Classic Long (Compact + Full SMS ⏳)"
+        elif curr == "classic_long":
+            new_fmt = "glass_short"
+            mode_label = "Glass Short (Minimalist Glass 🪞)"
+        elif curr == "glass_short":
+            new_fmt = "glass_long"
+            mode_label = "Glass Long (Minimalist Glass + SMS 🪞)"
         else:
             new_fmt = "long"
             mode_label = "Long (Detailed 📜)"
@@ -5135,6 +5233,24 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         text_view, markup = build_sms_format_view()
         await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
 
+    elif query.data == "fmt_set_glass_short":
+        data = load_stored_data()
+        data["sms_format"] = "glass_short"
+        save_stored_data(data)
+        asyncio.create_task(sync_data_to_secret_db())
+        await query.answer("SMS Format set to Glass Short 🪞 (Minimalist Glass)")
+        text_view, markup = build_sms_format_view()
+        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data == "fmt_set_glass_long":
+        data = load_stored_data()
+        data["sms_format"] = "glass_long"
+        save_stored_data(data)
+        asyncio.create_task(sync_data_to_secret_db())
+        await query.answer("SMS Format set to Glass Long 🪞 (Minimalist Glass + SMS)")
+        text_view, markup = build_sms_format_view()
+        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
     elif query.data == "fmt_preview_short":
         await query.answer("Previewing Short Format (Header Country)")
         text_view, markup = build_sms_format_view(preview_mode="short")
@@ -5153,6 +5269,16 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif query.data == "fmt_preview_long":
         await query.answer("Previewing Long Format (With View Full SMS)")
         text_view, markup = build_sms_format_view(preview_mode="long")
+        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data == "fmt_preview_glass_short":
+        await query.answer("Previewing Glass Short Format (Minimalist Glass)")
+        text_view, markup = build_sms_format_view(preview_mode="glass_short")
+        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    elif query.data == "fmt_preview_glass_long":
+        await query.answer("Previewing Glass Long Format (Minimalist Glass + SMS)")
+        text_view, markup = build_sms_format_view(preview_mode="glass_long")
         await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
 
     elif query.data in ("admin_manage_admins", "admin_panel"):
