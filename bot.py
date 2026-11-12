@@ -2847,7 +2847,8 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     clean_msg      = raw_message.strip()
 
     if sms_format in ("glass_short", "glass_long", "direct_short", "direct_long", "direct", "glass"):
-        fixed_pad = "\u2800" * max(3, 25 - len(f"{source_raw} • {iso_fixed} 00"))
+        header_raw_len = len(f"📩 {source_raw} • {iso_fixed} 00")
+        fixed_pad = "\u2800" * max(4, 28 - header_raw_len)
         header_line = f"📩 <b>{source_escaped} • {html.escape(iso_fixed)} {flag}</b>{fixed_pad}"
         lines = [
             header_line,
@@ -2856,13 +2857,10 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         ]
         if sms_format in ("glass_long", "direct_long", "direct", "glass") and clean_msg:
             display_sms = clean_msg if len(clean_msg) <= 3000 else (clean_msg[:3000] + "... [truncated]")
-            styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=20)
+            styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=24)
             compact_sms = "\n".join(ln for ln in styled_sms.splitlines() if ln.strip())
             lines.append("")
-            lines.append(
-                f"<blockquote>💬 <b>FULL SMS</b>\n"
-                f"{compact_sms}</blockquote>"
-            )
+            lines.append(compact_sms)
         return "\n".join(lines), otp_code, raw_message
 
     if sms_format in ("classic_short", "old_short", "classic"):
@@ -3827,7 +3825,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         f"• <b>Direct Short (Signal Ticket)</b> {glass_short_active}\n"
         "  Top bar (📩 WhatsApp • DE 🇩🇪), ✦ Number below, fixed compact card size.\n\n"
         f"• <b>Direct Full (Open SMS Card)</b> {glass_long_active}\n"
-        "  Top bar + ✦ Number + open SMS quote shown directly on card.\n"
+        "  Top bar + ✦ Number + full SMS shown directly on card (no quote box).\n"
     )
 
     if preview_mode == "short":
@@ -3884,24 +3882,25 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "glass_short":
+        glass_pad = "\u2800" * max(4, 28 - len("📩 WhatsApp • DE 00"))
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Direct Short (Signal Ticket):</b>\n\n"
-            f"📩 <b>WhatsApp • DE 🇩🇪</b>{CARD_WIDTH_PAD}\n\n"
+            f"📩 <b>WhatsApp • DE 🇩🇪</b>{glass_pad}\n\n"
             "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
             "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "glass_long":
+        glass_pad = "\u2800" * max(4, 28 - len("📩 WhatsApp • DE 00"))
         sample_sms = "Your WhatsApp verification code is 492-810. Do not share this code with anyone."
-        styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=20)
+        styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=24)
         compact_sample = "\n".join(ln for ln in styled_sample.splitlines() if ln.strip())
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Direct Full (Open SMS Card):</b>\n\n"
-            f"📩 <b>WhatsApp • DE 🇩🇪</b>{CARD_WIDTH_PAD}\n\n"
+            f"📩 <b>WhatsApp • DE 🇩🇪</b>{glass_pad}\n\n"
             "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
-            f"<blockquote>💬 <b>FULL SMS</b>\n"
-            f"{compact_sample}</blockquote>\n\n"
+            f"{compact_sample}\n\n"
             "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
         )
     else:
