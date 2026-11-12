@@ -2847,11 +2847,11 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     clean_msg      = raw_message.strip()
 
     if sms_format in ("glass_short", "glass_long", "direct_short", "direct_long", "direct", "glass"):
-        header_line = f"🛰\u00a0\u00a0<b>{html.escape(iso_fixed)} {flag}\u00a0\u00a0│\u00a0\u00a0{source_escaped}</b>{CARD_WIDTH_PAD}"
+        header_line = f"📩\u00a0\u00a0<b>{html.escape(iso_fixed)} {flag}\u00a0\u00a0✦\u00a0\u00a0{source_escaped}</b>{CARD_WIDTH_PAD}"
         lines = [
             header_line,
             "",
-            f"<b>›\u00a0\u00a0{num_plain}</b>",
+            f"<b>✦\u00a0\u00a0{num_plain}</b>",
         ]
         if sms_format in ("glass_long", "direct_long", "direct", "glass") and clean_msg:
             display_sms = clean_msg if len(clean_msg) <= 3000 else (clean_msg[:3000] + "... [truncated]")
@@ -3486,9 +3486,9 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     active_bot_name = get_bot_name()
     active_format = data.get("sms_format", "long")
     if active_format in ("glass_long", "direct_long"):
-        fmt_label = "Direct Full (Open SMS 🛰)"
+        fmt_label = "Direct Full (Open SMS 📩)"
     elif active_format in ("glass_short", "direct_short"):
-        fmt_label = "Direct Short (Signal Ticket 🛰)"
+        fmt_label = "Direct Short (Signal Ticket 📩)"
     elif active_format == "classic_long":
         fmt_label = "Classic Long (Compact + Full SMS ⏳)"
     elif active_format == "classic_short":
@@ -3804,9 +3804,9 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
     elif curr_fmt == "classic_long":
         active_label = "Classic Long ⏳ (Compact + Full SMS)"
     elif curr_fmt == "glass_short":
-        active_label = "Direct Short 🛰 (Signal Ticket)"
+        active_label = "Direct Short 📩 (Signal Ticket)"
     elif curr_fmt == "glass_long":
-        active_label = "Direct Full 🛰 (Open SMS Card)"
+        active_label = "Direct Full 📩 (Open SMS Card)"
     else:
         active_label = "Long 📜 (With View Full SMS)"
 
@@ -3824,9 +3824,9 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         f"• <b>Classic Long (Compact + Full SMS)</b> {classic_long_active}\n"
         "  Compact layout with ✦ marks and expandable '💬 FULL SMS' blockquote.\n\n"
         f"• <b>Direct Short (Signal Ticket)</b> {glass_short_active}\n"
-        "  Top bar (🛰 DE 🇩🇪 │ WhatsApp), › Number below, fixed compact card size.\n\n"
+        "  Top bar (📩 DE 🇩🇪 ✦ WhatsApp), ✦ Number below, fixed compact card size.\n\n"
         f"• <b>Direct Full (Open SMS Card)</b> {glass_long_active}\n"
-        "  Top bar + › Number + SMS shown directly without any expandable quote.\n"
+        "  Top bar + ✦ Number + SMS shown directly without any expandable quote.\n"
     )
 
     if preview_mode == "short":
@@ -3886,8 +3886,8 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Direct Short (Signal Ticket):</b>\n\n"
-            f"🛰\u00a0\u00a0<b>DE 🇩🇪\u00a0\u00a0│\u00a0\u00a0WhatsApp</b>{CARD_WIDTH_PAD}\n\n"
-            "<b>›\u00a0\u00a0+49178****151</b>\n"
+            f"📩\u00a0\u00a0<b>DE 🇩🇪\u00a0\u00a0✦\u00a0\u00a0WhatsApp</b>{CARD_WIDTH_PAD}\n\n"
+            "<b>✦\u00a0\u00a0+49178****151</b>\n"
             "⠀\n\n"
             "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
         )
@@ -3898,8 +3898,8 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Direct Full (Open SMS Card):</b>\n\n"
-            f"🛰\u00a0\u00a0<b>DE 🇩🇪\u00a0\u00a0│\u00a0\u00a0WhatsApp</b>{CARD_WIDTH_PAD}\n\n"
-            "<b>›\u00a0\u00a0+49178****151</b>\n\n"
+            f"📩\u00a0\u00a0<b>DE 🇩🇪\u00a0\u00a0✦\u00a0\u00a0WhatsApp</b>{CARD_WIDTH_PAD}\n\n"
+            "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
             "<b>▸\u00a0\u00a0💬 Full SMS</b>\n"
             f"{indented_sample}\n\n"
             "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
@@ -3917,8 +3917,8 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'classic_long' else ''}⏳ Classic Long", callback_data="fmt_set_classic_long"),
         ],
         [
-            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'glass_short' else ''}🛰 Direct Short", callback_data="fmt_set_glass_short"),
-            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'glass_long' else ''}🛰 Direct Full", callback_data="fmt_set_glass_long"),
+            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'glass_short' else ''}📩 Direct Short", callback_data="fmt_set_glass_short"),
+            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'glass_long' else ''}📩 Direct Full", callback_data="fmt_set_glass_long"),
         ],
         [
             InlineKeyboardButton("📺 Preview Short", callback_data="fmt_preview_short"),
@@ -4041,9 +4041,9 @@ async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYP
             elif target_fmt == "classic_short":
                 mode_label = "Classic Short (Compact, No Extra Space ⏳)"
             elif target_fmt == "glass_long":
-                mode_label = "Direct Full (Open SMS Card 🛰)"
+                mode_label = "Direct Full (Open SMS Card 📩)"
             elif target_fmt == "glass_short":
-                mode_label = "Direct Short (Signal Ticket 🛰)"
+                mode_label = "Direct Short (Signal Ticket 📩)"
             else:
                 mode_label = "Short (Header Country ⚡)"
             await msg_obj.reply_text(
@@ -4643,10 +4643,10 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             mode_label = "Classic Long (Compact + Full SMS ⏳)"
         elif curr == "classic_long":
             new_fmt = "glass_short"
-            mode_label = "Direct Short (Signal Ticket 🛰)"
+            mode_label = "Direct Short (Signal Ticket 📩)"
         elif curr == "glass_short":
             new_fmt = "glass_long"
-            mode_label = "Direct Full (Open SMS Card 🛰)"
+            mode_label = "Direct Full (Open SMS Card 📩)"
         else:
             new_fmt = "long"
             mode_label = "Long (Detailed 📜)"
@@ -5238,7 +5238,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         data["sms_format"] = "glass_short"
         save_stored_data(data)
         asyncio.create_task(sync_data_to_secret_db())
-        await query.answer("SMS Format set to Direct Short 🛰 (Signal Ticket)")
+        await query.answer("SMS Format set to Direct Short 📩 (Signal Ticket)")
         text_view, markup = build_sms_format_view()
         await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
 
@@ -5247,7 +5247,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         data["sms_format"] = "glass_long"
         save_stored_data(data)
         asyncio.create_task(sync_data_to_secret_db())
-        await query.answer("SMS Format set to Direct Full 🛰 (Open SMS Card)")
+        await query.answer("SMS Format set to Direct Full 📩 (Open SMS Card)")
         text_view, markup = build_sms_format_view()
         await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
 
