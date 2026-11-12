@@ -2847,8 +2847,8 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     clean_msg      = raw_message.strip()
 
     if sms_format in ("glass_short", "glass_long", "direct_short", "direct_long", "direct", "glass"):
-        fixed_pad = "\u2800" * max(3, 25 - len(f"{iso_fixed} 00  ✦  {source_raw}"))
-        header_line = f"📩\u00a0\u00a0<b>{html.escape(iso_fixed)} {flag}\u00a0\u00a0✦\u00a0\u00a0{source_escaped}</b>{fixed_pad}"
+        fixed_pad = "\u2800" * max(3, 25 - len(f"{source_raw} • {iso_fixed} 00"))
+        header_line = f"📩 <b>{source_escaped} • {html.escape(iso_fixed)} {flag}</b>{fixed_pad}"
         lines = [
             header_line,
             "",
@@ -3825,9 +3825,9 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         f"• <b>Classic Long (Compact + Full SMS)</b> {classic_long_active}\n"
         "  Compact layout with ✦ marks and expandable '💬 FULL SMS' blockquote.\n\n"
         f"• <b>Direct Short (Signal Ticket)</b> {glass_short_active}\n"
-        "  Top bar (📩 DE 🇩🇪 ✦ WhatsApp), ✦ Number below, fixed compact card size.\n\n"
+        "  Top bar (📩 WhatsApp • DE 🇩🇪), ✦ Number below, fixed compact card size.\n\n"
         f"• <b>Direct Full (Open SMS Card)</b> {glass_long_active}\n"
-        "  Top bar + ✦ Number + SMS shown directly without any expandable quote.\n"
+        "  Top bar + ✦ Number + open SMS quote shown directly on card.\n"
     )
 
     if preview_mode == "short":
@@ -3887,7 +3887,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Direct Short (Signal Ticket):</b>\n\n"
-            f"📩\u00a0\u00a0<b>DE 🇩🇪\u00a0\u00a0✦\u00a0\u00a0WhatsApp</b>{CARD_WIDTH_PAD}\n\n"
+            f"📩 <b>WhatsApp • DE 🇩🇪</b>{CARD_WIDTH_PAD}\n\n"
             "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
             "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
         )
@@ -3898,7 +3898,7 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Direct Full (Open SMS Card):</b>\n\n"
-            f"📩\u00a0\u00a0<b>DE 🇩🇪\u00a0\u00a0✦\u00a0\u00a0WhatsApp</b>{CARD_WIDTH_PAD}\n\n"
+            f"📩 <b>WhatsApp • DE 🇩🇪</b>{CARD_WIDTH_PAD}\n\n"
             "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
             f"<blockquote>💬 <b>FULL SMS</b>\n"
             f"{compact_sample}</blockquote>\n\n"
