@@ -2719,6 +2719,29 @@ def wrap_sms_for_card(text: str, width: int = 22) -> str:
             lines.append("")
     return "\n".join(lines)
 
+def build_fixed_width_direct_header(source_raw: str, iso_fixed: str, flag: str, target_units: float = 25.5) -> str:
+    """
+    Builds '📩 <b>{Service} • {ISO} {Flag}</b>' padded with Braille spaces inside <b> and a
+    trailing ZWNJ (\u200c) so Telegram never trims trailing spacing and every card keeps a fixed width.
+    """
+    vw = 2.0  # leading envelope emoji + space
+    plain_head = f"{source_raw} • {iso_fixed} "
+    for ch in plain_head:
+        if ch in "ijlItrf1!|.,:;• ":
+            vw += 0.62
+        elif ch in "WMGOQ@#%&":
+            vw += 1.32
+        elif ch.isupper() or ch.isdigit():
+            vw += 1.08
+        elif ord(ch) > 127:
+            vw += 1.6
+        else:
+            vw += 0.92
+    vw += 2.0  # country flag width
+    pad_count = max(6, round((target_units - vw) / 0.55))
+    fixed_pad = ("\u2800" * pad_count) + "\u200c"
+    return f"📩 <b>{html.escape(source_raw)} • {html.escape(iso_fixed)} {flag}{fixed_pad}</b>"
+
 def detect_service_name(raw_source: str, raw_message: str) -> str:
     """
     Identifies originating service accurately across 40+ services.
@@ -2847,9 +2870,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     clean_msg      = raw_message.strip()
 
     if sms_format in ("glass_short", "glass_long", "direct_short", "direct_long", "direct", "glass"):
-        header_raw_len = len(f"📩 {source_raw} • {iso_fixed} 00")
-        fixed_pad = "\u2800" * max(4, 28 - header_raw_len)
-        header_line = f"📩 <b>{source_escaped} • {html.escape(iso_fixed)} {flag}</b>{fixed_pad}"
+        header_line = build_fixed_width_direct_header(source_raw, iso_fixed, flag)
         lines = [
             header_line,
             "",
@@ -2857,7 +2878,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         ]
         if sms_format in ("glass_long", "direct_long", "direct", "glass") and clean_msg:
             display_sms = clean_msg if len(clean_msg) <= 3000 else (clean_msg[:3000] + "... [truncated]")
-            styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=24)
+            styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=26)
             compact_sms = "\n".join(ln for ln in styled_sms.splitlines() if ln.strip())
             lines.append("")
             lines.append(f"💬 <b>Full SMS</b>\n{compact_sms}")
@@ -3882,23 +3903,23 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "glass_short":
-        glass_pad = "\u2800" * max(4, 28 - len("📩 WhatsApp • DE 00"))
+        glass_header = build_fixed_width_direct_header("WhatsApp", "DE", "🇩🇪")
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Direct Short (Signal Ticket):</b>\n\n"
-            f"📩 <b>WhatsApp • DE 🇩🇪</b>{glass_pad}\n\n"
+            f"{glass_header}\n\n"
             "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
             "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "glass_long":
-        glass_pad = "\u2800" * max(4, 28 - len("📩 WhatsApp • DE 00"))
+        glass_header = build_fixed_width_direct_header("WhatsApp", "DE", "🇩🇪")
         sample_sms = "Your WhatsApp verification code is 492-810. Do not share this code with anyone."
-        styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=24)
+        styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=26)
         compact_sample = "\n".join(ln for ln in styled_sample.splitlines() if ln.strip())
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Direct Full (Open SMS Card):</b>\n\n"
-            f"📩 <b>WhatsApp • DE 🇩🇪</b>{glass_pad}\n\n"
+            f"{glass_header}\n\n"
             "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
             f"💬 <b>Full SMS</b>\n{compact_sample}\n\n"
             "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
