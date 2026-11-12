@@ -2853,18 +2853,30 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     num_plain      = html.escape(masked_raw if masked_raw else country_name)
     clean_msg      = raw_message.strip()
 
-    if sms_format in ("glass_short", "glass_long", "direct_short", "direct_long", "direct", "glass"):
+    if sms_format in (
+        "glass_short", "glass_long", "direct_short", "direct_long", "direct", "glass",
+        "compact_short", "compact_long", "direct_compact_short", "direct_compact_long",
+        "glass_compact_short", "glass_compact_long", "compact",
+    ):
+        is_compact = sms_format in (
+            "compact_short", "compact_long", "direct_compact_short", "direct_compact_long",
+            "glass_compact_short", "glass_compact_long", "compact",
+        )
+        include_sms = sms_format in (
+            "glass_long", "direct_long", "direct", "glass",
+            "compact_long", "direct_compact_long", "glass_compact_long", "compact",
+        )
         header_line = build_fixed_width_direct_header(source_raw, iso_fixed, flag)
-        lines = [
-            header_line,
-            "",
-            f"<b>✦\u00a0\u00a0{num_plain}</b>",
-        ]
-        if sms_format in ("glass_long", "direct_long", "direct", "glass") and clean_msg:
-            display_sms = clean_msg if len(clean_msg) <= 3000 else (clean_msg[:3000] + "... [truncated]")
-            styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=26)
-            compact_sms = "\n".join(ln for ln in styled_sms.splitlines() if ln.strip())
+        lines = [header_line]
+        if not is_compact:
             lines.append("")
+        lines.append(f"<b>✦\u00a0\u00a0{num_plain}</b>")
+        if include_sms and clean_msg:
+            display_sms = clean_msg if len(clean_msg) <= 3000 else (clean_msg[:3000] + "... [truncated]")
+            styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=36)
+            compact_sms = "\n".join(ln for ln in styled_sms.splitlines() if ln.strip())
+            if not is_compact:
+                lines.append("")
             lines.append(f"💬 <b>Full SMS</b>\n{compact_sms}")
         return "\n".join(lines), otp_code, raw_message
 
@@ -2991,20 +3003,21 @@ async def send_with_retry(bot: Bot, chat_id: int, text: str, max_retries: int = 
         except BadRequest as b_err:
             # HTML parse error or entity mismatch: fall back to sending plain text so OTP is never lost!
             logger.warning(f"⚠️ Telegram BadRequest ({b_err}) for {chat_id}. Falling back to plain text delivery...")
-            try:
-                plain_text = re.sub(r'<[^>]+>', '', safe_text)
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text=plain_text,
-                    reply_markup=reply_markup,
-                    read_timeout=30.0,
-                    write_timeout=30.0,
-                    connect_timeout=30.0,
-                )
-                return True
-            except Exception as fb_err:
-                logger.error(f"❌ Plain text fallback also failed for {chat_id}: {fb_err}")
-                return False
+            plain_text = re.sub(r'<[^>]+>', '', safe_text)
+            for fb_markup in (reply_markup, None) if reply_markup is not None else (None,):
+                try:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=plain_text,
+                        reply_markup=fb_markup,
+                        read_timeout=30.0,
+                        write_timeout=30.0,
+                        connect_timeout=30.0,
+                    )
+                    return True
+                except Exception as fb_err:
+                    logger.warning(f"Plain text fallback attempt failed for {chat_id}: {fb_err}")
+            return False
         except Exception as e:
             logger.error(f"❌ Cannot send to {chat_id}: {e}")
             return False
@@ -3092,7 +3105,15 @@ async def _deliver_item(bot: Bot, item: Dict[str, Any], dest_ids: Set[int]) -> b
                 if b_text and norm_u.startswith(("http://", "https://", "tg://")):
                     custom_btns.append(InlineKeyboardButton(b_text, url=norm_u))
 
-        otp_btn = InlineKeyboardButton(otp, copy_text=CopyTextButton(text=otp)) if otp else None
+        otp_clean = str(otp).strip()[:256] if otp else ""
+        if otp_clean:
+            otp_btn = (
+                InlineKeyboardButton(otp_clean, copy_text=CopyTextButton(text=otp_clean))
+                if CopyTextButton else
+                InlineKeyboardButton(otp_clean, callback_data=f"sms_{mid[:40]}")
+            )
+        else:
+            otp_btn = None
 
         if otp_btn and custom_btns:
             # Show OTP button side-by-side with custom link button(s) in the same row!
@@ -3489,7 +3510,11 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     data = load_stored_data()
     active_bot_name = get_bot_name()
     active_format = data.get("sms_format", "long")
-    if active_format in ("glass_long", "direct_long"):
+    if active_format in ("compact_long", "direct_compact_long", "glass_compact_long", "compact"):
+        fmt_label = "Compact Full (No Space + SMS 📩)"
+    elif active_format in ("compact_short", "direct_compact_short", "glass_compact_short"):
+        fmt_label = "Direct Compact (No Space 📩)"
+    elif active_format in ("glass_long", "direct_long"):
         fmt_label = "Direct Full (Open SMS 📩)"
     elif active_format in ("glass_short", "direct_short"):
         fmt_label = "Direct Short (Signal Ticket 📩)"
@@ -3800,6 +3825,8 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
     classic_long_active = "✅ (Active)" if curr_fmt == "classic_long" else "⚪"
     glass_short_active = "✅ (Active)" if curr_fmt == "glass_short" else "⚪"
     glass_long_active = "✅ (Active)" if curr_fmt == "glass_long" else "⚪"
+    compact_short_active = "✅ (Active)" if curr_fmt == "compact_short" else "⚪"
+    compact_long_active = "✅ (Active)" if curr_fmt == "compact_long" else "⚪"
 
     if curr_fmt == "short":
         active_label = "Short ⚡ (Header Country)"
@@ -3811,6 +3838,10 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         active_label = "Direct Short 📩 (Signal Ticket)"
     elif curr_fmt == "glass_long":
         active_label = "Direct Full 📩 (Open SMS Card)"
+    elif curr_fmt == "compact_short":
+        active_label = "Direct Compact 📩 (Tight, No Space)"
+    elif curr_fmt == "compact_long":
+        active_label = "Compact Full 📩 (Tight + Full SMS)"
     else:
         active_label = "Long 📜 (With View Full SMS)"
 
@@ -3830,7 +3861,11 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         f"• <b>Direct Short (Signal Ticket)</b> {glass_short_active}\n"
         "  Top bar (📩 WhatsApp • DE 🇩🇪), ✦ Number below, fixed compact card size.\n\n"
         f"• <b>Direct Full (Open SMS Card)</b> {glass_long_active}\n"
-        "  Top bar + ✦ Number + full SMS shown directly on card (no quote box).\n"
+        "  Top bar + ✦ Number + full SMS shown directly on card (no quote box).\n\n"
+        f"• <b>Direct Compact (Tight, No Space)</b> {compact_short_active}\n"
+        "  Top bar + ✦ Number directly stacked without any blank line.\n\n"
+        f"• <b>Compact Full (Tight + Full SMS)</b> {compact_long_active}\n"
+        "  Top bar + ✦ Number + 💬 Full SMS stacked without any blank line.\n"
     )
 
     if preview_mode == "short":
@@ -3908,6 +3943,28 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             f"💬 <b>Full SMS</b>\n{compact_sample}\n\n"
             "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
         )
+    elif preview_mode == "compact_short":
+        glass_header = build_fixed_width_direct_header("WhatsApp", "DE", "🇩🇪")
+        msg += (
+            f"\n{CARD_DIVIDER}\n"
+            "<b>📺 Live Preview — Direct Compact (Tight, No Space):</b>\n\n"
+            f"{glass_header}\n"
+            "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
+            "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
+        )
+    elif preview_mode == "compact_long":
+        glass_header = build_fixed_width_direct_header("WhatsApp", "DE", "🇩🇪")
+        sample_sms = "Your WhatsApp verification code is 492-810. Do not share this code with anyone."
+        styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=26)
+        compact_sample = "\n".join(ln for ln in styled_sample.splitlines() if ln.strip())
+        msg += (
+            f"\n{CARD_DIVIDER}\n"
+            "<b>📺 Live Preview — Compact Full (Tight + Full SMS):</b>\n\n"
+            f"{glass_header}\n"
+            "<b>✦\u00a0\u00a0+49178****151</b>\n"
+            f"💬 <b>Full SMS</b>\n{compact_sample}\n\n"
+            "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
+        )
     else:
         msg += "\n<i>Choose an option below to set the format or preview it live:</i>"
 
@@ -3925,6 +3982,10 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
             InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'glass_long' else ''}📩 Direct Full", callback_data="fmt_set_glass_long"),
         ],
         [
+            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'compact_short' else ''}📩 Direct Compact", callback_data="fmt_set_compact_short"),
+            InlineKeyboardButton(f"{'✅ ' if curr_fmt == 'compact_long' else ''}📩 Compact Full", callback_data="fmt_set_compact_long"),
+        ],
+        [
             InlineKeyboardButton("📺 Preview Short", callback_data="fmt_preview_short"),
             InlineKeyboardButton("📺 Preview Long", callback_data="fmt_preview_long"),
         ],
@@ -3935,6 +3996,10 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         [
             InlineKeyboardButton("📺 Direct Short", callback_data="fmt_preview_glass_short"),
             InlineKeyboardButton("📺 Direct Full", callback_data="fmt_preview_glass_long"),
+        ],
+        [
+            InlineKeyboardButton("📺 Direct Compact", callback_data="fmt_preview_compact_short"),
+            InlineKeyboardButton("📺 Compact Full", callback_data="fmt_preview_compact_long"),
         ],
         [
             InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")
@@ -4023,11 +4088,21 @@ async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYP
     # If called with an argument e.g. /format short or /format long:
     if context and context.args:
         arg = context.args[0].strip().lower()
-        if arg in ("short", "long", "classic_short", "classic", "old", "old_short", "classic_long", "old_long", "glass_short", "glass_long", "glass", "direct_short", "direct_long", "direct"):
+        if arg in (
+            "short", "long", "classic_short", "classic", "old", "old_short",
+            "classic_long", "old_long", "glass_short", "glass_long", "glass",
+            "direct_short", "direct_long", "direct", "compact_short", "compact_long",
+            "compact", "direct_compact_short", "direct_compact_long",
+            "glass_compact_short", "glass_compact_long",
+        ):
             if arg in ("classic_long", "old_long"):
                 target_fmt = "classic_long"
             elif arg in ("classic_short", "classic", "old", "old_short"):
                 target_fmt = "classic_short"
+            elif arg in ("compact_long", "compact", "direct_compact_long", "glass_compact_long"):
+                target_fmt = "compact_long"
+            elif arg in ("compact_short", "direct_compact_short", "glass_compact_short"):
+                target_fmt = "compact_short"
             elif arg in ("glass_long", "glass", "direct_long", "direct"):
                 target_fmt = "glass_long"
             elif arg in ("glass_short", "direct_short"):
@@ -4044,6 +4119,10 @@ async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYP
                 mode_label = "Classic Long (Compact + Full SMS ⏳)"
             elif target_fmt == "classic_short":
                 mode_label = "Classic Short (Compact, No Extra Space ⏳)"
+            elif target_fmt == "compact_long":
+                mode_label = "Compact Full (Tight + Full SMS 📩)"
+            elif target_fmt == "compact_short":
+                mode_label = "Direct Compact (Tight, No Space 📩)"
             elif target_fmt == "glass_long":
                 mode_label = "Direct Full (Open SMS Card 📩)"
             elif target_fmt == "glass_short":
@@ -4569,6 +4648,16 @@ async def setbtnurl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=detail_kb
     )
 
+async def _safe_edit_query_message(query, text: str, parse_mode=ParseMode.HTML, reply_markup=None):
+    """Edit an inline callback message, ignoring benign 'not modified' errors."""
+    try:
+        await query.edit_message_text(text=text, parse_mode=parse_mode, reply_markup=reply_markup)
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            return
+        raise
+
+
 async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query:
@@ -4586,7 +4675,10 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
         raw_msg = get_cached_sms_message(sms_key)
         if raw_msg:
-            await query.answer(f"📩 Full SMS Content:\n\n{raw_msg}", show_alert=True)
+            prefix = "📩 Full SMS Content:\n\n"
+            max_body = 200 - len(prefix)
+            body = raw_msg if len(raw_msg) <= max_body else f"{raw_msg[:max_body - 3]}..."
+            await query.answer(f"{prefix}{body}", show_alert=True)
         else:
             await query.answer("📩 Full SMS is not available for this message.", show_alert=True)
         return
@@ -4651,6 +4743,12 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         elif curr == "glass_short":
             new_fmt = "glass_long"
             mode_label = "Direct Full (Open SMS Card 📩)"
+        elif curr == "glass_long":
+            new_fmt = "compact_short"
+            mode_label = "Direct Compact (No Space 📩)"
+        elif curr == "compact_short":
+            new_fmt = "compact_long"
+            mode_label = "Compact Full (No Space + SMS 📩)"
         else:
             new_fmt = "long"
             mode_label = "Long (Detailed 📜)"
@@ -5201,89 +5299,43 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         text_view, markup = build_bot_name_view()
         await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
 
-    elif query.data == "fmt_set_short":
-        data = load_stored_data()
-        data["sms_format"] = "short"
-        save_stored_data(data)
-        asyncio.create_task(sync_data_to_secret_db())
-        await query.answer("SMS Format set to Short ⚡ (Header Country)")
-        text_view, markup = build_sms_format_view()
-        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+    elif query.data and query.data.startswith("fmt_set_"):
+        fmt_labels = {
+            "short": "SMS Format set to Short ⚡ (Header Country)",
+            "classic_short": "SMS Format set to Classic Short ⏳ (Compact, No Extra Space)",
+            "classic_long": "SMS Format set to Classic Long ⏳ (Compact + Full SMS)",
+            "long": "SMS Format set to Long 📜 (With View Full SMS)",
+            "glass_short": "SMS Format set to Direct Short 📩 (Signal Ticket)",
+            "glass_long": "SMS Format set to Direct Full 📩 (Open SMS Card)",
+            "compact_short": "SMS Format set to Direct Compact 📩 (No Extra Space)",
+            "compact_long": "SMS Format set to Compact Full 📩 (No Space + SMS)",
+        }
+        target_fmt = query.data[len("fmt_set_"):]
+        if target_fmt in fmt_labels:
+            data = load_stored_data()
+            data["sms_format"] = target_fmt
+            save_stored_data(data)
+            asyncio.create_task(sync_data_to_secret_db())
+            await query.answer(fmt_labels[target_fmt])
+            text_view, markup = build_sms_format_view(preview_mode=target_fmt)
+            await _safe_edit_query_message(query, text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
 
-    elif query.data == "fmt_set_classic_short":
-        data = load_stored_data()
-        data["sms_format"] = "classic_short"
-        save_stored_data(data)
-        asyncio.create_task(sync_data_to_secret_db())
-        await query.answer("SMS Format set to Classic Short ⏳ (Compact, No Extra Space)")
-        text_view, markup = build_sms_format_view()
-        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
-
-    elif query.data == "fmt_set_classic_long":
-        data = load_stored_data()
-        data["sms_format"] = "classic_long"
-        save_stored_data(data)
-        asyncio.create_task(sync_data_to_secret_db())
-        await query.answer("SMS Format set to Classic Long ⏳ (Compact + Full SMS)")
-        text_view, markup = build_sms_format_view()
-        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
-
-    elif query.data == "fmt_set_long":
-        data = load_stored_data()
-        data["sms_format"] = "long"
-        save_stored_data(data)
-        asyncio.create_task(sync_data_to_secret_db())
-        await query.answer("SMS Format set to Long 📜 (With View Full SMS)")
-        text_view, markup = build_sms_format_view()
-        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
-
-    elif query.data == "fmt_set_glass_short":
-        data = load_stored_data()
-        data["sms_format"] = "glass_short"
-        save_stored_data(data)
-        asyncio.create_task(sync_data_to_secret_db())
-        await query.answer("SMS Format set to Direct Short 📩 (Signal Ticket)")
-        text_view, markup = build_sms_format_view()
-        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
-
-    elif query.data == "fmt_set_glass_long":
-        data = load_stored_data()
-        data["sms_format"] = "glass_long"
-        save_stored_data(data)
-        asyncio.create_task(sync_data_to_secret_db())
-        await query.answer("SMS Format set to Direct Full 📩 (Open SMS Card)")
-        text_view, markup = build_sms_format_view()
-        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
-
-    elif query.data == "fmt_preview_short":
-        await query.answer("Previewing Short Format (Header Country)")
-        text_view, markup = build_sms_format_view(preview_mode="short")
-        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
-
-    elif query.data == "fmt_preview_classic_short":
-        await query.answer("Previewing Classic Short Format (Compact, No Extra Space)")
-        text_view, markup = build_sms_format_view(preview_mode="classic_short")
-        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
-
-    elif query.data == "fmt_preview_classic_long":
-        await query.answer("Previewing Classic Long Format (Compact + Full SMS)")
-        text_view, markup = build_sms_format_view(preview_mode="classic_long")
-        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
-
-    elif query.data == "fmt_preview_long":
-        await query.answer("Previewing Long Format (With View Full SMS)")
-        text_view, markup = build_sms_format_view(preview_mode="long")
-        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
-
-    elif query.data == "fmt_preview_glass_short":
-        await query.answer("Previewing Direct Short Format (Signal Ticket)")
-        text_view, markup = build_sms_format_view(preview_mode="glass_short")
-        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
-
-    elif query.data == "fmt_preview_glass_long":
-        await query.answer("Previewing Direct Full Format (Open SMS Card)")
-        text_view, markup = build_sms_format_view(preview_mode="glass_long")
-        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+    elif query.data and query.data.startswith("fmt_preview_"):
+        preview_labels = {
+            "short": "Previewing Short Format (Header Country)",
+            "classic_short": "Previewing Classic Short Format (Compact, No Extra Space)",
+            "classic_long": "Previewing Classic Long Format (Compact + Full SMS)",
+            "long": "Previewing Long Format (With View Full SMS)",
+            "glass_short": "Previewing Direct Short Format (Signal Ticket)",
+            "glass_long": "Previewing Direct Full Format (Open SMS Card)",
+            "compact_short": "Previewing Direct Compact Format (No Extra Space)",
+            "compact_long": "Previewing Compact Full Format (No Space + SMS)",
+        }
+        target_fmt = query.data[len("fmt_preview_"):]
+        if target_fmt in preview_labels:
+            await query.answer(preview_labels[target_fmt])
+            text_view, markup = build_sms_format_view(preview_mode=target_fmt)
+            await _safe_edit_query_message(query, text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
 
     elif query.data in ("admin_manage_admins", "admin_panel"):
         clear_all_admin_states(context)
@@ -6644,6 +6696,17 @@ async def main():
     application.add_handler(CommandHandler("cancel", cancel_command, filters=_private))
     application.add_handler(CallbackQueryHandler(admin_callback_handler))
     application.add_handler(MessageHandler(_private & filters.TEXT & ~filters.COMMAND, keyboard_button_handler))
+
+    async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+        err = context.error
+        if isinstance(err, BadRequest) and "message is not modified" in str(err).lower():
+            return
+        if isinstance(err, Conflict):
+            logger.warning(f"Telegram Conflict in handler: {err}")
+            return
+        logger.error(f"Unhandled exception in Thirdwave Bot: {err}", exc_info=err)
+
+    application.add_error_handler(global_error_handler)
 
     def start_health_server():
         port_str = os.getenv("PORT")
