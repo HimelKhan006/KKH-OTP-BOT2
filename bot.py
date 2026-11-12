@@ -2641,9 +2641,9 @@ def get_country_full_name(iso_code: str, item: Optional[Dict[str, Any]] = None) 
     return "Global"
 
 # ==========================================
-# 10. Clean OTP Notification Formatter (Minimalist Floating Ticket)
+# 10. Clean OTP Notification Formatter (Minimalist Glass Ticket)
 EXPANDABLE_SMS_LABEL = "📩 <b>View Full SMS:</b>"
-COLLAPSED_SMS_HINT = "<b>✦\u00a0\u00a0TAP TO READ SMS..</b>"
+COLLAPSED_SMS_HINT = "<b>▾\u00a0\u00a0SMS Content</b>"
 CARD_DIVIDER = "━" * 20
 QUOTE_DIVIDER = "━" * 14
 CARD_WIDTH_PAD = "\u2800" * 7
@@ -2845,40 +2845,35 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
     num_plain      = html.escape(masked_raw if masked_raw else country_name)
     clean_msg      = raw_message.strip()
 
+    header_line = f"📩 <b>{source_escaped}\u00a0\u00a0•\u00a0\u00a0{html.escape(iso_fixed)} {flag}{CARD_WIDTH_PAD}</b>"
+
     if sms_format in ("classic_short", "old_short", "classic"):
         lines = [
-            f"📩 <b>NEW SMS • {country_part}{CARD_WIDTH_PAD}</b>",
-            f"<b>✦\u00a0\u00a0{source_escaped}</b>",
-            f"<b>✦\u00a0\u00a0{num_plain}</b>",
+            header_line,
+            f"<b>{num_plain}</b>",
         ]
         full_text = "\n".join(lines)
         return full_text, otp_code, raw_message
 
     if sms_format in ("classic_long", "old_long"):
         lines = [
-            f"📩 <b>NEW SMS • {country_part}{CARD_WIDTH_PAD}</b>",
-            f"<b>✦\u00a0\u00a0{source_escaped}</b>",
-            f"<b>✦\u00a0\u00a0{num_plain}</b>",
+            header_line,
+            f"<b>{num_plain}</b>",
         ]
         if clean_msg:
             display_sms = clean_msg if len(clean_msg) <= 3000 else (clean_msg[:3000] + "... [truncated]")
             styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=18)
             lines.append(
-                f"<blockquote expandable>⠀\n"
-                f"{COLLAPSED_SMS_HINT}\n"
-                f"⠀\n"
-                f"{QUOTE_DIVIDER}\n"
-                f"💬 <b>FULL SMS</b>\n"
+                f"<blockquote expandable>{COLLAPSED_SMS_HINT}\n"
                 f"{styled_sms}</blockquote>"
             )
         full_text = "\n".join(lines)
         return full_text, otp_code, raw_message
 
     lines = [
-        f"📩 <b>NEW SMS • {country_part}{CARD_WIDTH_PAD}</b>",
+        header_line,
         "",
-        f"<b>✦\u00a0\u00a0{source_escaped}</b>",
-        f"<b>✦\u00a0\u00a0{num_plain}</b>",
+        f"<b>{num_plain}</b>",
     ]
 
     if sms_format != "short" and clean_msg:
@@ -2887,11 +2882,7 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=18)
         lines.append("")
         lines.append(
-            f"<blockquote expandable>⠀\n"
-            f"{COLLAPSED_SMS_HINT}\n"
-            f"⠀\n"
-            f"{QUOTE_DIVIDER}\n"
-            f"💬 <b>FULL SMS</b>\n"
+            f"<blockquote expandable>{COLLAPSED_SMS_HINT}\n"
             f"{styled_sms}</blockquote>"
         )
     else:
@@ -3782,37 +3773,35 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         active_label = "Long 📜 (With View Full SMS)"
 
     msg = (
-        "📋 <b>SMS Format Configuration</b>\n"
+        "📋 <b>SMS Format Configuration (Minimalist Glass)</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"🟢 <b>Active Mode:</b>   {active_label}\n\n"
         "<b>Available Modes:</b>\n"
-        f"• <b>Short (Header Country)</b> {short_active}\n"
-        "  Country in header (NEW SMS • DE 🇩🇪), Service & Number with ✦, clean spacing.\n\n"
-        f"• <b>Long (With Full SMS)</b> {long_active}\n"
-        "  Full card with expandable '💬 FULL SMS' blockquote.\n\n"
-        f"• <b>Classic Short (Compact)</b> {classic_active}\n"
-        "  Country in header (NEW SMS • DE 🇩🇪), Service & Number with ✦, without extra spacing.\n\n"
-        f"• <b>Classic Long (Compact + Full SMS)</b> {classic_long_active}\n"
-        "  Compact layout with ✦ marks and expandable '💬 FULL SMS' blockquote.\n"
+        f"• <b>Short (Minimalist Glass)</b> {short_active}\n"
+        "  Service & Country on top (📩 WhatsApp • DE 🇩🇪), number below, airy spacing.\n\n"
+        f"• <b>Long (Minimalist Glass + SMS)</b> {long_active}\n"
+        "  Airy Minimalist Glass card with expandable '▾ SMS Content' blockquote.\n\n"
+        f"• <b>Classic Short (Compact Glass)</b> {classic_active}\n"
+        "  Tight layout without extra blank spacing.\n\n"
+        f"• <b>Classic Long (Compact + SMS)</b> {classic_long_active}\n"
+        "  Tight Minimalist Glass layout with expandable '▾ SMS Content' blockquote.\n"
     )
 
     if preview_mode == "short":
         msg += (
             f"\n{CARD_DIVIDER}\n"
-            "<b>📺 Live Preview — Short (Header Country):</b>\n\n"
-            f"📩 <b>NEW SMS • (DE 🇩🇪){CARD_WIDTH_PAD}</b>\n\n"
-            "<b>✦\u00a0\u00a0WhatsApp</b>\n"
-            "<b>✦\u00a0\u00a0+49178****151</b>\n"
+            "<b>📺 Live Preview — Short (Minimalist Glass):</b>\n\n"
+            f"📩 <b>WhatsApp\u00a0\u00a0•\u00a0\u00a0DE 🇩🇪{CARD_WIDTH_PAD}</b>\n\n"
+            "<b>+49178****151</b>\n"
             "⠀\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "classic_short":
         msg += (
             f"\n{CARD_DIVIDER}\n"
-            "<b>📺 Live Preview — Classic Short (Compact, No Extra Space):</b>\n\n"
-            f"📩 <b>NEW SMS • (DE 🇩🇪){CARD_WIDTH_PAD}</b>\n"
-            "<b>✦\u00a0\u00a0WhatsApp</b>\n"
-            "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
+            "<b>📺 Live Preview — Classic Short (Compact Glass):</b>\n\n"
+            f"📩 <b>WhatsApp\u00a0\u00a0•\u00a0\u00a0DE 🇩🇪{CARD_WIDTH_PAD}</b>\n"
+            "<b>+49178****151</b>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "classic_long":
@@ -3820,15 +3809,10 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=18)
         msg += (
             f"\n{CARD_DIVIDER}\n"
-            "<b>📺 Live Preview — Classic Long (Compact + Full SMS):</b>\n\n"
-            f"📩 <b>NEW SMS • (DE 🇩🇪){CARD_WIDTH_PAD}</b>\n"
-            "<b>✦\u00a0\u00a0WhatsApp</b>\n"
-            "<b>✦\u00a0\u00a0+49178****151</b>\n"
-            f"<blockquote expandable>⠀\n"
-            f"{COLLAPSED_SMS_HINT}\n"
-            f"⠀\n"
-            f"{QUOTE_DIVIDER}\n"
-            f"💬 <b>FULL SMS</b>\n"
+            "<b>📺 Live Preview — Classic Long (Compact + SMS):</b>\n\n"
+            f"📩 <b>WhatsApp\u00a0\u00a0•\u00a0\u00a0DE 🇩🇪{CARD_WIDTH_PAD}</b>\n"
+            "<b>+49178****151</b>\n"
+            f"<blockquote expandable>{COLLAPSED_SMS_HINT}\n"
             f"{styled_sample}</blockquote>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
@@ -3837,15 +3821,10 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=18)
         msg += (
             f"\n{CARD_DIVIDER}\n"
-            "<b>📺 Live Preview — Long (With View Full SMS):</b>\n\n"
-            f"📩 <b>NEW SMS • (DE 🇩🇪){CARD_WIDTH_PAD}</b>\n\n"
-            "<b>✦\u00a0\u00a0WhatsApp</b>\n"
-            "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
-            f"<blockquote expandable>⠀\n"
-            f"{COLLAPSED_SMS_HINT}\n"
-            f"⠀\n"
-            f"{QUOTE_DIVIDER}\n"
-            f"💬 <b>FULL SMS</b>\n"
+            "<b>📺 Live Preview — Long (Minimalist Glass + SMS):</b>\n\n"
+            f"📩 <b>WhatsApp\u00a0\u00a0•\u00a0\u00a0DE 🇩🇪{CARD_WIDTH_PAD}</b>\n\n"
+            "<b>+49178****151</b>\n\n"
+            f"<blockquote expandable>{COLLAPSED_SMS_HINT}\n"
             f"{styled_sample}</blockquote>\n\n"
             "<i>Buttons: [ 492810 ] [ GET NUMBER ]</i>"
         )
