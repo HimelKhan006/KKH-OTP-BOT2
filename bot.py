@@ -820,14 +820,11 @@ async def notify_admin_revocation(bot: Bot, target_id: int):
     try:
         bot_name = get_bot_name()
         notification_text = (
-            "⛔ <b>Administrator Privileges Revoked</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"Your administrator access on <b>{html.escape(bot_name)}</b> has been revoked by the Super Administrator.\n\n"
-            "• <b>Account Status:</b> <code>Standard User</code>\n"
-            "• <b>Admin Privileges:</b> <code>Disabled</code>\n"
-            "• <b>Dashboard Access:</b> <code>Cleared & Deactivated</code>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Your admin controls have been removed from this account.</i>"
+            "⛔ <b>Admin Access Revoked</b>\n\n"
+            f"Your administrator access on <b>{html.escape(bot_name)}</b> has been removed.\n\n"
+            "•\u00a0\u00a0Status: <b>Standard User</b>\n"
+            "•\u00a0\u00a0Dashboard: <b>Disabled</b>\n\n"
+            "<i>Admin controls have been cleared from your account.</i>"
         )
         await send_with_retry(bot, target_id, notification_text, reply_markup=ReplyKeyboardRemove())
         logger.info(f"Delivered admin revocation notification to user {target_id}")
@@ -839,14 +836,11 @@ async def notify_admin_promoted(bot: Bot, target_id: int):
     try:
         bot_name = get_bot_name()
         notification_text = (
-            "👑 <b>Administrator Privileges Granted</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"You have been granted Administrator privileges on <b>{html.escape(bot_name)}</b>!\n\n"
-            "• <b>Account Status:</b> <code>Administrator</code>\n"
-            "• <b>Admin Dashboard:</b> <code>Active & Unlocked</code>\n"
-            "• <b>Permissions:</b> <code>OTP forwarding, linked groups & bot controls</code>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Your menu has been updated with Admin controls. Tap below to access the Admin Panel:</i>"
+            "👑 <b>Admin Access Granted</b>\n\n"
+            f"You are now an Administrator on <b>{html.escape(bot_name)}</b>.\n\n"
+            "•\u00a0\u00a0Role: <b>Administrator</b>\n"
+            "•\u00a0\u00a0Access: <b>Forwarding, Groups &amp; Settings</b>\n\n"
+            "<i>Tap below to open the Admin Panel.</i>"
         )
         await send_with_retry(bot, target_id, notification_text, reply_markup=get_admin_reply_keyboard())
         logger.info(f"Delivered admin promotion notification to user {target_id}")
@@ -861,30 +855,25 @@ def build_admin_manage_view() -> Tuple[str, InlineKeyboardMarkup]:
     admin_lines = []
     buttons = []
     for idx, a in enumerate(admins, start=1):
-        role = "👑 <b>Super Admin</b> (Env)" if a["is_super"] else "🛡️ <b>Admin</b> (Database)"
+        role = "Super Admin" if a["is_super"] else "Admin"
         u_name = html.escape(a.get("first_name") or "Administrator")
         u_tag = f"@{html.escape(a['username'])}" if a.get("username") else u_name
         admin_lines.append(
             f"{idx}. <b>{u_name}</b> ({u_tag})\n"
-            f"   🆔 <code>{a['user_id']}</code> | 🔰 Role: {role}"
+            f"   <code>{a['user_id']}</code>  ·  {role}"
         )
         btn_icon = "👑" if a["is_super"] else "🛡️"
         buttons.append([InlineKeyboardButton(
-            f"{btn_icon} Manage ID: {a['user_id']} ({u_tag[:14]})",
+            f"{btn_icon} {a['user_id']} ({u_tag[:14]})",
             callback_data=f"admin_inspect_{a['user_id']}"
         )])
 
     admins_formatted = "\n\n".join(admin_lines) if admin_lines else "<i>No administrators found.</i>"
     text = (
-        f"👑 <b>Administrator Management & Access Control</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Total Administrators:</b> {len(admins)}\n"
-        f"• <b>Super Administrators:</b> {super_count}\n"
-        f"• <b>Database Administrators:</b> {db_count}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"{admins_formatted}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💡 <i>Tap any administrator button below to view details or revoke privileges.</i>"
+        f"👑 <b>Administrators</b>  ·  {len(admins)}\n\n"
+        f"•\u00a0\u00a0Super: <b>{super_count}</b>  ·  Database: <b>{db_count}</b>\n\n"
+        f"{admins_formatted}\n\n"
+        f"<i>Select an admin below to inspect or revoke access.</i>"
     )
     buttons.append([InlineKeyboardButton("➕ Add New Administrator", callback_data="admin_add_admin_prompt")])
     buttons.append([InlineKeyboardButton("❌ Close", callback_data="close_admin_manage")])
@@ -3842,7 +3831,7 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     group_ids = get_target_group_chat_ids()
     total_today, total_28h, country_counts_28h = get_dashboard_stats()
     total_lifetime = get_lifetime_received_otps()
-    group_text = f"{len(group_ids)} Linked Groups ✅" if len(group_ids) > 1 else ("Linked ✅" if group_ids else "Not Linked ⚠️")
+    group_text = f"{len(group_ids)} linked" if group_ids else "Not linked"
 
     # Uptime calculation
     uptime_secs = int(time.time() - bot_process_start_time)
@@ -3856,77 +3845,79 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
         handover_secs = max(0, session_timeout - uptime_secs)
         h_hours, h_rem = divmod(handover_secs, 3600)
         h_mins, _ = divmod(h_rem, 60)
-        handover_info = f"{h_hours}h {h_mins}m remaining (Auto-Sync 🔄)"
+        handover_info = f"{h_hours}h {h_mins}m"
     else:
-        handover_info = "Always-Online (Continuous)"
+        handover_info = "Continuous"
 
     # Format & Link button status
     data = load_stored_data()
     active_bot_name = get_bot_name()
     active_format = data.get("sms_format", "long")
     if active_format in ("compact_long", "direct_compact_long", "glass_compact_long", "compact"):
-        fmt_label = "Compact Full (No Space + SMS 📩)"
+        fmt_label = "Compact Full"
     elif active_format in ("compact_short", "direct_compact_short", "glass_compact_short"):
-        fmt_label = "Direct Compact (No Space 📩)"
+        fmt_label = "Direct Compact"
     elif active_format in ("glass_long", "direct_long"):
-        fmt_label = "Direct Full (Open SMS 📩)"
+        fmt_label = "Direct Full"
     elif active_format in ("glass_short", "direct_short"):
-        fmt_label = "Direct Short (Signal Ticket 📩)"
+        fmt_label = "Direct Short"
     elif active_format == "classic_long":
-        fmt_label = "Classic Long (Compact + Full SMS ⏳)"
+        fmt_label = "Classic Long"
     elif active_format == "classic_short":
-        fmt_label = "Classic Short (Compact ⏳)"
+        fmt_label = "Classic Short"
     elif active_format == "short":
-        fmt_label = "Short (Header Country ⚡)"
+        fmt_label = "Short"
     else:
-        fmt_label = "Long (Detailed 📜)"
+        fmt_label = "Long"
 
     custom_buttons = get_custom_link_buttons()
     if custom_buttons:
         link_items = [html.escape(b['text']) for b in custom_buttons]
-        link_str = f"<b>{len(custom_buttons)} Active:</b> " + ", ".join(link_items)
+        link_str = f"<b>{len(custom_buttons)}</b> ({', '.join(link_items)})"
     else:
-        link_str = "<i>None configured</i>"
+        link_str = "<i>None</i>"
 
     # Build per-country breakdown (sorted by count desc, top 15) strictly from active 28h records
     country_lines = ""
     if country_counts_28h:
         sorted_countries = sorted(country_counts_28h.items(), key=lambda x: x[1], reverse=True)
-        country_lines = "\n🌍 <b>OTPs by Country (28h Rolling):</b>\n"
-        for idx, (iso_display, cnt) in enumerate(sorted_countries[:15], 1):
-            country_lines += f"  {idx}. {iso_display} — {cnt}\n"
-        country_lines += "━━━━━━━━━━━━━━━━━━━━\n"
+        country_items = [
+            f"{idx}. {iso_display} — <b>{cnt:,}</b>"
+            for idx, (iso_display, cnt) in enumerate(sorted_countries[:15], 1)
+        ]
+        country_lines = "\n\n<b>Top Countries (28h)</b>\n" + "\n".join(country_items)
 
-    gist_status = f"Encrypted Cloud DB ({GIST_ID[:8]}...) 🔒" if gist_storage.enabled else "Local Storage"
-    masked_key = f"{client.api_key[:8]}...{client.api_key[-4:]}" if len(client.api_key) > 12 else (client.api_key or "<i>Missing</i>")
+    gist_status = f"Cloud DB ({html.escape(GIST_ID[:8])}...)" if gist_storage.enabled else "Local"
+    masked_key = (
+        f"<code>{html.escape(client.api_key[:8])}...{html.escape(client.api_key[-4:])}</code>"
+        if len(client.api_key) > 12
+        else (f"<code>{html.escape(client.api_key)}</code>" if client.api_key else "<i>Missing</i>")
+    )
     effective_poll = max(7.5, POLL_INTERVAL_SECONDS)
 
     fwd_active = is_otp_forwarding_enabled()
-    fwd_label = "🟢 ACTIVE (Live Mode)" if fwd_active else "⏸️ PAUSED (Silent Mode • DB & History Only)"
-    bottom_note = "<i>🔔 Real-time forwarding active — zero restarts, always on.</i>" if fwd_active else "<i>🔕 Group forwarding is paused by admin — recording OTPs to DB & history silently.</i>"
+    fwd_label = "Active" if fwd_active else "Paused"
+    bottom_note = (
+        "<i>Real-time forwarding active.</i>"
+        if fwd_active
+        else "<i>Forwarding paused — logging silently.</i>"
+    )
 
     msg = (
-        f"⚡ <b>{html.escape(active_bot_name)} • LIVE & ONLINE</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🟢 <b>Engine:</b>      100% Online ✅\n"
-        f"⏱️ <b>Uptime:</b>      {uptime_str}\n"
-        f"🔄 <b>Handover:</b>    {handover_info}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🌐 <b>API Base:</b>    <code>{html.escape(client.base_url)}</code>\n"
-        f"🔑 <b>API Key:</b>     {masked_key}\n"
-        f"🗄️ <b>Database:</b>   {gist_status}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"👥 <b>Groups:</b>      {group_text}\n"
-        f"👑 <b>Admins:</b>      {len(get_all_admin_ids())} active\n"
-        f"⚡ <b>Forwarding:</b>  {fwd_label}\n"
-        f"📨 <b>OTPs Today:</b>  {total_today} received\n"
-        f"📈 <b>Total Received:</b> {total_lifetime:,} (All-Time • Never Resets)\n"
-        f"📦 <b>DB Records:</b>  {total_28h} (28h rolling)\n"
-        f"⚡ <b>Poll Rate:</b>   every {effective_poll:.1f}s\n"
-        f"📋 <b>SMS Format:</b>  {fmt_label}\n"
-        f"🔗 <b>Buttons:</b>     {link_str}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"{country_lines}"
+        f"⚡ <b>{html.escape(active_bot_name)}</b>  ·  Live\n\n"
+        f"•\u00a0\u00a0Status: <b>Online</b>  ·  Uptime: <b>{uptime_str}</b>\n"
+        f"•\u00a0\u00a0Handover: <b>{handover_info}</b>\n"
+        f"•\u00a0\u00a0Forwarding: <b>{fwd_label}</b>  ·  Poll: <b>{effective_poll:.1f}s</b>\n\n"
+        f"•\u00a0\u00a0OTPs Today: <b>{total_today:,}</b>\n"
+        f"•\u00a0\u00a0Total Received: <b>{total_lifetime:,}</b> (Never Resets)\n"
+        f"•\u00a0\u00a028h Records: <b>{total_28h:,}</b>\n\n"
+        f"•\u00a0\u00a0Groups: <b>{group_text}</b>  ·  Admins: <b>{len(get_all_admin_ids())}</b>\n"
+        f"•\u00a0\u00a0Format: <b>{fmt_label}</b>\n"
+        f"•\u00a0\u00a0Buttons: {link_str}\n"
+        f"•\u00a0\u00a0Storage: <b>{gist_status}</b>\n\n"
+        f"•\u00a0\u00a0API: <code>{html.escape(client.base_url)}</code>\n"
+        f"•\u00a0\u00a0Key: {masked_key}"
+        f"{country_lines}\n\n"
         f"{bottom_note}"
     )
 
@@ -3975,26 +3966,18 @@ def build_forwarding_control_view() -> Tuple[str, InlineKeyboardMarkup]:
     is_fwd = is_otp_forwarding_enabled()
     if is_fwd:
         msg = (
-            "⚡ <b>OTP Group Forwarding Control</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "• <b>Status:</b> 🟢 ACTIVE (Live Mode)\n"
-            "• <b>Group Delivery:</b> ON (Live Delivery)\n"
-            "• <b>Database & Retention:</b> 100% Synced (28h)\n"
-            "• <b>Synced:</b> Cloud DB 🔒\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Tap below to pause group forwarding:</i>"
+            "⚡ <b>OTP Group Forwarding</b>  ·  Active\n\n"
+            "•\u00a0\u00a0Group Delivery: <b>Live</b>\n"
+            "•\u00a0\u00a0Retention: <b>28h DB</b>  ·  Storage: <b>Cloud DB</b>\n\n"
+            "<i>Tap below to pause group forwarding.</i>"
         )
         toggle_btn = InlineKeyboardButton("⏸️ Pause Forwarding", callback_data="fwd_ask_off")
     else:
         msg = (
-            "⚡ <b>OTP Group Forwarding Control</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "• <b>Status:</b> ⏸️ PAUSED (Silent Mode)\n"
-            "• <b>Group Delivery:</b> PAUSED (No messages sent)\n"
-            "• <b>Database & Retention:</b> 100% Active (Recording silently)\n"
-            "• <b>Synced:</b> Cloud DB 🔒\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Tap below to resume group forwarding:</i>"
+            "⚡ <b>OTP Group Forwarding</b>  ·  Paused\n\n"
+            "•\u00a0\u00a0Group Delivery: <b>Paused</b>\n"
+            "•\u00a0\u00a0Retention: <b>Recording silently</b>  ·  Storage: <b>Cloud DB</b>\n\n"
+            "<i>Tap below to resume group forwarding.</i>"
         )
         toggle_btn = InlineKeyboardButton("▶️ Resume Forwarding", callback_data="fwd_ask_on")
 
@@ -4004,27 +3987,18 @@ def build_forwarding_updated_view(action: str) -> Tuple[str, InlineKeyboardMarku
     """Builds professional status update confirmation card after forwarding state is changed."""
     if action == "off":
         msg = (
-            "⏸️ <b>OTP Forwarding: Paused</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "• <b>Status:</b> ⏸️ PAUSED (Silent Mode)\n"
-            "• <b>Group Delivery:</b> PAUSED (No messages sent to groups)\n"
-            "• <b>Database & Retention:</b> 100% Active (Recording silently)\n"
-            "• <b>Synced:</b> Cloud DB 🔒\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Incoming OTPs continue recording silently in SQLite & 28h history. Groups will not receive forwards until resumed.</i>"
+            "⏸️ <b>Forwarding Paused</b>\n\n"
+            "•\u00a0\u00a0Group Delivery: <b>Paused</b>\n"
+            "•\u00a0\u00a0Database: <b>Recording silently (28h)</b>\n\n"
+            "<i>Groups will not receive OTPs until resumed.</i>"
         )
         btn = InlineKeyboardButton("▶️ Resume Forwarding", callback_data="fwd_ask_on")
     else:
         msg = (
-            "🟢 <b>OTP Forwarding: Resumed</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "• <b>Status:</b> 🟢 ACTIVE (Live Mode)\n"
-            "• <b>Group Delivery:</b> ACTIVE (Delivered live to groups)\n"
-            "• <b>Database & Retention:</b> 100% Synced (28h)\n"
-            "• <b>Zero Spam Shield:</b> Active (Pause OTPs suppressed)\n"
-            "• <b>Synced:</b> Cloud DB 🔒\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Live forwarding is active. Every new incoming OTP is delivered to your group(s) in real time.</i>"
+            "🟢 <b>Forwarding Resumed</b>\n\n"
+            "•\u00a0\u00a0Group Delivery: <b>Live</b>\n"
+            "•\u00a0\u00a0Zero Spam: <b>Old OTPs suppressed</b>\n\n"
+            "<i>New incoming OTPs are delivered in real time.</i>"
         )
         btn = InlineKeyboardButton("⏸️ Pause Forwarding", callback_data="fwd_ask_off")
     return msg, InlineKeyboardMarkup([[btn]])
@@ -4049,9 +4023,9 @@ async def toggle_forwarding_command(update: Update, context: ContextTypes.DEFAUL
         set_otp_forwarding_enabled(not curr)
         create_safe_task(sync_data_to_secret_db())
         msg = (
-            "🟢 <b>OTP Forwarding Resumed</b>\n━━━━━━━━━━━━━━━━━━━━\nLive OTP group forwarding is active."
+            "🟢 <b>Forwarding Resumed</b>\n\nLive OTP group forwarding is active."
             if not curr else
-            "⏸️ <b>OTP Forwarding Paused</b>\n━━━━━━━━━━━━━━━━━━━━\nGroup delivery is paused (recording to DB silently)."
+            "⏸️ <b>Forwarding Paused</b>\n\nGroup delivery is paused (recording silently)."
         )
         await msg_obj.reply_text(msg, parse_mode=ParseMode.HTML)
         return
@@ -4065,11 +4039,9 @@ async def toggle_forwarding_command(update: Update, context: ContextTypes.DEFAUL
             ]
         ])
         await msg_obj.reply_text(
-            "⏸️ <b>Pause OTP Group Forwarding</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "Are you sure you want to pause OTP forwarding to Telegram groups?\n\n"
-            "• Delivery to Telegram groups will be paused.\n"
-            "• Bot will continue recording all incoming OTPs silently into SQLite database & 28h history.",
+            "⏸️ <b>Pause OTP Forwarding?</b>\n\n"
+            "•\u00a0\u00a0Group delivery will be paused.\n"
+            "•\u00a0\u00a0Incoming OTPs will still record to DB.",
             parse_mode=ParseMode.HTML,
             reply_markup=confirm_kb,
         )
@@ -4081,11 +4053,9 @@ async def toggle_forwarding_command(update: Update, context: ContextTypes.DEFAUL
             ]
         ])
         await msg_obj.reply_text(
-            "▶️ <b>Resume OTP Group Forwarding</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "Are you sure you want to resume OTP forwarding to Telegram groups?\n\n"
-            "• Delivery to Telegram groups will resume in real-time.\n"
-            "• Zero Spam: Only new OTPs arriving from now on will be forwarded.",
+            "▶️ <b>Resume OTP Forwarding?</b>\n\n"
+            "•\u00a0\u00a0Group delivery will resume in real time.\n"
+            "•\u00a0\u00a0Only new OTPs from now on are forwarded.",
             parse_mode=ParseMode.HTML,
             reply_markup=confirm_kb,
         )
@@ -4129,10 +4099,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_name = get_bot_name()
     # Show welcome greeting with the persistent admin keyboard on /start
     await msg_obj.reply_text(
-        f"👑 <b>Welcome, Admin!</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"<i>Logged in to <b>{html.escape(bot_name)}</b> Control Panel.\n"
-        f"Use the menu buttons below to manage the bot.</i>",
+        f"👑 <b>{html.escape(bot_name)}</b>  ·  Admin\n\n"
+        f"<i>Use the menu below to manage forwarding, groups, and settings.</i>",
         parse_mode=ParseMode.HTML,
         reply_markup=get_admin_reply_keyboard(),
     )
@@ -4162,9 +4130,7 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     clear_all_admin_states(context)
     await msg_obj.reply_text(
-        "❌ <b>Operation Cancelled.</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "No changes were made. All current settings remain active.",
+        "❌ <b>Cancelled</b>\n\nNo changes were made.",
         parse_mode=ParseMode.HTML,
         reply_markup=get_admin_reply_keyboard(),
     )
@@ -4174,53 +4140,50 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
     data = load_stored_data()
     curr_fmt = str(data.get("sms_format", "long")).lower().strip()
 
-    short_active = "✅ (Active)" if curr_fmt == "short" else "⚪"
-    long_active  = "✅ (Active)" if curr_fmt == "long" else "⚪"
-    classic_active = "✅ (Active)" if curr_fmt == "classic_short" else "⚪"
-    classic_long_active = "✅ (Active)" if curr_fmt == "classic_long" else "⚪"
-    glass_short_active = "✅ (Active)" if curr_fmt == "glass_short" else "⚪"
-    glass_long_active = "✅ (Active)" if curr_fmt == "glass_long" else "⚪"
-    compact_short_active = "✅ (Active)" if curr_fmt == "compact_short" else "⚪"
-    compact_long_active = "✅ (Active)" if curr_fmt == "compact_long" else "⚪"
+    short_active = "  ·  <b>Active</b>" if curr_fmt == "short" else ""
+    long_active  = "  ·  <b>Active</b>" if curr_fmt == "long" else ""
+    classic_active = "  ·  <b>Active</b>" if curr_fmt == "classic_short" else ""
+    classic_long_active = "  ·  <b>Active</b>" if curr_fmt == "classic_long" else ""
+    glass_short_active = "  ·  <b>Active</b>" if curr_fmt == "glass_short" else ""
+    glass_long_active = "  ·  <b>Active</b>" if curr_fmt == "glass_long" else ""
+    compact_short_active = "  ·  <b>Active</b>" if curr_fmt == "compact_short" else ""
+    compact_long_active = "  ·  <b>Active</b>" if curr_fmt == "compact_long" else ""
 
     if curr_fmt == "short":
-        active_label = "Short ⚡ (Header Country)"
+        active_label = "Short"
     elif curr_fmt == "classic_short":
-        active_label = "Classic Short ⏳ (Compact, No Extra Space)"
+        active_label = "Classic Short"
     elif curr_fmt == "classic_long":
-        active_label = "Classic Long ⏳ (Compact + Full SMS)"
+        active_label = "Classic Long"
     elif curr_fmt == "glass_short":
-        active_label = "Direct Short 📩 (Signal Ticket)"
+        active_label = "Direct Short"
     elif curr_fmt == "glass_long":
-        active_label = "Direct Full 📩 (Open SMS Card)"
+        active_label = "Direct Full"
     elif curr_fmt == "compact_short":
-        active_label = "Direct Compact 📩 (Tight, No Space)"
+        active_label = "Direct Compact"
     elif curr_fmt == "compact_long":
-        active_label = "Compact Full 📩 (Tight + Full SMS)"
+        active_label = "Compact Full"
     else:
-        active_label = "Long 📜 (With View Full SMS)"
+        active_label = "Long"
 
     msg = (
-        "📋 <b>SMS Format Configuration</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"🟢 <b>Active Mode:</b>   {active_label}\n\n"
-        "<b>Available Modes:</b>\n"
-        f"• <b>Short (Header Country)</b> {short_active}\n"
-        "  Country in header (NEW SMS • DE 🇩🇪), Service & Number with ✦, clean spacing.\n\n"
-        f"• <b>Long (With Full SMS)</b> {long_active}\n"
-        "  Full card with expandable '💬 FULL SMS' blockquote.\n\n"
-        f"• <b>Classic Short (Compact)</b> {classic_active}\n"
-        "  Country in header (NEW SMS • DE 🇩🇪), Service & Number with ✦, without extra spacing.\n\n"
-        f"• <b>Classic Long (Compact + Full SMS)</b> {classic_long_active}\n"
-        "  Compact layout with ✦ marks and expandable '💬 FULL SMS' blockquote.\n\n"
-        f"• <b>Direct Short (Signal Ticket)</b> {glass_short_active}\n"
-        "  Top bar (📩 WHATSAPP • DE 🇩🇪), ✦ Number below, fixed compact card size.\n\n"
-        f"• <b>Direct Full (Open SMS Card)</b> {glass_long_active}\n"
-        "  Top bar + ✦ Number + 💬 FULL SMS shown directly on card (no quote box).\n\n"
-        f"• <b>Direct Compact (Tight, No Space)</b> {compact_short_active}\n"
-        "  Top bar + ✦ Number directly stacked without any blank line.\n\n"
-        f"• <b>Compact Full (Tight + Full SMS)</b> {compact_long_active}\n"
-        "  Top bar + ✦ Number + 💬 FULL SMS stacked without any blank line.\n"
+        f"📋 <b>SMS Format</b>  ·  {active_label}\n\n"
+        f"•\u00a0\u00a0<b>Short</b>{short_active}\n"
+        "  Header country with clean spacing.\n\n"
+        f"•\u00a0\u00a0<b>Long</b>{long_active}\n"
+        "  Full card with expandable SMS blockquote.\n\n"
+        f"•\u00a0\u00a0<b>Classic Short</b>{classic_active}\n"
+        "  Compact header layout without extra spacing.\n\n"
+        f"•\u00a0\u00a0<b>Classic Long</b>{classic_long_active}\n"
+        "  Compact layout with expandable SMS blockquote.\n\n"
+        f"•\u00a0\u00a0<b>Direct Short</b>{glass_short_active}\n"
+        "  Fixed-width header with number below.\n\n"
+        f"•\u00a0\u00a0<b>Direct Full</b>{glass_long_active}\n"
+        "  Fixed-width header, number, and open SMS.\n\n"
+        f"•\u00a0\u00a0<b>Direct Compact</b>{compact_short_active}\n"
+        "  Tight card without blank line spacing.\n\n"
+        f"•\u00a0\u00a0<b>Compact Full</b>{compact_long_active}\n"
+        "  Tight card with open SMS and no blank line.\n"
     )
 
     if preview_mode == "short":
@@ -4366,16 +4329,11 @@ def build_api_url_view() -> Tuple[str, InlineKeyboardMarkup]:
     """Builds interactive configuration panel for Thirdwave API Base URL."""
     masked_url = client.base_url
     msg = (
-        "🌐 <b>Thirdwave API URL Configuration</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Active Base URL:</b> <code>{html.escape(masked_url)}</code>\n"
-        f"• <b>Traffic Endpoint:</b> <code>{html.escape(masked_url)}/api/v1/traffic</code>\n"
-        f"• <b>Default System URL:</b> <code>https://thirdwave.im</code>\n"
-        f"• <b>Cloud Database:</b> Synced & Encrypted 🔒\n\n"
-        "💬 <b>How to update:</b>\n"
-        "• Click <b>✏️ Enter New URL</b> below to type in chat.\n"
-        "• Or send: <code>/seturl &lt;new_url&gt;</code>\n"
-        "<i>Example:</i> <code>/seturl https://thirdwave.im</code>"
+        "🌐 <b>API Base URL</b>\n\n"
+        f"•\u00a0\u00a0Active: <code>{html.escape(masked_url)}</code>\n"
+        f"•\u00a0\u00a0Endpoint: <code>{html.escape(masked_url)}/api/v1/traffic</code>\n"
+        f"•\u00a0\u00a0Default: <code>https://thirdwave.im</code>\n\n"
+        "<i>Tap below to enter a URL or use</i> <code>/seturl &lt;url&gt;</code>"
     )
     kb = [
         [
@@ -4389,15 +4347,16 @@ def build_api_url_view() -> Tuple[str, InlineKeyboardMarkup]:
 def build_api_key_view() -> Tuple[str, InlineKeyboardMarkup]:
     """Builds interactive configuration panel for Thirdwave API Key."""
     current_key = client.api_key
-    masked_key = f"{current_key[:8]}...{current_key[-4:]}" if len(current_key) > 12 else (current_key or "<i>None</i>")
+    key_display = (
+        f"<code>{html.escape(current_key[:8])}...{html.escape(current_key[-4:])}</code>"
+        if len(current_key) > 12
+        else (f"<code>{html.escape(current_key)}</code>" if current_key else "<i>None</i>")
+    )
     msg = (
-        "🔑 <b>Thirdwave API Key Configuration</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Active API Key:</b> <code>{masked_key}</code>\n"
-        f"• <b>Status:</b> {'Configured ✅' if current_key else 'Missing ⚠️'}\n"
-        f"• <b>Cloud Database:</b> Synced & Encrypted 🔒\n\n"
-        "💬 <b>How to update:</b>\n"
-        "• Tap <b>✏️ Enter New Key</b> below to send your new API key in chat."
+        "🔑 <b>API Key</b>\n\n"
+        f"•\u00a0\u00a0Key: {key_display}\n"
+        f"•\u00a0\u00a0Status: <b>{'Configured' if current_key else 'Missing'}</b>\n\n"
+        "<i>Tap below to update your Thirdwave API key.</i>"
     )
     kb = [
         [InlineKeyboardButton("✏️ Enter New Key", callback_data="prompt_set_key")],
@@ -4410,15 +4369,10 @@ def build_bot_name_view() -> Tuple[str, InlineKeyboardMarkup]:
     curr_name = get_bot_name()
     default_name = get_default_bot_name()
     msg = (
-        "✏️ <b>Bot Display Name Configuration</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Current Active Name:</b> <code>{html.escape(curr_name)}</code>\n"
-        f"• <b>Default System Name:</b> <code>{html.escape(default_name)}</code>\n"
-        f"• <b>Telegram Bot API:</b> Official Name Sync ✅\n"
-        f"• <b>Cloud Database:</b> Synced & Encrypted 🔒\n\n"
-        "💬 <b>How to update:</b>\n"
-        "• Click <b>✏️ Change Bot Name</b> below to type in chat.\n"
-        "• Click <b>🔄 Reset to Default</b> to restore system name."
+        "✏️ <b>Bot Name</b>\n\n"
+        f"•\u00a0\u00a0Active: <code>{html.escape(curr_name)}</code>\n"
+        f"•\u00a0\u00a0Default: <code>{html.escape(default_name)}</code>\n\n"
+        "<i>Tap below to rename the bot or restore default.</i>"
     )
     kb = [
         [
@@ -4485,11 +4439,9 @@ async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYP
             else:
                 mode_label = "Short (Header Country ⚡)"
             await msg_obj.reply_text(
-                f"✅ <b>SMS Delivery Format Updated!</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"• <b>Active Mode:</b> <code>{mode_label}</code>\n"
-                f"• <b>Format Setting:</b> <code>{html.escape(target_fmt)}</code>\n"
-                f"• <b>Database:</b> <code>Saved Secretly to Cloud Store 🔒</code>",
+                f"✅ <b>SMS Format Updated</b>\n\n"
+                f"•\u00a0\u00a0Mode: <b>{html.escape(mode_label)}</b>\n"
+                f"•\u00a0\u00a0Key: <code>{html.escape(target_fmt)}</code>",
                 parse_mode=ParseMode.HTML
             )
             return
@@ -4506,12 +4458,9 @@ def build_buttons_list_view() -> Tuple[str, InlineKeyboardMarkup]:
     buttons = get_custom_link_buttons()
     if not buttons:
         msg = (
-            "🗂️ <b>Custom Link Buttons Management</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "ℹ️ <i>No custom buttons are currently configured.</i>\n\n"
-            "Custom buttons appear side-by-side on all forwarded group OTP messages.\n\n"
-            "Tap <b>➕ Add New Button</b> below to create one, or use:\n"
-            "<code>/setlink Button Name | https://yourlink.com</code>"
+            "🗂️ <b>Custom Buttons</b>  ·  0\n\n"
+            "<i>No buttons configured. Buttons appear on forwarded group OTPs.</i>\n\n"
+            "<code>/setlink Name | https://link</code>"
         )
         kb = [
             [InlineKeyboardButton("➕ Add New Button", callback_data="link_add_prompt")],
@@ -4520,11 +4469,9 @@ def build_buttons_list_view() -> Tuple[str, InlineKeyboardMarkup]:
         return msg, InlineKeyboardMarkup(kb)
 
     msg = (
-        f"🗂️ <b>Custom Link Buttons Management</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Total Active Buttons:</b> <code>{len(buttons)}</code>\n"
-        f"• <b>Display Mode:</b> <code>Side-by-Side in Group OTPs ⚡</code>\n\n"
-        f"Select a button below to edit its name, change link, or remove it:"
+        f"🗂️ <b>Custom Buttons</b>  ·  {len(buttons)}\n\n"
+        f"•\u00a0\u00a0Active: <b>{len(buttons)}</b>  ·  Layout: <b>Side-by-Side</b>\n\n"
+        f"<i>Select a button below to edit or remove it.</i>"
     )
     kb = []
     for b in buttons:
@@ -4548,11 +4495,10 @@ def build_button_detail_view(btn_id: str) -> Tuple[Optional[str], Optional[Inlin
         return None, None
 
     msg = (
-        f"⚙️ <b>Manage Custom Button #{found['id']}</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Button Label:</b> <code>{html.escape(found['text'])}</code>\n"
-        f"• <b>Target URL:</b> <code>{html.escape(found['url'])}</code>\n\n"
-        f"Choose an option below to modify or remove this button:"
+        f"⚙️ <b>Button #{found['id']}</b>\n\n"
+        f"•\u00a0\u00a0Label: <b>{html.escape(found['text'])}</b>\n"
+        f"•\u00a0\u00a0URL: <code>{html.escape(found['url'])}</code>\n\n"
+        f"<i>Choose an option below to modify or remove.</i>"
     )
     kb = [
         [
@@ -4577,12 +4523,10 @@ def build_button_delete_confirm_view(btn_id: str) -> Tuple[Optional[str], Option
         return None, None
 
     msg = (
-        f"⚠️ <b>Confirm Button Removal</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"Are you sure you want to remove this button?\n\n"
-        f"• <b>Button:</b> <code>{html.escape(found['text'])}</code>\n"
-        f"• <b>URL:</b> <code>{html.escape(found['url'])}</code>\n\n"
-        f"It will be removed immediately from all group OTP messages."
+        f"⚠️ <b>Remove Button?</b>\n\n"
+        f"•\u00a0\u00a0Button: <b>{html.escape(found['text'])}</b>\n"
+        f"•\u00a0\u00a0URL: <code>{html.escape(found['url'])}</code>\n\n"
+        f"<i>It will be removed from all forwarded group OTPs.</i>"
     )
     kb = [
         [
@@ -4596,10 +4540,9 @@ def build_buttons_clear_all_confirm_view() -> Tuple[str, InlineKeyboardMarkup]:
     """Builds confirmation dialog for clearing all custom buttons."""
     buttons = get_custom_link_buttons()
     msg = (
-        f"⚠️ <b>Confirm Clear All Buttons</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"Are you sure you want to remove <b>ALL ({len(buttons)})</b> custom buttons?\n\n"
-        f"This action cannot be undone. OTP messages will only display the OTP copy button."
+        f"⚠️ <b>Clear All Buttons?</b>\n\n"
+        f"Remove all <b>{len(buttons)}</b> custom buttons?\n\n"
+        f"<i>OTP messages will only display the OTP copy button.</i>"
     )
     kb = [
         [
@@ -4666,13 +4609,10 @@ async def setlink_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_custom_link_buttons(buttons)
     _, detail_kb = build_button_detail_view(active_id)
     await msg_obj.reply_text(
-        f"✅ <b>Custom Link Button Configured!</b> ({action_note})\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Button Label:</b> <code>{html.escape(btn_text)}</code>\n"
-        f"• <b>Target URL:</b> <code>{html.escape(btn_url)}</code>\n"
-        f"• <b>Total Active Buttons:</b> <code>{len(buttons)}</code> (displayed side-by-side in group OTPs)\n"
-        f"• <b>Database:</b> <code>Saved Secretly to Cloud Store 🔒</code>\n\n"
-        f"Every forwarded SMS will now include all active buttons side-by-side.",
+        f"✅ <b>Button Saved</b>  ·  {html.escape(action_note)}\n\n"
+        f"•\u00a0\u00a0Label: <b>{html.escape(btn_text)}</b>\n"
+        f"•\u00a0\u00a0URL: <code>{html.escape(btn_url)}</code>\n"
+        f"•\u00a0\u00a0Active Buttons: <b>{len(buttons)}</b>",
         parse_mode=ParseMode.HTML,
         reply_markup=detail_kb
     )
@@ -4719,34 +4659,20 @@ def build_groups_list_view() -> Tuple[str, InlineKeyboardMarkup]:
     dynamic_groups = get_dynamic_linked_groups()
     total_count = len(all_targets)
 
-    # Progress capacity indicator
-    filled = min(total_count, 10)
-    progress_bar = "🟩" * filled + "⬜" * (10 - filled)
-
     msg = (
-        "👥 <b>Linked Forwarding Groups Management</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Active Forwarding Groups:</b> {total_count} / {MAX_FORWARDING_GROUPS}\n"
-        f"• <b>Group Limits:</b> Min: {MIN_FORWARDING_GROUPS} | Max: {MAX_FORWARDING_GROUPS}\n"
-        f"• <b>Capacity:</b> [{progress_bar}]\n"
-        f"• <b>Forwarding Mode:</b> Simultaneous Multi-Group ⚡\n\n"
-        "<b>Currently Active Forwarding Groups:</b>\n"
+        f"👥 <b>Forwarding Groups</b>  ·  {total_count}/{MAX_FORWARDING_GROUPS}\n\n"
+        f"•\u00a0\u00a0Limit: <b>{MIN_FORWARDING_GROUPS}–{MAX_FORWARDING_GROUPS} groups</b>  ·  Mode: <b>Simultaneous</b>\n\n"
+        "<b>Active Groups</b>\n"
     )
     if all_targets:
         for idx, gid in enumerate(all_targets, 1):
             is_dyn = gid in dynamic_groups
-            tag = "Admin Added ⚡" if is_dyn else "Server Secret 🔒"
-            msg += f"  <b>{idx}.</b> <code>{gid}</code> ({tag})\n"
+            tag = "Added" if is_dyn else "Env"
+            msg += f"{idx}. <code>{gid}</code>  ·  {tag}\n"
     else:
-        msg += "  <i>⚠️ No groups configured. Bot requires at least 1 group!</i>\n"
+        msg += "<i>No groups configured (minimum 1 required).</i>\n"
 
-    msg += (
-        "\n━━━━━━━━━━━━━━━━━━━━\n"
-        "💬 <b>Group Forwarding Controls:</b>\n"
-        "• Tap <b>➕ Link New Group</b> below to send the Telegram Group Chat ID.\n"
-        "• Tap <b>🗑️ Remove</b> next to any linked group to disconnect it.\n\n"
-        "<i>⚡ All OTPs are forwarded simultaneously to all active groups. Only custom link buttons appear on OTP messages (group IDs are never shown as buttons). Group chat command menus are automatically cleared (0 commands).</i>"
-    )
+    msg += "\n<i>Tap below to link or remove a group. OTPs forward to all active groups.</i>"
 
     kb = []
     # Dynamic group remove buttons
@@ -4798,11 +4724,9 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(all_current) >= MAX_FORWARDING_GROUPS:
         text, markup = build_groups_list_view()
         await msg_obj.reply_text(
-            f"⚠️ <b>Maximum Group Limit Reached</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"You already have <b>{len(all_current)} / {MAX_FORWARDING_GROUPS} active groups</b>.\n"
-            f"The system allows a minimum of 1 and maximum of 10 groups.\n"
-            f"Please remove an existing group before adding a new one.",
+            f"⚠️ <b>Group Limit Reached</b>\n\n"
+            f"Active groups: <b>{len(all_current)}/{MAX_FORWARDING_GROUPS}</b>.\n"
+            f"Remove an existing group before adding another.",
             parse_mode=ParseMode.HTML,
             reply_markup=markup
         )
@@ -4831,13 +4755,10 @@ async def addgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text, markup = build_groups_list_view()
     new_total = len(get_target_group_chat_ids())
     await msg_obj.reply_text(
-        f"✅ <b>Group Linked Successfully!</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Group Chat ID:</b> <code>{new_gid}</code>\n"
-        f"• <b>Active Groups:</b> <code>{new_total} / {MAX_FORWARDING_GROUPS}</code> (Limit: 1 - 10)\n"
-        f"• <b>Group Commands:</b> <code>Wiped from group chat menu (0 commands) 🔒</code>\n"
-        f"• <b>Forwarding:</b> <code>Real-Time Multi-Group Active ⚡</code>\n"
-        f"• <b>Cloud DB:</b> <code>Synced ☁️</code>",
+        f"✅ <b>Group Linked</b>\n\n"
+        f"•\u00a0\u00a0Group ID: <code>{new_gid}</code>\n"
+        f"•\u00a0\u00a0Active Groups: <b>{new_total}/{MAX_FORWARDING_GROUPS}</b>\n"
+        f"•\u00a0\u00a0Group Menu: <b>Cleared</b>",
         parse_mode=ParseMode.HTML,
         reply_markup=markup
     )
@@ -4868,11 +4789,8 @@ async def delgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(all_current) <= MIN_FORWARDING_GROUPS:
         text, markup = build_groups_list_view()
         await msg_obj.reply_text(
-            f"⚠️ <b>Minimum Group Limit Reached</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"You currently have <b>{len(all_current)} active group</b>.\n"
-            f"The bot requires at least <b>1 group</b> for OTP forwarding (Limit: 1 - 10 groups).\n"
-            f"You cannot remove the only remaining active group.",
+            f"⚠️ <b>Minimum Limit Reached</b>\n\n"
+            f"Active groups: <b>{len(all_current)}</b> (minimum <b>{MIN_FORWARDING_GROUPS}</b> required).",
             parse_mode=ParseMode.HTML,
             reply_markup=markup
         )
@@ -4945,12 +4863,10 @@ async def setbtnname_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     save_custom_link_buttons(buttons)
     _, detail_kb = build_button_detail_view(found["id"])
     await msg_obj.reply_text(
-        f"✅ <b>Button Renamed!</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Old Name:</b> <code>{html.escape(old_name)}</code>\n"
-        f"• <b>New Name:</b> <code>{html.escape(new_name)}</code>\n"
-        f"• <b>URL:</b> <code>{html.escape(found['url'])}</code>\n"
-        f"• <b>Synced:</b> <code>Cloud DB 🔒</code>",
+        f"✅ <b>Button Renamed</b>\n\n"
+        f"•\u00a0\u00a0Previous: <code>{html.escape(old_name)}</code>\n"
+        f"•\u00a0\u00a0Current: <code>{html.escape(new_name)}</code>\n"
+        f"•\u00a0\u00a0URL: <code>{html.escape(found['url'])}</code>",
         parse_mode=ParseMode.HTML,
         reply_markup=detail_kb
     )
@@ -4993,12 +4909,10 @@ async def setbtnurl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_custom_link_buttons(buttons)
     _, detail_kb = build_button_detail_view(found["id"])
     await msg_obj.reply_text(
-        f"✅ <b>Button URL Updated!</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>Button:</b> <code>{html.escape(found['text'])}</code>\n"
-        f"• <b>Old URL:</b> <code>{html.escape(old_url)}</code>\n"
-        f"• <b>New URL:</b> <code>{html.escape(new_url)}</code>\n"
-        f"• <b>Synced:</b> <code>Cloud DB 🔒</code>",
+        f"✅ <b>Button URL Updated</b>\n\n"
+        f"•\u00a0\u00a0Button: <b>{html.escape(found['text'])}</b>\n"
+        f"•\u00a0\u00a0Previous: <code>{html.escape(old_url)}</code>\n"
+        f"•\u00a0\u00a0Current: <code>{html.escape(new_url)}</code>",
         parse_mode=ParseMode.HTML,
         reply_markup=detail_kb
     )
@@ -5097,13 +5011,10 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
         bot_name = get_bot_name()
         revoked_msg = (
-            "⛔ <b>Administrator Privileges Revoked</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"Your administrator access on <b>{html.escape(bot_name)}</b> has been revoked.\n"
-            "You no longer have permission to view or manage the OTP Bot Dashboard.\n\n"
-            "• <b>Account Status:</b> <code>Standard User</code>\n"
-            "• <b>Admin Privileges:</b> <code>Disabled</code>\n"
-            "• <b>Dashboard:</b> <code>Cleared & Deactivated</code>"
+            "⛔ <b>Admin Access Revoked</b>\n\n"
+            f"Your administrator access on <b>{html.escape(bot_name)}</b> has been removed.\n\n"
+            "•\u00a0\u00a0Status: <b>Standard User</b>\n"
+            "•\u00a0\u00a0Dashboard: <b>Disabled</b>"
         )
         await _safe_edit_query_message(query, revoked_msg, parse_mode=ParseMode.HTML, fallback_reply=False)
 
@@ -5171,11 +5082,9 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                 ]
             ])
             ask_text = (
-                "⏸️ <b>Pause OTP Group Forwarding</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "Are you sure you want to pause OTP forwarding to Telegram groups?\n\n"
-                "• Delivery to Telegram groups will be paused.\n"
-                "• Bot will continue recording all incoming OTPs silently into SQLite database & 28h history."
+                "⏸️ <b>Pause OTP Forwarding?</b>\n\n"
+                "•\u00a0\u00a0Group delivery will be paused.\n"
+                "•\u00a0\u00a0Incoming OTPs will still record to DB."
             )
             await _safe_edit_query_message(query, ask_text, parse_mode=ParseMode.HTML, reply_markup=confirm_kb)
 
@@ -5187,25 +5096,19 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                 ]
             ])
             ask_text = (
-                "▶️ <b>Resume OTP Group Forwarding</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "Are you sure you want to resume OTP forwarding to Telegram groups?\n\n"
-                "• Delivery to Telegram groups will resume in real-time.\n"
-                "• Zero Spam: Only new OTPs arriving from now on will be forwarded."
+                "▶️ <b>Resume OTP Forwarding?</b>\n\n"
+                "•\u00a0\u00a0Group delivery will resume in real time.\n"
+                "•\u00a0\u00a0Only new OTPs from now on are forwarded."
             )
             await _safe_edit_query_message(query, ask_text, parse_mode=ParseMode.HTML, reply_markup=confirm_kb)
 
         elif query.data in ("confirm_fwd_off", "fwd_confirm_off", "fwd_disable"):
             set_otp_forwarding_enabled(False)
             off_text = (
-                "⏸️ <b>OTP Forwarding: Paused</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "• <b>Status:</b> ⏸️ <code>PAUSED (Silent Mode)</code>\n"
-                "• <b>Group Delivery:</b> <code>PAUSED (No messages sent to groups)</code>\n"
-                "• <b>Database & Retention:</b> <code>100% Active (Recording silently)</code>\n"
-                "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "<i>Incoming OTPs continue recording silently in SQLite & 28h history. Groups will not receive forwards until resumed.</i>"
+                "⏸️ <b>Forwarding Paused</b>\n\n"
+                "•\u00a0\u00a0Group Delivery: <b>Paused</b>\n"
+                "•\u00a0\u00a0Database: <b>Recording silently (28h)</b>\n\n"
+                "<i>Groups will not receive OTPs until resumed.</i>"
             )
             await _safe_edit_query_message(query, off_text, parse_mode=ParseMode.HTML, reply_markup=None)
             create_safe_task(sync_data_to_secret_db())
@@ -5213,27 +5116,21 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         elif query.data in ("confirm_fwd_on", "fwd_confirm_on", "fwd_enable"):
             set_otp_forwarding_enabled(True)
             on_text = (
-                "🟢 <b>OTP Forwarding: Resumed</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "• <b>Status:</b> 🟢 <code>ACTIVE (Live Mode)</code>\n"
-                "• <b>Group Delivery:</b> <code>ACTIVE (Delivered live to groups)</code>\n"
-                "• <b>Database & Retention:</b> <code>100% Synced (28h)</code>\n"
-                "• <b>Zero Spam Shield:</b> <code>Active (Pause OTPs suppressed)</code>\n"
-                "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "<i>Live forwarding is active. Every new incoming OTP is delivered to your group(s) in real time.</i>"
+                "🟢 <b>Forwarding Resumed</b>\n\n"
+                "•\u00a0\u00a0Group Delivery: <b>Live</b>\n"
+                "•\u00a0\u00a0Zero Spam: <b>Old OTPs suppressed</b>\n\n"
+                "<i>New incoming OTPs are delivered in real time.</i>"
             )
             await _safe_edit_query_message(query, on_text, parse_mode=ParseMode.HTML, reply_markup=None)
             create_safe_task(sync_data_to_secret_db())
 
         elif query.data in ("cancel_fwd", "fwd_cancel"):
             is_fwd = is_otp_forwarding_enabled()
-            status_text = "🟢 <b>ACTIVE (Live Mode)</b>" if is_fwd else "⏸️ <b>PAUSED (Silent Mode)</b>"
+            status_text = "<b>Active</b>" if is_fwd else "<b>Paused</b>"
             cancel_text = (
-                "❌ <b>Forwarding Change Cancelled</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                f"• <b>Current State:</b> {status_text}\n"
-                "No changes were made to forwarding settings."
+                "❌ <b>Cancelled</b>\n\n"
+                f"•\u00a0\u00a0Forwarding: {status_text}\n"
+                "No changes were made."
             )
             await _safe_edit_query_message(query, cancel_text, parse_mode=ParseMode.HTML, reply_markup=None)
 
@@ -5242,19 +5139,11 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             new_state = not curr
             set_otp_forwarding_enabled(new_state)
             create_safe_task(sync_data_to_secret_db())
-            action_text = "Turned ON 🟢" if new_state else "Turned OFF ⏸️"
-            status_badge = "🟢 <code>ACTIVE (Live Mode)</code>" if new_state else "⏸️ <code>PAUSED (Silent Mode)</code>"
-            delivery_badge = "<code>Live Delivery ON</code>" if new_state else "<code>Delivery Stopped</code>"
             await _safe_edit_query_message(
                 query,
-                f"{'🟢' if new_state else '⏸️'} <b>OTP Forwarding {action_text}</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                f"• <b>Delivery Status:</b> {status_badge}\n"
-                f"• <b>Telegram Groups:</b> {delivery_badge}\n"
-                "• <b>Database & Retention:</b> <code>100% Synced (28h)</code>\n"
-                "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                f"<i>{'Live group forwarding is active.' if new_state else 'Group forwarding paused. Recording silently.'}</i>",
+                f"{'🟢' if new_state else '⏸️'} <b>Forwarding {'Resumed' if new_state else 'Paused'}</b>\n\n"
+                f"•\u00a0\u00a0Delivery: <b>{'Live' if new_state else 'Paused'}</b>\n"
+                f"•\u00a0\u00a0Database: <b>{'28h synced' if new_state else 'Recording silently'}</b>",
                 parse_mode=ParseMode.HTML,
                 fallback_reply=False,
             )
@@ -5300,11 +5189,9 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             ])
             await _safe_edit_query_message(
                 query,
-                f"✅ <b>Button Removed!</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"<code>{deleted_name}</code> has been removed from all forwarded group OTP messages.\n\n"
-                f"• <b>Remaining Active Buttons:</b> <code>{len(new_list)}</code>\n"
-                f"• <b>Synced:</b> <code>Secret Cloud DB 🔒</code>",
+                f"✅ <b>Button Removed</b>\n\n"
+                f"<b>{deleted_name}</b> removed from forwarded OTPs.\n"
+                f"•\u00a0\u00a0Remaining: <b>{len(new_list)}</b>",
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb
             )
@@ -5323,10 +5210,8 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             ])
             await _safe_edit_query_message(
                 query,
-                "✅ <b>All Custom Buttons Cleared!</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "All custom buttons have been removed. Forwarded OTP messages will only display the OTP copy button.\n\n"
-                "• <b>Storage:</b> <code>Cleared and Synced to Cloud DB 🔒</code>",
+                "✅ <b>All Buttons Cleared</b>\n\n"
+                "Forwarded OTPs will only show the OTP copy button.",
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb
             )
@@ -5345,11 +5230,10 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                 ])
                 await _safe_edit_query_message(
                     query,
-                    f"✏️ <b>Change Name for #{found['id']}</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"• <b>Current Name:</b> <code>{html.escape(found['text'])}</code>\n"
-                    f"• <b>Target URL:</b> <code>{html.escape(found['url'])}</code>\n\n"
-                    f"💬 <b>Send the new button name</b> directly in this chat:",
+                    f"✏️ <b>Rename Button #{found['id']}</b>\n\n"
+                    f"•\u00a0\u00a0Current: <b>{html.escape(found['text'])}</b>\n"
+                    f"•\u00a0\u00a0URL: <code>{html.escape(found['url'])}</code>\n\n"
+                    f"<i>Send the new button name in chat.</i>",
                     parse_mode=ParseMode.HTML,
                     reply_markup=kb
                 )
@@ -5368,12 +5252,10 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                 ])
                 await _safe_edit_query_message(
                     query,
-                    f"🔗 <b>Change URL for #{found['id']}</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"• <b>Button:</b> <code>{html.escape(found['text'])}</code>\n"
-                    f"• <b>Current URL:</b> <code>{html.escape(found['url'])}</code>\n\n"
-                    f"💬 <b>Send the new link URL or bot username</b> directly in this chat:\n"
-                    f"<code>https://...</code> or <code>@bot_username</code>",
+                    f"🔗 <b>Update URL #{found['id']}</b>\n\n"
+                    f"•\u00a0\u00a0Button: <b>{html.escape(found['text'])}</b>\n"
+                    f"•\u00a0\u00a0Current: <code>{html.escape(found['url'])}</code>\n\n"
+                    f"<i>Send a new URL or</i> <code>@bot_username</code>.",
                     parse_mode=ParseMode.HTML,
                     reply_markup=kb
                 )
@@ -5388,16 +5270,13 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             ])
             await _safe_edit_query_message(
                 query,
-                "➕ <b>Add New Custom Button</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "Custom buttons appear side-by-side below OTP messages in groups.\n\n"
-                "💬 <b>Send button name and link or bot username</b> in chat using this format:\n"
-                "<code>Button Name | @bot_username</code>\n"
-                "<i>or:</i> <code>Button Name | https://yourlink.com</code>\n\n"
+                "➕ <b>Add Custom Button</b>\n\n"
+                "<i>Send the label and link in this format:</i>\n"
+                "<code>Name | https://yourlink.com</code>\n"
+                "<code>Name | @bot_username</code>\n\n"
                 "<i>Examples:</i>\n"
-                "• <code>🤖 Number Bot | @my_number_bot</code>\n"
-                "• <code>📢 Join Channel | https://t.me/mychannel</code>\n"
-                "• <code>👥 Support | @mysupport</code>",
+                "•\u00a0\u00a0<code>Get Number | @my_number_bot</code>\n"
+                "•\u00a0\u00a0<code>Channel | https://t.me/channel</code>",
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb
             )
@@ -5427,12 +5306,10 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             ])
             await _safe_edit_query_message(
                 query,
-                f"⚠️ <b>Confirm Group Removal</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"Are you sure you want to unlink group <code>{html.escape(gid_str)}</code> from OTP forwarding?\n"
-                f"• <b>Active Groups:</b> <code>{len(all_current)} / {MAX_FORWARDING_GROUPS}</code>\n"
-                f"• <b>After Removal:</b> <code>{len(all_current) - 1} / {MAX_FORWARDING_GROUPS}</code>\n\n"
-                f"OTPs will no longer be forwarded to this group.",
+                f"⚠️ <b>Unlink Group?</b>\n\n"
+                f"Group: <code>{html.escape(gid_str)}</code>\n"
+                f"•\u00a0\u00a0Active Groups: <b>{len(all_current)}/{MAX_FORWARDING_GROUPS}</b> → <b>{len(all_current) - 1}/{MAX_FORWARDING_GROUPS}</b>\n\n"
+                f"<i>OTPs will stop forwarding to this group.</i>",
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb
             )
@@ -5471,10 +5348,9 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             ])
             await _safe_edit_query_message(
                 query,
-                "⚠️ <b>Confirm Clear Added Groups</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "Are you sure you want to remove all admin-added forwarding groups?\n"
-                "(Server secret groups will remain active).",
+                "⚠️ <b>Clear Added Groups?</b>\n\n"
+                "Remove all admin-added forwarding groups?\n"
+                "<i>Environment groups remain active.</i>",
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb
             )
@@ -5503,11 +5379,9 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             ])
             await _safe_edit_query_message(
                 query,
-                f"➕ <b>Link New Forwarding Group</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"• <b>Active Groups:</b> <code>{len(all_current)} / {MAX_FORWARDING_GROUPS}</code> (Limit: 1 - 10)\n\n"
-                f"💬 <b>Send the numerical chat ID</b> of the group below (e.g. <code>-1004473973263</code>):\n\n"
-                f"<i>Note: Make sure this bot is added to the group as an admin. Commands will be automatically wiped from the group chat menu (0 commands).</i>",
+                f"➕ <b>Link Forwarding Group</b>  ·  {len(all_current)}/{MAX_FORWARDING_GROUPS}\n\n"
+                f"<i>Send the numeric Group Chat ID (e.g.</i> <code>-1004473973263</code><i>).</i>\n\n"
+                f"<i>Ensure the bot is an admin in the target group.</i>",
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb
             )
@@ -5517,9 +5391,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             await _answer("Operation Cancelled ❌")
             await _safe_edit_query_message(
                 query,
-                "❌ <b>Operation Cancelled</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "No changes were made. All current settings remain active.",
+                "❌ <b>Cancelled</b>\n\nNo changes were made.",
                 parse_mode=ParseMode.HTML,
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("📊 View Live Status", callback_data="refresh_dash_msg")]
@@ -5538,12 +5410,9 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             ])
             await _safe_edit_query_message(
                 query,
-                f"🌐 <b>Update API Base URL</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"• <b>Current URL:</b> <code>{html.escape(client.base_url)}</code>\n\n"
-                f"💬 <b>Please send the new API URL</b> directly in this chat:\n"
-                f"<i>Example:</i> <code>https://thirdwave.im</code>\n\n"
-                f"Or click <b>❌ Cancel</b> below to abort.",
+                f"🌐 <b>Update API URL</b>\n\n"
+                f"•\u00a0\u00a0Current: <code>{html.escape(client.base_url)}</code>\n\n"
+                f"<i>Send the new API URL in chat (e.g.</i> <code>https://thirdwave.im</code><i>).</i>",
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb
             )
@@ -5578,12 +5447,10 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             ])
             await _safe_edit_query_message(
                 query,
-                f"🔑 <b>Update Thirdwave API Key</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"• <b>Current Key:</b> {masked_html}\n\n"
-                f"💬 <b>Please send your new API Key</b> directly in this chat:\n"
-                f"<i>Example:</i> <code>tw_live_1234567890abcdef</code>\n\n"
-                f"Or click <b>❌ Cancel</b> below to abort.",
+                f"🔑 <b>Update API Key</b>\n\n"
+                f"•\u00a0\u00a0Current: {masked_html}\n\n"
+                f"<i>Send your new API key in chat.</i>\n"
+                f"<i>Example:</i> <code>tw_live_1234567890abcdef</code>",
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb
             )
@@ -5604,12 +5471,9 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             ])
             await _safe_edit_query_message(
                 query,
-                f"✏️ <b>Change Bot Display Name</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"• <b>Current Name:</b> <code>{html.escape(get_bot_name())}</code>\n\n"
-                f"💬 <b>Please send the new bot display name</b> (1-64 characters) in chat.\n"
-                f"It will be updated on the Telegram Bot API and saved across reboots.\n\n"
-                f"💡 <i>Tip: Send <code>reset</code> or <code>default</code> to restore default name.</i>",
+                f"✏️ <b>Rename Bot</b>\n\n"
+                f"•\u00a0\u00a0Current: <code>{html.escape(get_bot_name())}</code>\n\n"
+                f"<i>Send the new display name (1–64 chars), or</i> <code>reset</code> <i>for default.</i>",
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb
             )
@@ -5683,9 +5547,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             await _answer("Closed 🔒")
             await _safe_edit_query_message(
                 query,
-                "🔒 <b>Administrator Panel Closed</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "<i>The administrator management panel has been closed safely.</i>",
+                "🔒 <b>Admin Panel Closed</b>\n\n<i>Administrator management has been closed.</i>",
                 parse_mode=ParseMode.HTML,
                 reply_markup=None,
                 fallback_reply=False,
@@ -5696,10 +5558,9 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             context.user_data["prompt_msg_id"] = query.message.message_id
             context.user_data["prompt_chat_id"] = query.message.chat_id
             text = (
-                "➕ <b>Add New Administrator</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "Send the numerical <b>Telegram User ID</b> of the user you wish to promote to Admin.\n\n"
-                "💡 <i>Tip: The user can check their ID via @userinfobot.</i>"
+                "➕ <b>Add Administrator</b>\n\n"
+                "Send the numeric <b>Telegram User ID</b> to promote to Admin.\n\n"
+                "<i>Tip: Users can get their ID from @userinfobot.</i>"
             )
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_admins")]
@@ -5719,17 +5580,15 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             uname = (admin_info.get("username") if admin_info else "")
             u_tag = f"@{html.escape(uname)}" if uname else "<i>None</i>"
             is_super = admin_info.get("is_super", False) if admin_info else (target_id in ADMIN_USER_IDS)
-            role_badge = "👑 <b>Super Administrator</b> (Configured via .env)" if is_super else "🛡️ <b>Administrator</b> (Added via Bot)"
+            role_badge = "Super Admin (Env)" if is_super else "Admin (Database)"
 
             profile_text = (
-                f"👑 <b>Administrator Profile & Access Control</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"🆔 <b>Admin ID:</b> <code>{target_id}</code>\n"
-                f"📛 <b>Name:</b> <code>{html.escape(fname)}</code>\n"
-                f"🔗 <b>Username:</b> {u_tag}\n"
-                f"🔰 <b>Role & Tier:</b> {role_badge}\n"
-                f"🛡️ <b>Account Status:</b> <code>Active & Verified</code>\n"
-                f"━━━━━━━━━━━━━━━━━━━━"
+                f"👑 <b>Admin Profile</b>\n\n"
+                f"•\u00a0\u00a0ID: <code>{target_id}</code>\n"
+                f"•\u00a0\u00a0Name: <b>{html.escape(fname)}</b>\n"
+                f"•\u00a0\u00a0Username: {u_tag}\n"
+                f"•\u00a0\u00a0Role: <b>{role_badge}</b>\n"
+                f"•\u00a0\u00a0Status: <b>Active</b>"
             )
             buttons = []
             if not is_super:
@@ -5752,9 +5611,8 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
             buttons.append([InlineKeyboardButton("◀️ Back", callback_data="admin_manage_admins")])
             text = (
-                "🗑️ <b>Remove Administrator</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "Tap an admin below to revoke their administrative privileges:"
+                "🗑️ <b>Remove Administrator</b>\n\n"
+                "<i>Select an admin below to revoke privileges.</i>"
             )
             await _safe_edit_query_message(query, text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -5783,10 +5641,8 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             await _answer("Restarting engine 🔄")
             await _safe_edit_query_message(
                 query,
-                "🔄 <b>Restarting Bot Engine...</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "⏳ <i>Saving state and rebooting cleanly...</i>\n"
-                "<i>You will receive a confirmation message once online.</i>",
+                "🔄 <b>Restarting Bot...</b>\n\n"
+                "<i>Saving state and rebooting cleanly. You will be notified once online.</i>",
                 parse_mode=ParseMode.HTML,
                 fallback_reply=False,
             )
@@ -5796,9 +5652,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             await _answer("Cancelled")
             await _safe_edit_query_message(
                 query,
-                "❌ <b>Restart Cancelled</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "The bot engine continues running normally without interruption.",
+                "❌ <b>Restart Cancelled</b>\n\nThe bot continues running normally.",
                 parse_mode=ParseMode.HTML,
                 fallback_reply=False,
             )
@@ -5838,11 +5692,9 @@ async def seturl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         create_safe_task(sync_data_to_secret_db())
 
     await msg_obj.reply_text(
-        f"✅ <b>API Base URL Successfully Updated!</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>New Active URL:</b> <code>{html.escape(new_url)}</code>\n"
-        f"• <b>Endpoint:</b> <code>{html.escape(new_url)}/api/v1/traffic</code>\n\n"
-        f"The bot is now requesting OTP traffic from this URL in real-time.",
+        f"✅ <b>API URL Updated</b>\n\n"
+        f"•\u00a0\u00a0URL: <code>{html.escape(new_url)}</code>\n"
+        f"•\u00a0\u00a0Endpoint: <code>{html.escape(new_url)}/api/v1/traffic</code>",
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🌐 API URL Settings", callback_data="api_url_menu")],
@@ -5879,10 +5731,7 @@ async def setkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     new_masked = f"{new_key[:8]}...{new_key[-4:]}" if len(new_key) > 12 else new_key
     await msg_obj.reply_text(
-        f"✅ <b>Thirdwave API Key Successfully Updated!</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>New Active Key:</b> <code>{html.escape(new_masked)}</code>\n\n"
-        f"The bot is now requesting OTP traffic with this key in real-time.",
+        f"✅ <b>API Key Updated</b>\n\n•\u00a0\u00a0Key: <code>{html.escape(new_masked)}</code>",
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔑 API Key Settings", callback_data="api_key_menu")],
@@ -5921,12 +5770,9 @@ async def setname_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     create_safe_task(sync_data_to_secret_db())
 
     await msg_obj.reply_text(
-        f"✅ <b>Bot Name Successfully Updated!</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>New Name:</b> <code>{html.escape(new_name)}</code>\n"
-        f"• <b>Default Name:</b> <code>{html.escape(new_name)} (Saved as permanent default)</code>\n"
-        f"• <b>Telegram API:</b> <code>Applied Officially ✅</code>\n"
-        f"• <b>Database:</b> <code>Saved Secretly to Cloud Store 🔒</code>",
+        f"✅ <b>Bot Name Updated</b>\n\n"
+        f"•\u00a0\u00a0Name: <code>{html.escape(new_name)}</code>\n"
+        f"•\u00a0\u00a0Telegram API: <b>Synced</b>",
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("✏️ Bot Name Settings", callback_data="bot_name_menu")],
@@ -5974,9 +5820,8 @@ async def perform_zero_restart_handover(target_message=None, manual_restart: boo
     if target_message:
         try:
             await target_message.edit_text(
-                "🔄 <b>Restarting Bot Engine...</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "✅ <i>State saved securely. Starting new server session now...</i>",
+                "🔄 <b>Restarting Bot...</b>\n\n"
+                "<i>State saved. Starting a new session now.</i>",
                 parse_mode=ParseMode.HTML
             )
         except Exception:
@@ -6010,11 +5855,9 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     ])
     await update.effective_message.reply_text(
-        "⚠️ <b>Restart Bot Engine</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "Are you sure you want to reboot the bot engine?\n\n"
-        "• State and counters will be securely saved to Cloud memory.\n"
-        "• The bot will reboot cleanly and send you a confirmation message once online.",
+        "⚠️ <b>Restart Bot?</b>\n\n"
+        "•\u00a0\u00a0State and counters will be saved.\n"
+        "•\u00a0\u00a0You will be notified once back online.",
         parse_mode=ParseMode.HTML,
         reply_markup=confirm_kb,
     )
@@ -6035,8 +5878,7 @@ async def addadmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ok = add_admin(target_id, added_by=user.id)
     if ok:
         await msg_obj.reply_text(
-            f"✅ User <code>{target_id}</code> has been promoted to Administrator!\n"
-            f"• Cloud DB: <code>Synced & Encrypted 🔒</code>",
+            f"✅ <b>Admin Added</b>\n\n•\u00a0\u00a0ID: <code>{target_id}</code>",
             parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("👑 Manage Admins", callback_data="admin_manage_admins")]
@@ -6065,8 +5907,7 @@ async def removeadmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     ok = remove_admin(target_id)
     if ok:
         await msg_obj.reply_text(
-            f"✅ Administrator privileges revoked for <code>{target_id}</code>.\n"
-            f"• Cloud DB: <code>Synced & Encrypted 🔒</code>",
+            f"✅ <b>Admin Removed</b>\n\n•\u00a0\u00a0ID: <code>{target_id}</code>",
             parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("👑 Manage Admins", callback_data="admin_manage_admins")]
@@ -6266,13 +6107,10 @@ async def send_startup_announcement(application: Application):
         trigger_label = "📦 <b>Code Update Detected</b>"
 
     admin_msg = (
-        f"✅ <b>{html.escape(bot_name)}</b> is now <b>LIVE</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"⏰ <b>Start Time:</b> <code>{time_str}</code>\n"
-        f"📅 <b>Date:</b>       <code>{date_str}</code>\n"
-        f"⚡ <b>Trigger:</b>    {trigger_label}\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "<i>👑 Use /start anytime to open the admin dashboard.</i>"
+        f"✅ <b>{html.escape(bot_name)}</b>  ·  Online\n\n"
+        f"•\u00a0\u00a0Time: <code>{time_str}</code>  ·  Date: <code>{date_str}</code>\n"
+        f"•\u00a0\u00a0Trigger: {trigger_label}\n\n"
+        "<i>Use /start to open the Admin Panel.</i>"
     )
     for aid in get_all_admin_ids():
         if aid:
@@ -6417,9 +6255,7 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
     if text.lower() in ("cancel", "❌ cancel", "/cancel"):
         clear_all_admin_states(context)
         await msg_obj.reply_text(
-            "❌ <b>Operation Cancelled.</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "No changes were made. All current settings remain active.",
+            "❌ <b>Cancelled</b>\n\nNo changes were made.",
             parse_mode=ParseMode.HTML,
             reply_markup=get_admin_reply_keyboard(),
         )
@@ -6500,16 +6336,12 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
                 u_tag = f"@{html.escape(uname)}" if uname else "<i>None</i>"
                 disp_name = html.escape(fname or "Administrator")
                 confirm_text = (
-                    "✅ <b>Administrator Successfully Added!</b>\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"• <b>User ID:</b> <code>{aid}</code>\n"
-                    f"• <b>Name:</b> <code>{disp_name}</code>\n"
-                    f"• <b>Username:</b> {u_tag}\n"
-                    "• <b>Role:</b> <code>🛡️ Administrator</code>\n"
-                    "• <b>Status:</b> <code>Active & Authorized</code>\n"
-                    "• <b>Cloud Sync:</b> <code>Synced & Encrypted 🔒</code>\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    "<i>The user has been promoted and notified in private chat.</i>"
+                    "✅ <b>Administrator Added</b>\n\n"
+                    f"•\u00a0\u00a0ID: <code>{aid}</code>\n"
+                    f"•\u00a0\u00a0Name: <b>{disp_name}</b>\n"
+                    f"•\u00a0\u00a0Username: {u_tag}\n"
+                    f"•\u00a0\u00a0Role: <b>Administrator</b>\n\n"
+                    "<i>The user has been promoted and notified.</i>"
                 )
                 confirm_kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton(f"👑 Manage ID: {aid}", callback_data=f"admin_inspect_{aid}")],
@@ -6529,10 +6361,9 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
                 await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, fail_text, fail_kb)
         else:
             err_text = (
-                "❌ <b>Invalid Account ID</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
+                "❌ <b>Invalid Account ID</b>\n\n"
                 "Please enter digits only (e.g. <code>6798979733</code>).\n\n"
-                "💡 <i>Tip: The user can check their ID via @userinfobot.</i>"
+                "<i>Tip: Check user ID via @userinfobot.</i>"
             )
             err_kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 Try Again", callback_data="admin_add_admin_prompt")],
@@ -6552,12 +6383,9 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         save_stored_data(data)
         create_safe_task(sync_data_to_secret_db())
         resp_text = (
-            f"✅ <b>API Base URL Successfully Updated!</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>New Active URL:</b> <code>{html.escape(new_url)}</code>\n"
-            f"• <b>Endpoint:</b> <code>{html.escape(new_url)}/api/v1/traffic</code>\n"
-            f"• <b>Cloud DB:</b> <code>Synced & Encrypted 🔒</code>\n\n"
-            f"The bot is now requesting OTP traffic from this URL in real-time."
+            f"✅ <b>API URL Updated</b>\n\n"
+            f"•\u00a0\u00a0URL: <code>{html.escape(new_url)}</code>\n"
+            f"•\u00a0\u00a0Endpoint: <code>{html.escape(new_url)}/api/v1/traffic</code>"
         )
         resp_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🌐 API URL Settings", callback_data="api_url_menu")],
@@ -6578,11 +6406,9 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         create_safe_task(sync_data_to_secret_db())
         new_masked = f"{new_key[:8]}...{new_key[-4:]}" if len(new_key) > 12 else new_key
         resp_text = (
-            f"✅ <b>Thirdwave API Key Successfully Updated!</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>New Active Key:</b> <code>{html.escape(new_masked)}</code>\n"
-            f"• <b>Status:</b> <code>Active & Forwarding OTPs ⚡</code>\n"
-            f"• <b>Cloud DB:</b> <code>Synced & Encrypted 🔒</code>"
+            f"✅ <b>API Key Updated</b>\n\n"
+            f"•\u00a0\u00a0Key: <code>{html.escape(new_masked)}</code>\n"
+            f"•\u00a0\u00a0Status: <b>Active</b>"
         )
         resp_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔑 API Key Settings", callback_data="api_key_menu")],
@@ -6613,12 +6439,9 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         create_safe_task(sync_data_to_secret_db())
 
         resp_text = (
-            f"✅ <b>Bot Name Successfully Updated!</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>New Name:</b> <code>{html.escape(new_name)}</code>\n"
-            f"• <b>Default Name:</b> <code>{html.escape(new_name)} (Saved as permanent default)</code>\n"
-            f"• <b>Telegram API:</b> <code>Applied Officially ✅</code>\n"
-            f"• <b>Cloud DB:</b> <code>Saved Secretly to Cloud Store 🔒</code>"
+            f"✅ <b>Bot Name Updated</b>\n\n"
+            f"•\u00a0\u00a0Name: <code>{html.escape(new_name)}</code>\n"
+            f"•\u00a0\u00a0Telegram API: <b>Synced</b>"
         )
         resp_kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("✏️ Bot Name Settings", callback_data="bot_name_menu")],
@@ -6638,11 +6461,9 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
             if len(all_current) >= MAX_FORWARDING_GROUPS:
                 msg_text, markup = build_groups_list_view()
                 limit_text = (
-                    f"⚠️ <b>Maximum Group Limit Reached</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"You already have <b>{len(all_current)} / {MAX_FORWARDING_GROUPS} active groups</b>.\n"
-                    f"The system allows a minimum of 1 and maximum of 10 groups.\n"
-                    f"Please remove an existing group before adding a new one."
+                    f"⚠️ <b>Group Limit Reached</b>\n\n"
+                    f"Active groups: <b>{len(all_current)}/{MAX_FORWARDING_GROUPS}</b>.\n"
+                    f"Remove an existing group before adding another."
                 )
                 await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, limit_text, markup)
                 return
@@ -6650,8 +6471,8 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
             if new_gid in all_current:
                 msg_text, markup = build_groups_list_view()
                 already_text = (
-                    f"ℹ️ <b>Group Already Linked</b>\n"
-                    f"Group <code>{new_gid}</code> is already in the forwarding pool."
+                    f"ℹ️ <b>Group Already Linked</b>\n\n"
+                    f"<code>{new_gid}</code> is already in the forwarding pool."
                 )
                 await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, already_text, markup)
                 return
@@ -6670,10 +6491,10 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
             msg_text, markup = build_groups_list_view()
             new_total = len(get_target_group_chat_ids())
             success_text = (
-                f"✅ <b>Group Linked Successfully!</b> <code>{new_gid}</code>\n"
-                f"• <b>Active Groups:</b> <code>{new_total} / {MAX_FORWARDING_GROUPS}</code> (Limit: 1 - 10)\n"
-                f"• Commands wiped from group menu (0 commands).\n"
-                f"• Forwarding active immediately with custom buttons."
+                f"✅ <b>Group Linked</b>\n\n"
+                f"•\u00a0\u00a0Group ID: <code>{new_gid}</code>\n"
+                f"•\u00a0\u00a0Active Groups: <b>{new_total}/{MAX_FORWARDING_GROUPS}</b>\n"
+                f"•\u00a0\u00a0Group Menu: <b>Cleared</b>"
             )
             await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, success_text, markup)
             return
@@ -6707,12 +6528,10 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
                 context.user_data.pop("awaiting_btn_action", None)
                 _, detail_kb = build_button_detail_view(found["id"])
                 resp_text = (
-                    f"✅ <b>Button Renamed!</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"• <b>Old:</b> <code>{html.escape(old_name)}</code>\n"
-                    f"• <b>New:</b> <code>{html.escape(text)}</code>\n"
-                    f"• <b>URL:</b> <code>{html.escape(found['url'])}</code>\n"
-                    f"• <b>Synced:</b> <code>Cloud DB 🔒</code>"
+                    f"✅ <b>Button Renamed</b>\n\n"
+                    f"•\u00a0\u00a0Previous: <code>{html.escape(old_name)}</code>\n"
+                    f"•\u00a0\u00a0Current: <code>{html.escape(text)}</code>\n"
+                    f"•\u00a0\u00a0URL: <code>{html.escape(found['url'])}</code>"
                 )
                 await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, resp_text, detail_kb)
                 return
@@ -6723,9 +6542,8 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
                 clean_url = normalize_button_url(text)
                 if not clean_url:
                     err_text = (
-                        "❌ <b>Invalid URL or Bot Username</b>\n"
-                        "Link must start with <code>https://</code>, <code>http://</code>, or be a bot username like <code>@bot_username</code>.\n"
-                        "Please send a valid link or click Cancel:"
+                        "❌ <b>Invalid URL or Username</b>\n\n"
+                        "Use <code>https://...</code>, <code>http://...</code>, or <code>@bot_username</code>."
                     )
                     err_kb = InlineKeyboardMarkup([
                         [InlineKeyboardButton("❌ Cancel", callback_data=f"link_view_{found['id']}")]
@@ -6739,11 +6557,9 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
                 context.user_data.pop("awaiting_btn_action", None)
                 _, detail_kb = build_button_detail_view(found["id"])
                 resp_text = (
-                    f"✅ <b>Button URL Updated!</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"• <b>Button:</b> <code>{html.escape(found['text'])}</code>\n"
-                    f"• <b>New URL:</b> <code>{html.escape(clean_url)}</code>\n"
-                    f"• <b>Synced:</b> <code>Cloud DB 🔒</code>"
+                    f"✅ <b>Button URL Updated</b>\n\n"
+                    f"•\u00a0\u00a0Button: <b>{html.escape(found['text'])}</b>\n"
+                    f"•\u00a0\u00a0URL: <code>{html.escape(clean_url)}</code>"
                 )
                 await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, resp_text, detail_kb)
                 return
@@ -6766,11 +6582,10 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
             clean_url = normalize_button_url(raw_url)
             if not b_name or not clean_url:
                 err_text = (
-                    "❌ <b>Invalid Format</b>\n"
-                    "Please provide button name and link or bot username separated by <code>|</code>:\n"
-                    "<code>Button Name | @bot_username</code>\n"
-                    "<i>or:</i> <code>Button Name | https://yourlink.com</code>\n\n"
-                    "<i>Example:</i> <code>🤖 Number Bot | @my_number_bot</code>"
+                    "❌ <b>Invalid Format</b>\n\n"
+                    "Send label and link separated by <code>|</code>:\n"
+                    "<code>Name | @bot_username</code>\n"
+                    "<code>Name | https://yourlink.com</code>"
                 )
                 err_kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("❌ Cancel", callback_data="link_list")]
@@ -6786,12 +6601,10 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
             context.user_data.pop("awaiting_btn_action", None)
             _, detail_kb = build_button_detail_view(new_id)
             resp_text = (
-                f"✅ <b>New Custom Button Added!</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"• <b>Label:</b> <code>{html.escape(b_name)}</code>\n"
-                f"• <b>Link:</b> <code>{html.escape(clean_url)}</code>\n"
-                f"• <b>Total Active Buttons:</b> <code>{len(buttons)}</code> (side-by-side in group OTPs)\n"
-                f"• <b>Synced:</b> <code>Cloud DB 🔒</code>"
+                f"✅ <b>Custom Button Added</b>\n\n"
+                f"•\u00a0\u00a0Label: <b>{html.escape(b_name)}</b>\n"
+                f"•\u00a0\u00a0URL: <code>{html.escape(clean_url)}</code>\n"
+                f"•\u00a0\u00a0Active Buttons: <b>{len(buttons)}</b>"
             )
             await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, resp_text, detail_kb)
             return
