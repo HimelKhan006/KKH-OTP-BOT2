@@ -2659,51 +2659,179 @@ def to_noncopy_mono(text: str) -> str:
     """Converts ASCII letters/digits to fixed-width Unicode Mathematical Monospace so columns align without tap-to-copy <code>."""
     return str(text).translate(_MONO_TABLE) if text else ""
 
-def style_sms_with_copyable_otp(msg: str, otp: str, width: int = 18) -> str:
+def style_sms_with_copyable_otp(
+    msg: str,
+    otp: str,
+    width: float = 18,
+    pin_ltr: bool = True,
+) -> str:
     """
-    Wraps SMS lines cleanly and highlights ONLY the OTP code inside a copyable <code> tag,
-    leaving the rest of the SMS as plain text so tapping copies ONLY the OTP code.
-    Protects spaced/hyphenated OTP codes from breaking across lines and handles exact,
-    hyphenated, spaced, and alphanumeric OTP formats.
+    Wraps SMS lines by visual display width so every language fits a fixed card width,
+    pins RTL-containing lines LTR so cards do not expand or right-align, and highlights
+    ONLY the OTP code inside a copyable <code> tag without breaking across lines.
     """
     if not msg:
         return ""
+
+    import unicodedata as _ud
+
+    max_units = float(width) if width and width > 0 else 18.0
+
+    def _char_w(ch: str) -> float:
+        cat = _ud.category(ch)
+        if cat in ("Mn", "Me", "Cf") or ch in (
+            "\u200b", "\u200c", "\u200d", "\u200e", "\u200f", "\u2060", "\ufe0f"
+        ):
+            return 0.0
+        if ch == "\u2800":
+            return 1.0
+        if ch in (" ", "\u00a0"):
+            return 0.45
+        if ch in "ijlItf|.,:;'!\"()[]{}\\/`":
+            return 0.48
+        if ch in "r1-•":
+            return 0.58
+        cp = ord(ch)
+        if cp >= 0x1F000 or _ud.east_asian_width(ch) in ("W", "F"):
+            return 1.65
+        if cat == "Mc":
+            return 0.45
+        if ch in "MWmw@#%&":
+            return 1.25
+        if "A" <= ch <= "Z" or (ch.isupper() and cp < 0x0500):
+            return 1.08
+        if "0" <= ch <= "9":
+            return 0.85
+        if 0x0590 <= cp <= 0x08FF or 0xFB1D <= cp <= 0xFEFF:
+            if ch in "\u0627\u0622\u0623\u0625\u0644\u062f\u0630\u0631\u0632\u0648\u064a\u0649":
+                return 0.65
+            return 0.92
+        if 0x0900 <= cp <= 0x0E7F:
+            return 1.12
+        if 0x0400 <= cp <= 0x04FF:
+            return 1.12 if ch.isupper() else 0.96
+        return 0.82
+
+    def _vis_w(s: str) -> float:
+        return sum(_char_w(c) for c in s)
+
+    cjk_atom_re = re.compile(
+        r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]"
+        r"[，。、！？；：）》」』】\.,!\?;:\)\]\u00a0]*|"
+        r" +|"
+        r"[^ \u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]+"
+    )
+
     raw_otp = (otp or "").strip()
-    otp_alnum = re.sub(r'[^A-Za-z0-9]', '', raw_otp)
+    otp_alnum = re.sub(r"[^A-Za-z0-9]", "", raw_otp)
     otp_span_pattern = (
-        re.compile(r'(?<![\dA-Za-z])' + r'[-\s]?'.join(re.escape(c) for c in otp_alnum) + r'(?![\dA-Za-z])')
+        re.compile(r"(?<![\dA-Za-z])" + r"[-\t \u00a0]?".join(re.escape(c) for c in otp_alnum) + r"(?![\dA-Za-z])")
         if len(otp_alnum) >= 3 else None
     )
 
+    def _split_long_token(tok: str) -> list:
+        protected_ranges = [
+            (m.start(), m.end()) for m in otp_span_pattern.finditer(tok)
+        ] if otp_span_pattern else []
+
+        def _in_otp_mid(idx: int) -> bool:
+            return any(s < idx < e for s, e in protected_ranges)
+
+        parts = []
+        buf = ""
+        bw = 0.0
+        for idx, ch in enumerate(tok):
+            cw = _char_w(ch)
+            if buf and bw + cw > max_units and cw > 0.0 and not _in_otp_mid(idx):
+                parts.append(buf)
+                buf = ch
+                bw = cw
+            else:
+                buf += ch
+                bw += cw
+        if buf:
+            parts.append(buf)
+        return parts
+
+    def _wrap_para(p: str) -> list:
+        tokens = cjk_atom_re.findall(p)
+        out = []
+        cur = ""
+        cur_w = 0.0
+        for tok in tokens:
+            if tok.strip(" ") == "":
+                if cur and cur_w + 0.45 <= max_units:
+                    cur += " "
+                    cur_w += 0.45
+                continue
+            tw = _vis_w(tok)
+            if not cur:
+                if tw <= max_units:
+                    cur = tok
+                    cur_w = tw
+                else:
+                    pieces = _split_long_token(tok)
+                    out.extend(pieces[:-1])
+                    cur = pieces[-1]
+                    cur_w = _vis_w(cur)
+            elif cur_w + tw <= max_units:
+                cur += tok
+                cur_w += tw
+            else:
+                out.append(cur.rstrip(" "))
+                if tw <= max_units:
+                    cur = tok
+                    cur_w = tw
+                else:
+                    pieces = _split_long_token(tok)
+                    out.extend(pieces[:-1])
+                    cur = pieces[-1]
+                    cur_w = _vis_w(cur)
+        if cur.rstrip(" "):
+            out.append(cur.rstrip(" "))
+        return out
+
+    cleaned_msg = re.sub(r"[\u202a-\u202e\u2066-\u2069\ufeff\u200f]", "", str(msg))
+
     lines = []
-    for paragraph in str(msg).splitlines():
-        p = paragraph.strip()
+    for paragraph in cleaned_msg.splitlines():
+        p = re.sub(r"[ \t]+", " ", paragraph).strip()
         if p:
             if otp_span_pattern:
-                p = otp_span_pattern.sub(lambda m: re.sub(r'[ \t]+', '\u00a0', m.group(0)), p)
-            wrapped_para = textwrap.wrap(p, width=width, break_long_words=True, break_on_hyphens=False)
-            lines.extend(wrapped_para)
+                p = otp_span_pattern.sub(lambda m: re.sub(r"[ \t]+", "\u00a0", m.group(0)), p)
+            lines.extend(_wrap_para(p))
         else:
             lines.append("")
+
     wrapped = "\n".join(lines)
     escaped = html.escape(wrapped, quote=False)
     if raw_otp:
         esc_otp = html.escape(raw_otp, quote=False)
-        exact_pat = re.compile(rf'(?<![\dA-Za-z]){re.escape(esc_otp)}(?![\dA-Za-z])') if esc_otp else None
+        exact_pat = re.compile(rf"(?<![\dA-Za-z]){re.escape(esc_otp)}(?![\dA-Za-z])") if esc_otp else None
         if exact_pat and exact_pat.search(escaped):
             escaped = exact_pat.sub(lambda _: f"<code>{esc_otp}</code>", escaped, count=1)
         elif otp_span_pattern:
-            flex_pat = re.compile(r'(?<![\dA-Za-z])' + r'[-\s\u00a0]?'.join(re.escape(c) for c in otp_alnum) + r'(?![\dA-Za-z])')
+            flex_pat = re.compile(r"(?<![\dA-Za-z])" + r"[-\t \u00a0]?".join(re.escape(c) for c in otp_alnum) + r"(?![\dA-Za-z])")
             m = flex_pat.search(escaped)
             if m:
-                matched_str = m.group(0).replace('\u00a0', ' ')
+                matched_str = m.group(0).replace("\u00a0", " ")
                 escaped = escaped[:m.start()] + f"<code>{matched_str}</code>" + escaped[m.end():]
             elif esc_otp and esc_otp in escaped:
                 escaped = escaped.replace(esc_otp, f"<code>{esc_otp}</code>", 1)
             elif esc_otp.replace("-", "") in escaped:
                 raw_c = esc_otp.replace("-", "")
                 escaped = escaped.replace(raw_c, f"<code>{raw_c}</code>", 1)
-    escaped = escaped.replace('\u00a0', ' ')
+    escaped = escaped.replace("\u00a0", " ")
+
+    if pin_ltr:
+        fixed_lines = []
+        for ln in escaped.splitlines():
+            if ln and any((0x0590 <= ord(c) <= 0x08FF or 0xFB1D <= ord(c) <= 0xFEFF) for c in ln):
+                if not ln.startswith("\u200e"):
+                    ln = "\u200e" + ln
+            fixed_lines.append(ln)
+        escaped = "\n".join(fixed_lines)
+
     return escaped
 
 def wrap_sms_for_card(text: str, width: int = 22) -> str:
@@ -2719,12 +2847,30 @@ def wrap_sms_for_card(text: str, width: int = 22) -> str:
             lines.append("")
     return "\n".join(lines)
 
-def build_fixed_width_direct_header(source_raw: str, iso_fixed: str, flag: str) -> str:
+def build_fixed_width_direct_header(source_raw: str, iso_fixed: str, flag: str, target_units: float = 26.2) -> str:
     """
-    Builds '📩 <b>{Service} • {ISO} {Flag}</b>' with CARD_WIDTH_PAD (7 Braille blanks) inside <b>
-    and NBSP before {Flag} so mobile Telegram never wraps onto an extra blank line.
+    Builds '📩 <b>{SERVICE} • {ISO} {Flag}</b>' in capital letters locked to a fixed visual width,
+    using NBSP before {Flag} and bounded Braille padding so mobile Telegram never wraps onto line 2.
     """
-    return f"📩 <b>{html.escape(source_raw)} • {html.escape(iso_fixed)}\u00a0{flag}{CARD_WIDTH_PAD}</b>"
+    import unicodedata as _ud
+    svc_up = str(source_raw or "SMS SERVICE").strip().upper()
+    iso_up = str(iso_fixed or "GL").strip().upper()
+    vw = 2.25 + 1.55 + 2.55
+    for ch in svc_up + iso_up:
+        cat = _ud.category(ch)
+        if cat in ("Mn", "Me", "Cf"):
+            continue
+        if ch in "I|.,:;'!\"()[]{}/ ":
+            vw += 0.52
+        elif ch in "MW@#%&":
+            vw += 1.32
+        elif ord(ch) >= 0x1F000 or _ud.east_asian_width(ch) in ("W", "F"):
+            vw += 1.65
+        else:
+            vw += 1.12
+    pad_count = max(5, min(14, round(target_units - vw)))
+    pad = "\u2800" * pad_count
+    return f"📩 <b>{html.escape(svc_up)} • {html.escape(iso_up)}\u00a0{flag}{pad}</b>"
 
 def detect_service_name(raw_source: str, raw_message: str) -> str:
     """
@@ -2873,11 +3019,11 @@ def format_otp_notification(item: Dict[str, Any], sms_format: Optional[str] = No
         lines.append(f"<b>✦\u00a0\u00a0{num_plain}</b>")
         if include_sms and clean_msg:
             display_sms = clean_msg if len(clean_msg) <= 3000 else (clean_msg[:3000] + "... [truncated]")
-            styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=36)
-            compact_sms = "\n".join(ln for ln in styled_sms.splitlines() if ln.strip())
+            styled_sms = style_sms_with_copyable_otp(display_sms, otp_code, width=25.5)
+            compact_sms = "\n".join(ln for ln in styled_sms.splitlines() if ln.strip("\u200e \t\r"))
             if not is_compact:
                 lines.append("")
-            lines.append(f"💬 <b>Full SMS</b>\n{compact_sms}")
+            lines.append(f"💬 <b>FULL SMS</b>\n{compact_sms}")
         return "\n".join(lines), otp_code, raw_message
 
     if sms_format in ("classic_short", "old_short", "classic"):
@@ -3859,13 +4005,13 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
         f"• <b>Classic Long (Compact + Full SMS)</b> {classic_long_active}\n"
         "  Compact layout with ✦ marks and expandable '💬 FULL SMS' blockquote.\n\n"
         f"• <b>Direct Short (Signal Ticket)</b> {glass_short_active}\n"
-        "  Top bar (📩 WhatsApp • DE 🇩🇪), ✦ Number below, fixed compact card size.\n\n"
+        "  Top bar (📩 WHATSAPP • DE 🇩🇪), ✦ Number below, fixed compact card size.\n\n"
         f"• <b>Direct Full (Open SMS Card)</b> {glass_long_active}\n"
-        "  Top bar + ✦ Number + full SMS shown directly on card (no quote box).\n\n"
+        "  Top bar + ✦ Number + 💬 FULL SMS shown directly on card (no quote box).\n\n"
         f"• <b>Direct Compact (Tight, No Space)</b> {compact_short_active}\n"
         "  Top bar + ✦ Number directly stacked without any blank line.\n\n"
         f"• <b>Compact Full (Tight + Full SMS)</b> {compact_long_active}\n"
-        "  Top bar + ✦ Number + 💬 Full SMS stacked without any blank line.\n"
+        "  Top bar + ✦ Number + 💬 FULL SMS stacked without any blank line.\n"
     )
 
     if preview_mode == "short":
@@ -3933,14 +4079,14 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
     elif preview_mode == "glass_long":
         glass_header = build_fixed_width_direct_header("WhatsApp", "DE", "🇩🇪")
         sample_sms = "Your WhatsApp verification code is 492-810. Do not share this code with anyone."
-        styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=26)
-        compact_sample = "\n".join(ln for ln in styled_sample.splitlines() if ln.strip())
+        styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=25.5)
+        compact_sample = "\n".join(ln for ln in styled_sample.splitlines() if ln.strip("\u200e \t\r"))
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Direct Full (Open SMS Card):</b>\n\n"
             f"{glass_header}\n\n"
             "<b>✦\u00a0\u00a0+49178****151</b>\n\n"
-            f"💬 <b>Full SMS</b>\n{compact_sample}\n\n"
+            f"💬 <b>FULL SMS</b>\n{compact_sample}\n\n"
             "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
         )
     elif preview_mode == "compact_short":
@@ -3955,14 +4101,14 @@ def build_sms_format_view(preview_mode: Optional[str] = None) -> Tuple[str, Inli
     elif preview_mode == "compact_long":
         glass_header = build_fixed_width_direct_header("WhatsApp", "DE", "🇩🇪")
         sample_sms = "Your WhatsApp verification code is 492-810. Do not share this code with anyone."
-        styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=26)
-        compact_sample = "\n".join(ln for ln in styled_sample.splitlines() if ln.strip())
+        styled_sample = style_sms_with_copyable_otp(sample_sms, "492-810", width=25.5)
+        compact_sample = "\n".join(ln for ln in styled_sample.splitlines() if ln.strip("\u200e \t\r"))
         msg += (
             f"\n{CARD_DIVIDER}\n"
             "<b>📺 Live Preview — Compact Full (Tight + Full SMS):</b>\n\n"
             f"{glass_header}\n"
             "<b>✦\u00a0\u00a0+49178****151</b>\n"
-            f"💬 <b>Full SMS</b>\n{compact_sample}\n\n"
+            f"💬 <b>FULL SMS</b>\n{compact_sample}\n\n"
             "<i>Buttons: [ 492-810 ] [ GET NUMBER ]</i>"
         )
     else:
