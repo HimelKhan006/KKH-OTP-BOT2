@@ -125,11 +125,30 @@ if sys.platform == "win32":
 # Global background tasks set to prevent garbage collection in asyncio
 _BACKGROUND_TASKS: Set[asyncio.Task] = set()
 
-def create_safe_task(coro) -> asyncio.Task:
-    """Creates an asyncio background task and holds a strong reference to prevent GC collection."""
-    t = asyncio.create_task(coro)
+def _on_background_task_done(task: asyncio.Task) -> None:
+    _BACKGROUND_TASKS.discard(task)
+    if task.cancelled():
+        return
+    try:
+        exc = task.exception()
+    except Exception:
+        return
+    if exc is not None:
+        logger.warning(f"Background task error: {exc}", exc_info=exc)
+
+def create_safe_task(coro) -> Optional[asyncio.Task]:
+    """Creates an asyncio background task with strong ref tracking and structured error logging."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        try:
+            coro.close()
+        except Exception:
+            pass
+        return None
+    t = loop.create_task(coro)
     _BACKGROUND_TASKS.add(t)
-    t.add_done_callback(_BACKGROUND_TASKS.discard)
+    t.add_done_callback(_on_background_task_done)
     return t
 
 # ==========================================
@@ -535,11 +554,7 @@ def save_custom_link_buttons(buttons: List[Dict[str, str]]):
 
     save_stored_data(data)
     if "sync_data_to_secret_db" in globals():
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(sync_data_to_secret_db())
-        except (RuntimeError, Exception):
-            pass
+        create_safe_task(sync_data_to_secret_db())
 
 def get_dynamic_linked_groups() -> List[int]:
     """Returns list of dynamically linked group chat IDs configured by admin."""
@@ -574,10 +589,7 @@ def add_dynamic_linked_group(chat_id: int) -> Tuple[bool, str]:
         data["linked_groups"] = groups
         save_stored_data(data)
         if "sync_data_to_secret_db" in globals():
-            try:
-                asyncio.create_task(sync_data_to_secret_db())
-            except Exception:
-                pass
+            create_safe_task(sync_data_to_secret_db())
         return True, "SUCCESS"
     return False, "ALREADY_LINKED"
 
@@ -597,10 +609,7 @@ def remove_dynamic_linked_group(chat_id: int) -> Tuple[bool, str]:
         data["linked_groups"] = groups
         save_stored_data(data)
         if "sync_data_to_secret_db" in globals():
-            try:
-                asyncio.create_task(sync_data_to_secret_db())
-            except Exception:
-                pass
+            create_safe_task(sync_data_to_secret_db())
         return True, "SUCCESS"
     return False, "ENV_PROTECTED"
 
@@ -618,10 +627,7 @@ def clear_dynamic_linked_groups() -> Tuple[bool, str]:
     data["linked_groups"] = []
     save_stored_data(data)
     if "sync_data_to_secret_db" in globals():
-        try:
-            asyncio.create_task(sync_data_to_secret_db())
-        except Exception:
-            pass
+        create_safe_task(sync_data_to_secret_db())
     return True, "SUCCESS"
 
 def get_target_group_chat_ids() -> List[int]:
@@ -783,10 +789,7 @@ def add_admin(user_id: int, added_by: int = 0, username: str = "", first_name: s
             conn.commit()
         _mark_admin_active(user_id)
         if "gist_storage" in globals() and gist_storage.enabled:
-            try:
-                asyncio.create_task(sync_admins_to_gist())
-            except Exception:
-                pass
+            create_safe_task(sync_admins_to_gist())
         return True
     except Exception as e:
         logger.error(f"Error adding admin {user_id}: {e}")
@@ -802,10 +805,7 @@ def remove_admin(user_id: int) -> bool:
             conn.commit()
         _mark_admin_revoked(user_id)
         if "gist_storage" in globals() and gist_storage.enabled:
-            try:
-                asyncio.create_task(sync_admins_to_gist())
-            except Exception:
-                pass
+            create_safe_task(sync_admins_to_gist())
         return True
     except Exception as e:
         logger.error(f"Error removing admin {user_id}: {e}")
@@ -949,6 +949,18 @@ class GistStorage:
         self.bot_name = "THIRDWAVE_OTP_WAVE"
         self.enabled = bool(self.token)
         self.api_url = f"https://api.github.com/gists/{gist_id}" if gist_id else ""
+        self._sync_lock: Optional[asyncio.Lock] = None
+        self._sync_lock_loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def _get_lock(self) -> asyncio.Lock:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if self._sync_lock is None or self._sync_lock_loop is not loop:
+            self._sync_lock = asyncio.Lock()
+            self._sync_lock_loop = loop
+        return self._sync_lock
 
     def _auth_headers(self, token_override: str = "") -> Dict[str, str]:
         tok = token_override or self.token
@@ -1118,12 +1130,22 @@ class GistStorage:
                                 except Exception as ae:
                                     logger.warning(f"Error restoring admins from Gist: {ae}")
 
+                            cloud_total_forever = 0
+                            try:
+                                raw_ctf = parsed["total_received_forever"] if "total_received_forever" in parsed else parsed.get("total_forwarded")
+                                cloud_total_forever = int(raw_ctf or 0)
+                            except Exception:
+                                cloud_total_forever = 0
+                            if cloud_total_forever > 0:
+                                sync_lifetime_received_otps(cloud_total_forever)
+
                             logger.info(f"☁️ Restored {len(valid_seen)} seen messages from GitHub Gist ({self.gist_id[:8]}...).")
                             return {
                                 "seen": valid_seen,
                                 "handover": bool(parsed.get("handover", False)),
                                 "handover_epoch": float(parsed.get("handover_epoch", 0.0)),
                                 "total_forwarded": int(parsed.get("total_forwarded", 0)),
+                                "total_received_forever": get_lifetime_received_otps(),
                                 "country_counts": parsed.get("country_counts", {}),
                                 "base_url": parsed.get("base_url", ""),
                                 "bot_data": parsed.get("bot_data", {}),
@@ -1147,67 +1169,78 @@ class GistStorage:
         """Prune older than 28h and sync state & handover markers to GitHub Gist."""
         if not self.enabled:
             return False
-        if not self.api_url:
-            await self.ensure_gist()
-        if not self.api_url:
-            return False
-        try:
-            cutoff = datetime.now(timezone.utc).timestamp() - (28 * 3600)
-            cleaned = {k: v for k, v in seen_dict.items() if v >= cutoff}
-
-            # Active database admins for cloud persistence
-            admins_list = []
+        async with self._get_lock():
+            if not self.api_url:
+                await self.ensure_gist()
+            if not self.api_url:
+                return False
             try:
-                with get_db_connection() as aconn:
-                    for row in aconn.execute("SELECT user_id, added_by, username, first_name FROM bot_admins;").fetchall():
-                        admins_list.append({
-                            "user_id": row["user_id"],
-                            "added_by": row["added_by"],
-                            "username": row["username"],
-                            "first_name": row["first_name"],
-                            "is_super": False
-                        })
-            except Exception:
-                pass
+                cutoff = datetime.now(timezone.utc).timestamp() - (28 * 3600)
+                cleaned = {k: v for k, v in list(seen_dict.items()) if v >= cutoff}
 
-            payload_data = {
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-                "bot": self.bot_name,
-                "count": len(cleaned),
-                "seen": cleaned,
-                "handover": is_handover,
-                "handover_epoch": datetime.now(timezone.utc).timestamp() if is_handover else 0.0,
-                "last_active_epoch": datetime.now(timezone.utc).timestamp(),
-                "total_forwarded": total_forwarded,
-                "country_counts": country_counts or {},
-                "base_url": base_url or "",
-                "bot_data": load_stored_data(),
-                "admins": admins_list,
-                "revoked_admins": _get_revoked_admins_map(),
-                "manual_restart": bool(kwargs.get("manual_restart", False)),
-                "last_notified_commit": str(kwargs.get("last_notified_commit") or get_bot_setting("last_notified_commit", "")),
-            }
-            payload = {
-                "description": self.description,
-                "files": {
-                    self.filename: {
-                        "content": json.dumps(payload_data, indent=2)
+                # Active database admins for cloud persistence
+                admins_list = []
+                try:
+                    with get_db_connection() as aconn:
+                        for row in aconn.execute("SELECT user_id, added_by, username, first_name FROM bot_admins;").fetchall():
+                            admins_list.append({
+                                "user_id": row["user_id"],
+                                "added_by": row["added_by"],
+                                "username": row["username"],
+                                "first_name": row["first_name"],
+                                "is_super": False
+                            })
+                except Exception:
+                    pass
+
+                payload_data = {
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "bot": self.bot_name,
+                    "count": len(cleaned),
+                    "seen": cleaned,
+                    "handover": is_handover,
+                    "handover_epoch": datetime.now(timezone.utc).timestamp() if is_handover else 0.0,
+                    "last_active_epoch": datetime.now(timezone.utc).timestamp(),
+                    "total_forwarded": total_forwarded,
+                    "total_received_forever": get_lifetime_received_otps(),
+                    "country_counts": country_counts or {},
+                    "base_url": base_url or "",
+                    "bot_data": load_stored_data(),
+                    "admins": admins_list,
+                    "revoked_admins": _get_revoked_admins_map(),
+                    "manual_restart": bool(kwargs.get("manual_restart", False)),
+                    "last_notified_commit": str(kwargs.get("last_notified_commit") or get_bot_setting("last_notified_commit", "")),
+                }
+                payload = {
+                    "description": self.description,
+                    "files": {
+                        self.filename: {
+                            "content": json.dumps(payload_data, indent=2)
+                        }
                     }
                 }
-            }
-            async with httpx.AsyncClient(timeout=15.0) as http:
-                res = None
-                for tok in list(self._candidate_tokens):
-                    res = await http.patch(self.api_url, headers=self._auth_headers(tok), json=payload)
-                    if res.is_success:
-                        self.token = tok
-                        logger.info(f"☁️ Synced {len(cleaned)} messages to GitHub Gist (handover={is_handover}).")
-                        return True
-                if res is not None:
-                    logger.warning(f"Gist sync status {res.status_code}: {res.text[:100]}")
-        except Exception as e:
-            logger.warning(f"Gist sync error: {e}")
-        return False
+                async with httpx.AsyncClient(timeout=15.0) as http:
+                    res = None
+                    for tok in list(self._candidate_tokens):
+                        res = await http.patch(self.api_url, headers=self._auth_headers(tok), json=payload)
+                        if res.is_success:
+                            self.token = tok
+                            logger.info(f"☁️ Synced {len(cleaned)} messages to GitHub Gist (handover={is_handover}).")
+                            return True
+                        if res.status_code == 404:
+                            self.gist_id = ""
+                            self.api_url = ""
+                            if await self.ensure_gist() and self.api_url:
+                                res = await http.patch(self.api_url, headers=self._auth_headers(tok), json=payload)
+                                if res.is_success:
+                                    self.token = tok
+                                    logger.info(f"☁️ Synced {len(cleaned)} messages to recreated GitHub Gist.")
+                                    return True
+                    if res is not None:
+                        logger.warning(f"Gist sync status {res.status_code}: {res.text[:100]}")
+            except Exception as e:
+                logger.warning(f"Gist sync error: {e}")
+            return False
 
     async def save_seen(self, seen_dict: Dict[str, float]) -> bool:
         """Backwards compatibility wrapper for save_state."""
@@ -1347,13 +1380,128 @@ def init_db():
                 added_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS otp_lifetime_stats (
+                id                INTEGER PRIMARY KEY CHECK (id = 1),
+                total_received    INTEGER NOT NULL DEFAULT 0,
+                first_received_at TEXT DEFAULT '',
+                last_received_at  TEXT DEFAULT '',
+                updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS otp_lifetime_history (
+                id                TEXT PRIMARY KEY,
+                source            TEXT DEFAULT '',
+                country           TEXT DEFAULT '',
+                number            TEXT DEFAULT '',
+                otp_code          TEXT DEFAULT '',
+                raw_message       TEXT DEFAULT '',
+                received_at       TEXT DEFAULT '',
+                received_at_epoch REAL DEFAULT 0,
+                status            TEXT DEFAULT 'forwarded',
+                recorded_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_otp_lh_recv_epoch ON otp_lifetime_history(received_at_epoch);")
+
+        # Auto-seed lifetime counter/history once from any pre-existing records without ever lowering an existing count
+        stats_row = conn.execute("SELECT total_received FROM otp_lifetime_stats WHERE id = 1 LIMIT 1;").fetchone()
+        bs_row = conn.execute("SELECT value FROM bot_settings WHERE key = 'total_received_otp_sms' LIMIT 1;").fetchone()
+        try:
+            bs_total = int(bs_row["value"]) if (bs_row and bs_row["value"] is not None) else 0
+        except Exception:
+            bs_total = 0
+        proc_cnt_row = conn.execute("SELECT COUNT(*) FROM processed_otps;").fetchone()
+        proc_cnt = int(proc_cnt_row[0]) if proc_cnt_row else 0
+        hist_cnt_row = conn.execute("SELECT COUNT(*) FROM otp_lifetime_history;").fetchone()
+        hist_cnt = int(hist_cnt_row[0]) if hist_cnt_row else 0
+        seed_total = max(bs_total, proc_cnt, hist_cnt)
+        if stats_row is None:
+            conn.execute(
+                """INSERT INTO otp_lifetime_stats (id, total_received, updated_at)
+                   VALUES (1, ?, CURRENT_TIMESTAMP);""",
+                (seed_total,)
+            )
+            # Backfill permanent history table with existing 28h rows on first migration
+            conn.execute("""
+                INSERT OR IGNORE INTO otp_lifetime_history
+                    (id, source, country, number, otp_code, raw_message, received_at, received_at_epoch, status, recorded_at)
+                SELECT id, COALESCE(source, ''), COALESCE(country, ''), COALESCE(number, ''),
+                       COALESCE(otp_code, ''), COALESCE(raw_message, ''),
+                       COALESCE(received_at, ''), COALESCE(received_at_epoch, 0),
+                       COALESCE(status, 'forwarded'), COALESCE(forwarded_at, CURRENT_TIMESTAMP)
+                FROM processed_otps;
+            """)
+        else:
+            existing_total = int(stats_row["total_received"] or 0)
+            best_total = max(existing_total, seed_total)
+            if best_total > existing_total:
+                conn.execute(
+                    "UPDATE otp_lifetime_stats SET total_received = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1;",
+                    (best_total,)
+                )
+        final_row = conn.execute("SELECT total_received FROM otp_lifetime_stats WHERE id = 1 LIMIT 1;").fetchone()
+        final_total = int(final_row[0]) if final_row else seed_total
+        conn.execute(
+            "INSERT OR REPLACE INTO bot_settings (key, value, updated_at) VALUES ('total_received_otp_sms', ?, CURRENT_TIMESTAMP);",
+            (str(final_total),)
+        )
         conn.commit()
         try:
             conn.execute("PRAGMA wal_checkpoint(PASSIVE);")
         except Exception:
             pass
     cleanup_old_messages()
-    logger.info("📦 SQLite database initialized with 28h timing schema & indexes at %s", DB_FILE)
+    logger.info("📦 SQLite database initialized with 28h timing schema & permanent lifetime OTP ledger at %s", DB_FILE)
+
+def get_lifetime_received_otps() -> int:
+    """Returns permanent cumulative count of OTP SMS received by this bot (never resets)."""
+    best = 0
+    try:
+        with get_db_connection() as conn:
+            row = conn.execute("SELECT total_received FROM otp_lifetime_stats WHERE id = 1 LIMIT 1;").fetchone()
+            if row and row[0] is not None:
+                best = max(best, int(row[0]))
+            hrow = conn.execute("SELECT COUNT(*) FROM otp_lifetime_history;").fetchone()
+            if hrow and hrow[0] is not None:
+                best = max(best, int(hrow[0]))
+            srow = conn.execute("SELECT value FROM bot_settings WHERE key = 'total_received_otp_sms' LIMIT 1;").fetchone()
+            if srow and srow[0] is not None:
+                try:
+                    best = max(best, int(srow[0]))
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.debug(f"get_lifetime_received_otps notice: {e}")
+    return best
+
+def sync_lifetime_received_otps(cloud_total: int) -> int:
+    """Monotonically merges cloud lifetime OTP count into SQLite so it never resets or decreases."""
+    try:
+        c_val = max(0, int(cloud_total or 0))
+    except Exception:
+        c_val = 0
+    local_best = get_lifetime_received_otps()
+    merged = max(local_best, c_val)
+    if merged > 0:
+        try:
+            with get_db_connection() as conn:
+                conn.execute("""
+                    INSERT INTO otp_lifetime_stats (id, total_received, updated_at)
+                    VALUES (1, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(id) DO UPDATE SET
+                        total_received = MAX(otp_lifetime_stats.total_received, excluded.total_received),
+                        updated_at = CURRENT_TIMESTAMP;
+                """, (merged,))
+                conn.execute(
+                    "INSERT OR REPLACE INTO bot_settings (key, value, updated_at) VALUES ('total_received_otp_sms', ?, CURRENT_TIMESTAMP);",
+                    (str(merged),)
+                )
+                conn.commit()
+        except Exception as e:
+            logger.debug(f"sync_lifetime_received_otps notice: {e}")
+    return merged
 
 def is_message_duplicate(mid: str, item: Optional[Dict[str, Any]] = None) -> bool:
     """
@@ -1549,6 +1697,10 @@ def save_processed_message(item: Dict[str, Any], chat_id: int,
 
     try:
         with get_db_connection() as conn:
+            already_recorded = (
+                conn.execute("SELECT 1 FROM otp_lifetime_history WHERE id = ? LIMIT 1;", (mid,)).fetchone() is not None
+                or conn.execute("SELECT 1 FROM processed_otps WHERE id = ? LIMIT 1;", (mid,)).fetchone() is not None
+            )
             conn.execute("""
                 INSERT OR REPLACE INTO processed_otps
                     (id, source, country, number, otp_code, raw_message, rate, message_time,
@@ -1558,6 +1710,35 @@ def save_processed_message(item: Dict[str, Any], chat_id: int,
             """, (mid, source, country, stored_num, otp_val, raw_message, rate, message_time,
                   recv_iso, recv_epoch, expires_iso, expires_epoch,
                   chat_id, fwd_time_str, status))
+            if not already_recorded:
+                svc_name = ""
+                try:
+                    svc_name, _ = detect_service_and_icon(source, raw_message)
+                except Exception:
+                    svc_name = source
+                conn.execute("""
+                    INSERT OR IGNORE INTO otp_lifetime_history
+                        (id, source, country, number, otp_code, raw_message, received_at, received_at_epoch, status, recorded_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """, (mid, svc_name or source, country, stored_num, otp_val, raw_message, recv_iso, recv_epoch, status, fwd_time_str))
+                conn.execute("""
+                    INSERT INTO otp_lifetime_stats (id, total_received, first_received_at, last_received_at, updated_at)
+                    VALUES (1, 1, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(id) DO UPDATE SET
+                        total_received = otp_lifetime_stats.total_received + 1,
+                        first_received_at = CASE
+                            WHEN otp_lifetime_stats.first_received_at = '' THEN excluded.first_received_at
+                            ELSE otp_lifetime_stats.first_received_at
+                        END,
+                        last_received_at = excluded.last_received_at,
+                        updated_at = CURRENT_TIMESTAMP;
+                """, (recv_iso, recv_iso))
+                cur_tot = conn.execute("SELECT total_received FROM otp_lifetime_stats WHERE id = 1 LIMIT 1;").fetchone()
+                new_tot = int(cur_tot[0]) if cur_tot else 1
+                conn.execute(
+                    "INSERT OR REPLACE INTO bot_settings (key, value, updated_at) VALUES ('total_received_otp_sms', ?, CURRENT_TIMESTAMP);",
+                    (str(new_tot),)
+                )
             conn.commit()
             return True
     except Exception as e:
@@ -1812,7 +1993,7 @@ def get_cached_sms_message(key: str) -> Optional[str]:
             row = cur.fetchone()
             if row and row[0]:
                 msg = str(row[0]).strip()
-                _SMS_BODY_CACHE[key] = msg
+                _cache_sms_message(key, msg)
                 return msg
     except Exception:
         pass
@@ -1842,6 +2023,21 @@ def cleanup_old_messages(max_age_hours: int = 28):
         expired_sigs = [sig for sig, ts in list(seen_content_signatures.items()) if ts < cutoff_epoch]
         for sig in expired_sigs:
             seen_content_signatures.pop(sig, None)
+
+        # Safety ceiling to keep RAM flat under high traffic spikes
+        if len(seen_timestamps) > 50000:
+            oldest = sorted(list(seen_timestamps.items()), key=lambda kv: kv[1])[:len(seen_timestamps) - 40000]
+            for mid, _ in oldest:
+                seen_timestamps.pop(mid, None)
+                seen_message_ids.discard(mid)
+        if len(seen_message_ids) > 60000:
+            orphans = [mid for mid in list(seen_message_ids) if mid not in seen_timestamps]
+            for mid in orphans[:len(seen_message_ids) - 45000]:
+                seen_message_ids.discard(mid)
+        if len(seen_content_signatures) > 50000:
+            oldest_sigs = sorted(list(seen_content_signatures.items()), key=lambda kv: kv[1])[:len(seen_content_signatures) - 40000]
+            for sig, _ in oldest_sigs:
+                seen_content_signatures.pop(sig, None)
 
         # 2. Prune local SQLite database of any records older than 28 hours using expires_at_epoch / expires_at
         with get_db_connection() as conn:
@@ -1902,14 +2098,20 @@ class ThirdwaveClient:
             )
         return self._client
 
+    def _close_old_client(self):
+        old_client = self._client
+        self._client = None
+        if old_client is not None and not old_client.is_closed:
+            create_safe_task(old_client.aclose())
+
     def update_base_url(self, new_url: str) -> str:
         self.base_url = self.clean_base_url(new_url)
-        self._client = None
+        self._close_old_client()
         return self.base_url
 
     def update_api_key(self, new_key: str) -> str:
         self.api_key = new_key.strip()
-        self._client = None
+        self._close_old_client()
         return self.api_key
 
     async def close(self):
@@ -3126,7 +3328,20 @@ client = ThirdwaveClient(
 
 async def send_with_retry(bot: Bot, chat_id: int, text: str, max_retries: int = 3,
                           reply_markup=None) -> bool:
-    safe_text = text if len(text) <= 4090 else (text[:4080] + "...")
+    if len(text) <= 4090:
+        safe_text = text
+    else:
+        cut = text.rfind("\n", 0, 4050)
+        if cut < 3000:
+            cut = 4050
+        safe_text = text[:cut]
+        # Avoid slicing mid-HTML tag and strip cleanly in plain fallback if still malformed
+        last_lt = safe_text.rfind("<")
+        last_gt = safe_text.rfind(">")
+        if last_lt > last_gt:
+            safe_text = safe_text[:last_lt]
+        safe_text = html.unescape(re.sub(r"<[^>]+>", "", safe_text)) + "\n..."
+        safe_text = html.escape(safe_text)
     for attempt in range(1, max_retries + 1):
         try:
             await bot.send_message(
@@ -3149,7 +3364,7 @@ async def send_with_retry(bot: Bot, chat_id: int, text: str, max_retries: int = 
         except BadRequest as b_err:
             # HTML parse error or entity mismatch: fall back to sending plain text so OTP is never lost!
             logger.warning(f"⚠️ Telegram BadRequest ({b_err}) for {chat_id}. Falling back to plain text delivery...")
-            plain_text = re.sub(r'<[^>]+>', '', safe_text)
+            plain_text = html.unescape(re.sub(r'<[^>]+>', '', safe_text))
             for fb_markup in (reply_markup, None) if reply_markup is not None else (None,):
                 try:
                     await bot.send_message(
@@ -3570,29 +3785,21 @@ async def poll_incoming_messages(application: Application):
                     seen_timestamps[mid] = msg_ts
                     continue
                 new_items.append(m)
-                seen_message_ids.add(mid)
-                ts_seen = msg_ts if msg_ts > 0 else datetime.now(timezone.utc).timestamp()
-                seen_timestamps[mid] = ts_seen
-                raw_n = str(m.get("number") or m.get("destinationNumber") or m.get("range_template") or m.get("rangeTemplate") or m.get("dst") or "")
-                dig = re.sub(r"\D", "", raw_n)
-                raw_m_text = str(m.get("sms") or m.get("messageBody") or m.get("message") or m.get("text") or m.get("body") or m.get("otp") or "").strip()
-                otp_c = extract_otp_code(raw_m_text)
-                if dig and otp_c:
-                    seen_content_signatures[f"otp:{dig}:{otp_c}"] = ts_seen
-                if dig and raw_m_text:
-                    clean_b = re.sub(r"\s+", " ", raw_m_text).strip()
-                    seen_content_signatures[f"body:{dig}:{clean_b}"] = ts_seen
-                _gist_dirty = True
 
             if new_items:
                 logger.info(f"🔔 {len(new_items)} new SMS/OTP(s) detected!")
                 for item in reversed(new_items):  # oldest first
-                    ok = await _deliver_item(application.bot, item, dest_ids)
-                    if ok:
-                        total_forwarded_count += 1
+                    try:
+                        ok = await _deliver_item(application.bot, item, dest_ids)
+                        if ok:
+                            total_forwarded_count += 1
+                    except Exception as item_err:
+                        logger.error(f"⚠️ Error delivering queued OTP item: {item_err}", exc_info=True)
                     # Ultra-fast micro-pause so each OTP is sent as a clearly separate new message
                     await asyncio.sleep(0.05)
 
+        except asyncio.CancelledError:
+            raise
         except (TimedOut, NetworkError) as net_err:
             logger.warning(f"⚠️ Network hiccup: {net_err}. Retrying in 2s...")
             await asyncio.sleep(2.0)
@@ -3634,6 +3841,7 @@ def get_bot_name() -> str:
 def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
     group_ids = get_target_group_chat_ids()
     total_today, total_28h, country_counts_28h = get_dashboard_stats()
+    total_lifetime = get_lifetime_received_otps()
     group_text = f"{len(group_ids)} Linked Groups ✅" if len(group_ids) > 1 else ("Linked ✅" if group_ids else "Not Linked ⚠️")
 
     # Uptime calculation
@@ -3712,6 +3920,7 @@ def build_status_dashboard() -> Tuple[str, InlineKeyboardMarkup]:
         f"👑 <b>Admins:</b>      {len(get_all_admin_ids())} active\n"
         f"⚡ <b>Forwarding:</b>  {fwd_label}\n"
         f"📨 <b>OTPs Today:</b>  {total_today} received\n"
+        f"📈 <b>Total Received:</b> {total_lifetime:,} (All-Time • Never Resets)\n"
         f"📦 <b>DB Records:</b>  {total_28h} (28h rolling)\n"
         f"⚡ <b>Poll Rate:</b>   every {effective_poll:.1f}s\n"
         f"📋 <b>SMS Format:</b>  {fmt_label}\n"
@@ -3838,7 +4047,7 @@ async def toggle_forwarding_command(update: Update, context: ContextTypes.DEFAUL
     if args and args[0].lower() in ("force", "yes", "now"):
         curr = is_otp_forwarding_enabled()
         set_otp_forwarding_enabled(not curr)
-        asyncio.create_task(sync_data_to_secret_db())
+        create_safe_task(sync_data_to_secret_db())
         msg = (
             "🟢 <b>OTP Forwarding Resumed</b>\n━━━━━━━━━━━━━━━━━━━━\nLive OTP group forwarding is active."
             if not curr else
@@ -3894,7 +4103,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     clear_all_admin_states(context)
     # Ensure command menu button and slash commands are permanently active
-    asyncio.create_task(setup_admin_menu_for_chat(context.bot, chat.id))
+    create_safe_task(setup_admin_menu_for_chat(context.bot, chat.id))
     msg, markup = build_status_dashboard()
     await msg_obj.reply_text(
         msg,
@@ -3915,7 +4124,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Lock Telegram Menu Button and slash commands for admin
-    asyncio.create_task(setup_admin_menu_for_chat(context.bot, chat.id))
+    create_safe_task(setup_admin_menu_for_chat(context.bot, chat.id))
 
     bot_name = get_bot_name()
     # Show welcome greeting with the persistent admin keyboard on /start
@@ -4258,7 +4467,7 @@ async def toggleformat_command(update: Update, context: ContextTypes.DEFAULT_TYP
             data = load_stored_data()
             data["sms_format"] = target_fmt
             save_stored_data(data)
-            asyncio.create_task(sync_data_to_secret_db())
+            create_safe_task(sync_data_to_secret_db())
             if target_fmt == "long":
                 mode_label = "Long (Detailed with SMS Content 📜)"
             elif target_fmt == "classic_long":
@@ -4794,14 +5003,66 @@ async def setbtnurl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=detail_kb
     )
 
-async def _safe_edit_query_message(query, text: str, parse_mode=ParseMode.HTML, reply_markup=None):
-    """Edit an inline callback message, ignoring benign 'not modified' errors."""
+async def _safe_answer_query(query, text: Optional[str] = None, show_alert: bool = False) -> bool:
+    """Safely answer a Telegram callback query, suppressing stale/expired query errors."""
+    if not query:
+        return False
     try:
-        await query.edit_message_text(text=text, parse_mode=parse_mode, reply_markup=reply_markup)
+        if text is not None:
+            safe_txt = str(text)[:200]
+            await query.answer(safe_txt, show_alert=show_alert)
+        else:
+            await query.answer()
+        return True
     except BadRequest as e:
-        if "message is not modified" in str(e).lower():
-            return
-        raise
+        err_l = str(e).lower()
+        if "query is too old" in err_l or "query_id_invalid" in err_l:
+            return False
+        logger.debug(f"Callback answer notice: {e}")
+        return False
+    except Exception as e:
+        logger.debug(f"Callback answer error: {e}")
+        return False
+
+
+async def _safe_edit_query_message(
+    query,
+    text: str,
+    parse_mode=ParseMode.HTML,
+    reply_markup=None,
+    disable_web_page_preview: bool = False,
+    fallback_reply: bool = True,
+) -> bool:
+    """Edit an inline callback message, ignoring 'not modified' and optionally falling back to reply_text."""
+    if not query:
+        return False
+    try:
+        await query.edit_message_text(
+            text=text,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+            disable_web_page_preview=disable_web_page_preview,
+        )
+        return True
+    except BadRequest as e:
+        err_l = str(e).lower()
+        if "message is not modified" in err_l or "not modified" in err_l:
+            return False
+        logger.warning(f"Callback edit BadRequest ({e}); fallback_reply={fallback_reply}")
+    except Exception as e:
+        logger.warning(f"Callback edit notice ({e}); fallback_reply={fallback_reply}")
+    if fallback_reply and getattr(query, "message", None):
+        try:
+            await query.message.reply_text(
+                text=text,
+                parse_mode=parse_mode,
+                reply_markup=reply_markup,
+                disable_web_page_preview=disable_web_page_preview,
+            )
+            return True
+        except Exception as e2:
+            logger.debug(f"Callback fallback reply error: {e2}")
+    return False
 
 
 async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4813,9 +5074,10 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     if query.data and query.data.startswith("sms_"):
         sms_key = query.data[4:]
         if sms_key == "preview":
-            await query.answer(
+            await _safe_answer_query(
+                query,
                 "📩 Full SMS Content:\n\nYour WhatsApp verification code is 492-810. Do not share this code with anyone.",
-                show_alert=True
+                show_alert=True,
             )
             return
 
@@ -4824,17 +5086,14 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             prefix = "📩 Full SMS Content:\n\n"
             max_body = 200 - len(prefix)
             body = raw_msg if len(raw_msg) <= max_body else f"{raw_msg[:max_body - 3]}..."
-            await query.answer(f"{prefix}{body}", show_alert=True)
+            await _safe_answer_query(query, f"{prefix}{body}", show_alert=True)
         else:
-            await query.answer("📩 Full SMS is not available for this message.", show_alert=True)
+            await _safe_answer_query(query, "📩 Full SMS is not available for this message.", show_alert=True)
         return
 
     user_id = query.from_user.id if query.from_user else 0
     if not is_user_authorized(user_id):
-        try:
-            await query.answer("⛔ Access Denied: Administrator privileges revoked.", show_alert=True)
-        except Exception:
-            pass
+        await _safe_answer_query(query, "⛔ Access Denied: Administrator privileges revoked.", show_alert=True)
 
         bot_name = get_bot_name()
         revoked_msg = (
@@ -4846,10 +5105,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             "• <b>Admin Privileges:</b> <code>Disabled</code>\n"
             "• <b>Dashboard:</b> <code>Cleared & Deactivated</code>"
         )
-        try:
-            await query.edit_message_text(revoked_msg, parse_mode=ParseMode.HTML)
-        except Exception:
-            pass
+        await _safe_edit_query_message(query, revoked_msg, parse_mode=ParseMode.HTML, fallback_reply=False)
 
         try:
             await context.bot.send_message(
@@ -4862,181 +5118,135 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             pass
         return
 
-    # Acknowledge callback unless it has a dedicated toast notification
-    if query.data not in (
-        "toggle_format", "bot_name_help", "link_list", "link_help", "confirm_restart", "cancel_restart"
-    ):
-        try:
-            await query.answer()
-        except Exception:
-            pass
+    _answered = False
 
-    if query.data == "toggle_format":
-        data = load_stored_data()
-        curr = str(data.get("sms_format", "long")).lower().strip()
-        if curr == "long":
-            new_fmt = "short"
-            mode_label = "Short (Header Country ⚡)"
-        elif curr == "short":
-            new_fmt = "classic_short"
-            mode_label = "Classic Short (Compact ⏳)"
-        elif curr == "classic_short":
-            new_fmt = "classic_long"
-            mode_label = "Classic Long (Compact + Full SMS ⏳)"
-        elif curr == "classic_long":
-            new_fmt = "glass_short"
-            mode_label = "Direct Short (Signal Ticket 📩)"
-        elif curr == "glass_short":
-            new_fmt = "glass_long"
-            mode_label = "Direct Full (Open SMS Card 📩)"
-        elif curr == "glass_long":
-            new_fmt = "compact_short"
-            mode_label = "Direct Compact (No Space 📩)"
-        elif curr == "compact_short":
-            new_fmt = "compact_long"
-            mode_label = "Compact Full (No Space + SMS 📩)"
-        else:
-            new_fmt = "long"
-            mode_label = "Long (Detailed 📜)"
-        data["sms_format"] = new_fmt
-        save_stored_data(data)
-        asyncio.create_task(sync_data_to_secret_db())
+    async def _answer(text: Optional[str] = None, show_alert: bool = False):
+        nonlocal _answered
+        if _answered:
+            return
+        _answered = True
+        await _safe_answer_query(query, text=text, show_alert=show_alert)
 
-        try:
-            await query.answer(f"Format switched to: {mode_label}", show_alert=False)
-        except Exception:
-            pass
+    try:
+        if query.data == "toggle_format":
+            data = load_stored_data()
+            curr = str(data.get("sms_format", "long")).lower().strip()
+            if curr == "long":
+                new_fmt = "short"
+                mode_label = "Short (Header Country ⚡)"
+            elif curr == "short":
+                new_fmt = "classic_short"
+                mode_label = "Classic Short (Compact ⏳)"
+            elif curr == "classic_short":
+                new_fmt = "classic_long"
+                mode_label = "Classic Long (Compact + Full SMS ⏳)"
+            elif curr == "classic_long":
+                new_fmt = "glass_short"
+                mode_label = "Direct Short (Signal Ticket 📩)"
+            elif curr == "glass_short":
+                new_fmt = "glass_long"
+                mode_label = "Direct Full (Open SMS Card 📩)"
+            elif curr == "glass_long":
+                new_fmt = "compact_short"
+                mode_label = "Direct Compact (No Space 📩)"
+            elif curr == "compact_short":
+                new_fmt = "compact_long"
+                mode_label = "Compact Full (No Space + SMS 📩)"
+            else:
+                new_fmt = "long"
+                mode_label = "Long (Detailed 📜)"
+            data["sms_format"] = new_fmt
+            save_stored_data(data)
+            create_safe_task(sync_data_to_secret_db())
 
-        try:
+            await _answer(f"Format switched to: {mode_label}", show_alert=False)
             msg_text, reply_markup = build_status_dashboard()
-            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup, disable_web_page_preview=True)
-        except Exception as e:
-            logger.warning(f"Could not edit dashboard message on toggle: {e}")
+            await _safe_edit_query_message(query, text=msg_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup, disable_web_page_preview=True, fallback_reply=False)
 
-    elif query.data in ("fwd_ask_off", "fwd_turn_off"):
-        confirm_kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("⏸️ Pause Forwarding", callback_data="confirm_fwd_off"),
-                InlineKeyboardButton("❌ Cancel", callback_data="cancel_fwd"),
-            ]
-        ])
-        ask_text = (
-            "⏸️ <b>Pause OTP Group Forwarding</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "Are you sure you want to pause OTP forwarding to Telegram groups?\n\n"
-            "• Delivery to Telegram groups will be paused.\n"
-            "• Bot will continue recording all incoming OTPs silently into SQLite database & 28h history."
-        )
-        try:
-            await query.edit_message_text(ask_text, parse_mode=ParseMode.HTML, reply_markup=confirm_kb)
-        except Exception as e:
-            logger.warning(f"Error displaying fwd_ask_off edit: {e}")
-            try:
-                if query.message:
-                    await query.message.reply_text(ask_text, parse_mode=ParseMode.HTML, reply_markup=confirm_kb)
-            except Exception as e2:
-                logger.warning(f"Fallback reply for fwd_ask_off failed: {e2}")
+        elif query.data in ("fwd_ask_off", "fwd_turn_off"):
+            confirm_kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("⏸️ Pause Forwarding", callback_data="confirm_fwd_off"),
+                    InlineKeyboardButton("❌ Cancel", callback_data="cancel_fwd"),
+                ]
+            ])
+            ask_text = (
+                "⏸️ <b>Pause OTP Group Forwarding</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "Are you sure you want to pause OTP forwarding to Telegram groups?\n\n"
+                "• Delivery to Telegram groups will be paused.\n"
+                "• Bot will continue recording all incoming OTPs silently into SQLite database & 28h history."
+            )
+            await _safe_edit_query_message(query, ask_text, parse_mode=ParseMode.HTML, reply_markup=confirm_kb)
 
-    elif query.data in ("fwd_ask_on", "fwd_turn_on"):
-        confirm_kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("▶️ Resume Forwarding", callback_data="confirm_fwd_on"),
-                InlineKeyboardButton("❌ Cancel", callback_data="cancel_fwd"),
-            ]
-        ])
-        ask_text = (
-            "▶️ <b>Resume OTP Group Forwarding</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "Are you sure you want to resume OTP forwarding to Telegram groups?\n\n"
-            "• Delivery to Telegram groups will resume in real-time.\n"
-            "• Zero Spam: Only new OTPs arriving from now on will be forwarded."
-        )
-        try:
-            await query.edit_message_text(ask_text, parse_mode=ParseMode.HTML, reply_markup=confirm_kb)
-        except Exception as e:
-            logger.warning(f"Error displaying fwd_ask_on edit: {e}")
-            try:
-                if query.message:
-                    await query.message.reply_text(ask_text, parse_mode=ParseMode.HTML, reply_markup=confirm_kb)
-            except Exception as e2:
-                logger.warning(f"Fallback reply for fwd_ask_on failed: {e2}")
+        elif query.data in ("fwd_ask_on", "fwd_turn_on"):
+            confirm_kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("▶️ Resume Forwarding", callback_data="confirm_fwd_on"),
+                    InlineKeyboardButton("❌ Cancel", callback_data="cancel_fwd"),
+                ]
+            ])
+            ask_text = (
+                "▶️ <b>Resume OTP Group Forwarding</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "Are you sure you want to resume OTP forwarding to Telegram groups?\n\n"
+                "• Delivery to Telegram groups will resume in real-time.\n"
+                "• Zero Spam: Only new OTPs arriving from now on will be forwarded."
+            )
+            await _safe_edit_query_message(query, ask_text, parse_mode=ParseMode.HTML, reply_markup=confirm_kb)
 
-    elif query.data in ("confirm_fwd_off", "fwd_confirm_off", "fwd_disable"):
-        set_otp_forwarding_enabled(False)
-        off_text = (
-            "⏸️ <b>OTP Forwarding: Paused</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "• <b>Status:</b> ⏸️ <code>PAUSED (Silent Mode)</code>\n"
-            "• <b>Group Delivery:</b> <code>PAUSED (No messages sent to groups)</code>\n"
-            "• <b>Database & Retention:</b> <code>100% Active (Recording silently)</code>\n"
-            "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Incoming OTPs continue recording silently in SQLite & 28h history. Groups will not receive forwards until resumed.</i>"
-        )
-        try:
-            await query.edit_message_text(off_text, parse_mode=ParseMode.HTML, reply_markup=None)
-        except Exception as e:
-            logger.warning(f"Error handling confirm_fwd_off edit: {e}")
-            try:
-                if query.message:
-                    await query.message.reply_text(off_text, parse_mode=ParseMode.HTML)
-            except Exception as e2:
-                logger.warning(f"Fallback reply for confirm_fwd_off failed: {e2}")
-        asyncio.create_task(sync_data_to_secret_db())
+        elif query.data in ("confirm_fwd_off", "fwd_confirm_off", "fwd_disable"):
+            set_otp_forwarding_enabled(False)
+            off_text = (
+                "⏸️ <b>OTP Forwarding: Paused</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "• <b>Status:</b> ⏸️ <code>PAUSED (Silent Mode)</code>\n"
+                "• <b>Group Delivery:</b> <code>PAUSED (No messages sent to groups)</code>\n"
+                "• <b>Database & Retention:</b> <code>100% Active (Recording silently)</code>\n"
+                "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "<i>Incoming OTPs continue recording silently in SQLite & 28h history. Groups will not receive forwards until resumed.</i>"
+            )
+            await _safe_edit_query_message(query, off_text, parse_mode=ParseMode.HTML, reply_markup=None)
+            create_safe_task(sync_data_to_secret_db())
 
-    elif query.data in ("confirm_fwd_on", "fwd_confirm_on", "fwd_enable"):
-        set_otp_forwarding_enabled(True)
-        on_text = (
-            "🟢 <b>OTP Forwarding: Resumed</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "• <b>Status:</b> 🟢 <code>ACTIVE (Live Mode)</code>\n"
-            "• <b>Group Delivery:</b> <code>ACTIVE (Delivered live to groups)</code>\n"
-            "• <b>Database & Retention:</b> <code>100% Synced (28h)</code>\n"
-            "• <b>Zero Spam Shield:</b> <code>Active (Pause OTPs suppressed)</code>\n"
-            "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "<i>Live forwarding is active. Every new incoming OTP is delivered to your group(s) in real time.</i>"
-        )
-        try:
-            await query.edit_message_text(on_text, parse_mode=ParseMode.HTML, reply_markup=None)
-        except Exception as e:
-            logger.warning(f"Error handling confirm_fwd_on edit: {e}")
-            try:
-                if query.message:
-                    await query.message.reply_text(on_text, parse_mode=ParseMode.HTML)
-            except Exception as e2:
-                logger.warning(f"Fallback reply for confirm_fwd_on failed: {e2}")
-        asyncio.create_task(sync_data_to_secret_db())
+        elif query.data in ("confirm_fwd_on", "fwd_confirm_on", "fwd_enable"):
+            set_otp_forwarding_enabled(True)
+            on_text = (
+                "🟢 <b>OTP Forwarding: Resumed</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "• <b>Status:</b> 🟢 <code>ACTIVE (Live Mode)</code>\n"
+                "• <b>Group Delivery:</b> <code>ACTIVE (Delivered live to groups)</code>\n"
+                "• <b>Database & Retention:</b> <code>100% Synced (28h)</code>\n"
+                "• <b>Zero Spam Shield:</b> <code>Active (Pause OTPs suppressed)</code>\n"
+                "• <b>Synced:</b> <code>Cloud DB 🔒</code>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "<i>Live forwarding is active. Every new incoming OTP is delivered to your group(s) in real time.</i>"
+            )
+            await _safe_edit_query_message(query, on_text, parse_mode=ParseMode.HTML, reply_markup=None)
+            create_safe_task(sync_data_to_secret_db())
 
-    elif query.data in ("cancel_fwd", "fwd_cancel"):
-        is_fwd = is_otp_forwarding_enabled()
-        status_text = "🟢 <b>ACTIVE (Live Mode)</b>" if is_fwd else "⏸️ <b>PAUSED (Silent Mode)</b>"
-        cancel_text = (
-            "❌ <b>Forwarding Change Cancelled</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>Current State:</b> {status_text}\n"
-            "No changes were made to forwarding settings."
-        )
-        try:
-            await query.edit_message_text(cancel_text, parse_mode=ParseMode.HTML, reply_markup=None)
-        except Exception as e:
-            logger.warning(f"Error handling cancel_fwd edit: {e}")
-            try:
-                if query.message:
-                    await query.message.reply_text(cancel_text, parse_mode=ParseMode.HTML)
-            except Exception as e2:
-                logger.warning(f"Fallback reply for cancel_fwd failed: {e2}")
+        elif query.data in ("cancel_fwd", "fwd_cancel"):
+            is_fwd = is_otp_forwarding_enabled()
+            status_text = "🟢 <b>ACTIVE (Live Mode)</b>" if is_fwd else "⏸️ <b>PAUSED (Silent Mode)</b>"
+            cancel_text = (
+                "❌ <b>Forwarding Change Cancelled</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>Current State:</b> {status_text}\n"
+                "No changes were made to forwarding settings."
+            )
+            await _safe_edit_query_message(query, cancel_text, parse_mode=ParseMode.HTML, reply_markup=None)
 
-    elif query.data == "toggle_forwarding":
-        curr = is_otp_forwarding_enabled()
-        new_state = not curr
-        set_otp_forwarding_enabled(new_state)
-        asyncio.create_task(sync_data_to_secret_db())
-        action_text = "Turned ON 🟢" if new_state else "Turned OFF ⏸️"
-        status_badge = "🟢 <code>ACTIVE (Live Mode)</code>" if new_state else "⏸️ <code>PAUSED (Silent Mode)</code>"
-        delivery_badge = "<code>Live Delivery ON</code>" if new_state else "<code>Delivery Stopped</code>"
-        try:
-            await query.edit_message_text(
+        elif query.data == "toggle_forwarding":
+            curr = is_otp_forwarding_enabled()
+            new_state = not curr
+            set_otp_forwarding_enabled(new_state)
+            create_safe_task(sync_data_to_secret_db())
+            action_text = "Turned ON 🟢" if new_state else "Turned OFF ⏸️"
+            status_badge = "🟢 <code>ACTIVE (Live Mode)</code>" if new_state else "⏸️ <code>PAUSED (Silent Mode)</code>"
+            delivery_badge = "<code>Live Delivery ON</code>" if new_state else "<code>Delivery Stopped</code>"
+            await _safe_edit_query_message(
+                query,
                 f"{'🟢' if new_state else '⏸️'} <b>OTP Forwarding {action_text}</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"• <b>Delivery Status:</b> {status_badge}\n"
@@ -5046,583 +5256,558 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 f"<i>{'Live group forwarding is active.' if new_state else 'Group forwarding paused. Recording silently.'}</i>",
                 parse_mode=ParseMode.HTML,
+                fallback_reply=False,
             )
-        except Exception as e:
-            logger.warning(f"Error handling toggle_forwarding: {e}")
 
-    elif query.data == "bot_name_help":
-        await query.answer("ℹ️ Bot name is managed by the admin.", show_alert=True)
+        elif query.data == "bot_name_help":
+            await _answer("ℹ️ Bot name is managed by the admin.", show_alert=True)
 
-    elif query.data == "link_help" or query.data == "link_list":
-        context.user_data.pop("awaiting_btn_action", None)
-        msg_text, markup = build_buttons_list_view()
-        try:
-            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
-            await query.answer("✅ Refreshed")
-        except Exception as e:
-            err_str = str(e).lower()
-            if "message is not modified" in err_str or "not modified" in err_str:
-                await query.answer("✅ Already up to date")
-            else:
-                await query.answer()
-                try:
-                    await query.message.reply_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
-                except Exception:
-                    pass
-
-    elif query.data.startswith("link_view_"):
-        await query.answer()
-        context.user_data.pop("awaiting_btn_action", None)
-        btn_id = query.data.replace("link_view_", "").strip()
-        msg_text, markup = build_button_detail_view(btn_id)
-        if msg_text and markup:
-            try:
-                await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
-            except Exception:
-                await query.message.reply_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
-        else:
-            await query.answer("Button not found", show_alert=True)
+        elif query.data == "link_help" or query.data == "link_list":
+            context.user_data.pop("awaiting_btn_action", None)
             msg_text, markup = build_buttons_list_view()
-            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            changed = await _safe_edit_query_message(query, text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            await _answer("✅ Refreshed" if changed else "✅ Already up to date")
 
-    elif query.data.startswith("link_del_confirm_"):
-        await query.answer()
-        btn_id = query.data.replace("link_del_confirm_", "").strip()
-        msg_text, markup = build_button_delete_confirm_view(btn_id)
-        if msg_text and markup:
+        elif query.data.startswith("link_view_"):
+            context.user_data.pop("awaiting_btn_action", None)
+            btn_id = query.data.replace("link_view_", "").strip()
+            msg_text, markup = build_button_detail_view(btn_id)
+            if msg_text and markup:
+                await _answer()
+                await _safe_edit_query_message(query, text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            else:
+                await _answer("Button not found", show_alert=True)
+                msg_text, markup = build_buttons_list_view()
+                await _safe_edit_query_message(query, text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+        elif query.data.startswith("link_del_confirm_"):
+            await _answer()
+            btn_id = query.data.replace("link_del_confirm_", "").strip()
+            msg_text, markup = build_button_delete_confirm_view(btn_id)
+            if msg_text and markup:
+                await _safe_edit_query_message(query, text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+        elif query.data.startswith("link_del_execute_"):
+            btn_id = query.data.replace("link_del_execute_", "").strip()
+            buttons = get_custom_link_buttons()
+            found = next((b for b in buttons if str(b["id"]) == btn_id), None)
+            new_list = [b for b in buttons if str(b["id"]) != btn_id]
+            save_custom_link_buttons(new_list)
+            await _answer("Button removed! 🗑️", show_alert=False)
+            deleted_name = html.escape(found["text"]) if found else "Button"
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ Back to Buttons List", callback_data="link_list")]
+            ])
+            await _safe_edit_query_message(
+                query,
+                f"✅ <b>Button Removed!</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"<code>{deleted_name}</code> has been removed from all forwarded group OTP messages.\n\n"
+                f"• <b>Remaining Active Buttons:</b> <code>{len(new_list)}</code>\n"
+                f"• <b>Synced:</b> <code>Secret Cloud DB 🔒</code>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb
+            )
+
+        elif query.data == "link_clear_all_confirm":
+            await _answer()
+            msg_text, markup = build_buttons_clear_all_confirm_view()
+            await _safe_edit_query_message(query, text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+        elif query.data == "link_clear_all_execute":
+            save_custom_link_buttons([])
+            await _answer("All buttons cleared! 🗑️", show_alert=False)
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("➕ Add New Button", callback_data="link_add_prompt")],
+                [InlineKeyboardButton("◀️ Back to List", callback_data="link_list")],
+            ])
+            await _safe_edit_query_message(
+                query,
+                "✅ <b>All Custom Buttons Cleared!</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "All custom buttons have been removed. Forwarded OTP messages will only display the OTP copy button.\n\n"
+                "• <b>Storage:</b> <code>Cleared and Synced to Cloud DB 🔒</code>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb
+            )
+
+        elif query.data.startswith("link_rename_"):
+            btn_id = query.data.replace("link_rename_", "").strip()
+            buttons = get_custom_link_buttons()
+            found = next((b for b in buttons if str(b["id"]) == btn_id), None)
+            if found:
+                context.user_data["awaiting_btn_action"] = {"action": "rename", "id": found["id"]}
+                context.user_data["prompt_msg_id"] = query.message.message_id
+                context.user_data["prompt_chat_id"] = query.message.chat_id
+                await _answer("Send new name in chat 💬")
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("◀️ Cancel / Back", callback_data=f"link_view_{found['id']}")]
+                ])
+                await _safe_edit_query_message(
+                    query,
+                    f"✏️ <b>Change Name for #{found['id']}</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"• <b>Current Name:</b> <code>{html.escape(found['text'])}</code>\n"
+                    f"• <b>Target URL:</b> <code>{html.escape(found['url'])}</code>\n\n"
+                    f"💬 <b>Send the new button name</b> directly in this chat:",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=kb
+                )
+
+        elif query.data.startswith("link_reurl_"):
+            btn_id = query.data.replace("link_reurl_", "").strip()
+            buttons = get_custom_link_buttons()
+            found = next((b for b in buttons if str(b["id"]) == btn_id), None)
+            if found:
+                context.user_data["awaiting_btn_action"] = {"action": "reurl", "id": found["id"]}
+                context.user_data["prompt_msg_id"] = query.message.message_id
+                context.user_data["prompt_chat_id"] = query.message.chat_id
+                await _answer("Send new URL or bot username 💬")
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("◀️ Cancel / Back", callback_data=f"link_view_{found['id']}")]
+                ])
+                await _safe_edit_query_message(
+                    query,
+                    f"🔗 <b>Change URL for #{found['id']}</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"• <b>Button:</b> <code>{html.escape(found['text'])}</code>\n"
+                    f"• <b>Current URL:</b> <code>{html.escape(found['url'])}</code>\n\n"
+                    f"💬 <b>Send the new link URL or bot username</b> directly in this chat:\n"
+                    f"<code>https://...</code> or <code>@bot_username</code>",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=kb
+                )
+
+        elif query.data == "link_add_prompt":
+            context.user_data["awaiting_btn_action"] = {"action": "add"}
+            context.user_data["prompt_msg_id"] = query.message.message_id
+            context.user_data["prompt_chat_id"] = query.message.chat_id
+            await _answer("Send new button details 💬")
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ Cancel / Back", callback_data="link_list")]
+            ])
+            await _safe_edit_query_message(
+                query,
+                "➕ <b>Add New Custom Button</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "Custom buttons appear side-by-side below OTP messages in groups.\n\n"
+                "💬 <b>Send button name and link or bot username</b> in chat using this format:\n"
+                "<code>Button Name | @bot_username</code>\n"
+                "<i>or:</i> <code>Button Name | https://yourlink.com</code>\n\n"
+                "<i>Examples:</i>\n"
+                "• <code>🤖 Number Bot | @my_number_bot</code>\n"
+                "• <code>📢 Join Channel | https://t.me/mychannel</code>\n"
+                "• <code>👥 Support | @mysupport</code>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb
+            )
+
+        elif query.data == "grp_list":
+            context.user_data.pop("awaiting_grp_action", None)
+            msg_text, markup = build_groups_list_view()
+            changed = await _safe_edit_query_message(query, text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+            await _answer("✅ Refreshed" if changed else "✅ Already up to date")
+
+        elif query.data == "grp_max_reached":
+            await _answer("⚠️ Maximum limit of 10 groups reached! Remove an existing group before linking a new one.", show_alert=True)
+
+        elif query.data.startswith("grp_del_confirm_"):
+            gid_str = query.data.replace("grp_del_confirm_", "").strip()
+            all_current = get_target_group_chat_ids()
+            if len(all_current) <= MIN_FORWARDING_GROUPS:
+                await _answer("⚠️ Minimum 1 group required! Cannot remove the only remaining active group.", show_alert=True)
+                return
+
+            await _answer()
+            kb = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("✅ Yes, Remove", callback_data=f"grp_del_exec_{gid_str}"),
+                    InlineKeyboardButton("❌ Cancel", callback_data="grp_list"),
+                ]
+            ])
+            await _safe_edit_query_message(
+                query,
+                f"⚠️ <b>Confirm Group Removal</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"Are you sure you want to unlink group <code>{html.escape(gid_str)}</code> from OTP forwarding?\n"
+                f"• <b>Active Groups:</b> <code>{len(all_current)} / {MAX_FORWARDING_GROUPS}</code>\n"
+                f"• <b>After Removal:</b> <code>{len(all_current) - 1} / {MAX_FORWARDING_GROUPS}</code>\n\n"
+                f"OTPs will no longer be forwarded to this group.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb
+            )
+
+        elif query.data.startswith("grp_del_exec_"):
+            gid_str = query.data.replace("grp_del_exec_", "").strip()
             try:
-                await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+                ok, reason = remove_dynamic_linked_group(int(gid_str))
+                if ok:
+                    await _answer(f"Group {gid_str} removed! 🗑️")
+                elif reason == "MIN_LIMIT_REACHED":
+                    await _answer("⚠️ Minimum 1 group required! Cannot remove the last active group.", show_alert=True)
+                elif reason == "ENV_PROTECTED":
+                    await _answer("🔒 This group is configured in server secret settings.", show_alert=True)
+                else:
+                    await _answer("Could not remove group", show_alert=True)
             except Exception:
-                await query.message.reply_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+                await _answer("Error removing group", show_alert=True)
+            msg_text, markup = build_groups_list_view()
+            await _safe_edit_query_message(query, text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
 
-    elif query.data.startswith("link_del_execute_"):
-        btn_id = query.data.replace("link_del_execute_", "").strip()
-        buttons = get_custom_link_buttons()
-        found = next((b for b in buttons if str(b["id"]) == btn_id), None)
-        new_list = [b for b in buttons if str(b["id"]) != btn_id]
-        save_custom_link_buttons(new_list)
-        await query.answer("Button removed! 🗑️", show_alert=False)
-        deleted_name = html.escape(found["text"]) if found else "Button"
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("◀️ Back to Buttons List", callback_data="link_list")]
-        ])
-        await query.edit_message_text(
-            f"✅ <b>Button Removed!</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"<code>{deleted_name}</code> has been removed from all forwarded group OTP messages.\n\n"
-            f"• <b>Remaining Active Buttons:</b> <code>{len(new_list)}</code>\n"
-            f"• <b>Synced:</b> <code>Secret Cloud DB 🔒</code>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=kb
-        )
+        elif query.data == "grp_clear_confirm":
+            all_current = get_target_group_chat_ids()
+            dynamic_groups = get_dynamic_linked_groups()
+            env_remaining = [g for g in all_current if g not in dynamic_groups]
+            if len(env_remaining) < MIN_FORWARDING_GROUPS:
+                await _answer("⚠️ Minimum 1 group required! Clearing dynamic groups would leave 0 groups.", show_alert=True)
+                return
 
-    elif query.data == "link_clear_all_confirm":
-        await query.answer()
-        msg_text, markup = build_buttons_clear_all_confirm_view()
-        try:
-            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
-        except Exception:
-            await query.message.reply_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
-
-    elif query.data == "link_clear_all_execute":
-        save_custom_link_buttons([])
-        await query.answer("All buttons cleared! 🗑️", show_alert=False)
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("➕ Add New Button", callback_data="link_add_prompt")],
-            [InlineKeyboardButton("◀️ Back to List", callback_data="link_list")],
-        ])
-        await query.edit_message_text(
-            "✅ <b>All Custom Buttons Cleared!</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "All custom buttons have been removed. Forwarded OTP messages will only display the OTP copy button.\n\n"
-            "• <b>Storage:</b> <code>Cleared and Synced to Cloud DB 🔒</code>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=kb
-        )
-
-    elif query.data.startswith("link_rename_"):
-        btn_id = query.data.replace("link_rename_", "").strip()
-        buttons = get_custom_link_buttons()
-        found = next((b for b in buttons if str(b["id"]) == btn_id), None)
-        if found:
-            context.user_data["awaiting_btn_action"] = {"action": "rename", "id": found["id"]}
-            context.user_data["prompt_msg_id"] = query.message.message_id
-            context.user_data["prompt_chat_id"] = query.message.chat_id
-            await query.answer("Send new name in chat 💬")
+            await _answer()
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("◀️ Cancel / Back", callback_data=f"link_view_{found['id']}")]
+                [
+                    InlineKeyboardButton("⚠️ Yes, Clear All", callback_data="grp_clear_exec"),
+                    InlineKeyboardButton("❌ Cancel", callback_data="grp_list"),
+                ]
             ])
-            await query.edit_message_text(
-                f"✏️ <b>Change Name for #{found['id']}</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"• <b>Current Name:</b> <code>{html.escape(found['text'])}</code>\n"
-                f"• <b>Target URL:</b> <code>{html.escape(found['url'])}</code>\n\n"
-                f"💬 <b>Send the new button name</b> directly in this chat:",
+            await _safe_edit_query_message(
+                query,
+                "⚠️ <b>Confirm Clear Added Groups</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "Are you sure you want to remove all admin-added forwarding groups?\n"
+                "(Server secret groups will remain active).",
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb
             )
 
-    elif query.data.startswith("link_reurl_"):
-        btn_id = query.data.replace("link_reurl_", "").strip()
-        buttons = get_custom_link_buttons()
-        found = next((b for b in buttons if str(b["id"]) == btn_id), None)
-        if found:
-            context.user_data["awaiting_btn_action"] = {"action": "reurl", "id": found["id"]}
-            context.user_data["prompt_msg_id"] = query.message.message_id
-            context.user_data["prompt_chat_id"] = query.message.chat_id
-            await query.answer("Send new URL or bot username 💬")
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("◀️ Cancel / Back", callback_data=f"link_view_{found['id']}")]
-            ])
-            await query.edit_message_text(
-                f"🔗 <b>Change URL for #{found['id']}</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"• <b>Button:</b> <code>{html.escape(found['text'])}</code>\n"
-                f"• <b>Current URL:</b> <code>{html.escape(found['url'])}</code>\n\n"
-                f"💬 <b>Send the new link URL or bot username</b> directly in this chat:\n"
-                f"<code>https://...</code> or <code>@bot_username</code>",
-                parse_mode=ParseMode.HTML,
-                reply_markup=kb
-            )
-
-    elif query.data == "link_add_prompt":
-        context.user_data["awaiting_btn_action"] = {"action": "add"}
-        context.user_data["prompt_msg_id"] = query.message.message_id
-        context.user_data["prompt_chat_id"] = query.message.chat_id
-        await query.answer("Send new button details 💬")
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("◀️ Cancel / Back", callback_data="link_list")]
-        ])
-        await query.edit_message_text(
-            "➕ <b>Add New Custom Button</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "Custom buttons appear side-by-side below OTP messages in groups.\n\n"
-            "💬 <b>Send button name and link or bot username</b> in chat using this format:\n"
-            "<code>Button Name | @bot_username</code>\n"
-            "<i>or:</i> <code>Button Name | https://yourlink.com</code>\n\n"
-            "<i>Examples:</i>\n"
-            "• <code>🤖 Number Bot | @my_number_bot</code>\n"
-            "• <code>📢 Join Channel | https://t.me/mychannel</code>\n"
-            "• <code>👥 Support | @mysupport</code>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=kb
-        )
-
-    elif query.data == "grp_list":
-        context.user_data.pop("awaiting_grp_action", None)
-        msg_text, markup = build_groups_list_view()
-        try:
-            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
-            await query.answer("✅ Refreshed")
-        except Exception as e:
-            err_str = str(e).lower()
-            if "message is not modified" in err_str or "not modified" in err_str:
-                await query.answer("✅ Already up to date")
-            else:
-                await query.answer()
-                try:
-                    await query.message.reply_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
-                except Exception:
-                    pass
-
-    elif query.data == "grp_max_reached":
-        await query.answer("⚠️ Maximum limit of 10 groups reached! Remove an existing group before linking a new one.", show_alert=True)
-
-    elif query.data.startswith("grp_del_confirm_"):
-        gid_str = query.data.replace("grp_del_confirm_", "").strip()
-        all_current = get_target_group_chat_ids()
-        if len(all_current) <= MIN_FORWARDING_GROUPS:
-            await query.answer("⚠️ Minimum 1 group required! Cannot remove the only remaining active group.", show_alert=True)
-            return
-
-        await query.answer()
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("✅ Yes, Remove", callback_data=f"grp_del_exec_{gid_str}"),
-                InlineKeyboardButton("❌ Cancel", callback_data="grp_list"),
-            ]
-        ])
-        await query.edit_message_text(
-            f"⚠️ <b>Confirm Group Removal</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"Are you sure you want to unlink group <code>{gid_str}</code> from OTP forwarding?\n"
-            f"• <b>Active Groups:</b> <code>{len(all_current)} / {MAX_FORWARDING_GROUPS}</code>\n"
-            f"• <b>After Removal:</b> <code>{len(all_current) - 1} / {MAX_FORWARDING_GROUPS}</code>\n\n"
-            f"OTPs will no longer be forwarded to this group.",
-            parse_mode=ParseMode.HTML,
-            reply_markup=kb
-        )
-
-    elif query.data.startswith("grp_del_exec_"):
-        gid_str = query.data.replace("grp_del_exec_", "").strip()
-        try:
-            ok, reason = remove_dynamic_linked_group(int(gid_str))
+        elif query.data == "grp_clear_exec":
+            ok, reason = clear_dynamic_linked_groups()
             if ok:
-                await query.answer(f"Group {gid_str} removed! 🗑️")
-            elif reason == "MIN_LIMIT_REACHED":
-                await query.answer("⚠️ Minimum 1 group required! Cannot remove the last active group.", show_alert=True)
-            elif reason == "ENV_PROTECTED":
-                await query.answer("🔒 This group is configured in server secret settings.", show_alert=True)
+                await _answer("All dynamic groups cleared! 🗑️")
             else:
-                await query.answer("Could not remove group", show_alert=True)
-        except Exception:
-            await query.answer("Error removing group", show_alert=True)
-        msg_text, markup = build_groups_list_view()
-        await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
+                await _answer("⚠️ Minimum 1 group required! Cannot clear.", show_alert=True)
+            msg_text, markup = build_groups_list_view()
+            await _safe_edit_query_message(query, text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
 
-    elif query.data == "grp_clear_confirm":
-        all_current = get_target_group_chat_ids()
-        dynamic_groups = get_dynamic_linked_groups()
-        env_remaining = [g for g in all_current if g not in dynamic_groups]
-        if len(env_remaining) < MIN_FORWARDING_GROUPS:
-            await query.answer("⚠️ Minimum 1 group required! Clearing dynamic groups would leave 0 groups.", show_alert=True)
-            return
+        elif query.data == "grp_add_prompt":
+            all_current = get_target_group_chat_ids()
+            if len(all_current) >= MAX_FORWARDING_GROUPS:
+                await _answer("⚠️ Maximum limit of 10 groups reached! Remove an existing group first.", show_alert=True)
+                return
+            clear_all_admin_states(context)
+            context.user_data["awaiting_grp_action"] = "add"
+            context.user_data["prompt_msg_id"] = query.message.message_id
+            context.user_data["prompt_chat_id"] = query.message.chat_id
+            await _answer("Send group chat ID 💬")
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")]
+            ])
+            await _safe_edit_query_message(
+                query,
+                f"➕ <b>Link New Forwarding Group</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>Active Groups:</b> <code>{len(all_current)} / {MAX_FORWARDING_GROUPS}</code> (Limit: 1 - 10)\n\n"
+                f"💬 <b>Send the numerical chat ID</b> of the group below (e.g. <code>-1004473973263</code>):\n\n"
+                f"<i>Note: Make sure this bot is added to the group as an admin. Commands will be automatically wiped from the group chat menu (0 commands).</i>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb
+            )
 
-        await query.answer()
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("⚠️ Yes, Clear All", callback_data="grp_clear_exec"),
-                InlineKeyboardButton("❌ Cancel", callback_data="grp_list"),
-            ]
-        ])
-        await query.edit_message_text(
-            "⚠️ <b>Confirm Clear Added Groups</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "Are you sure you want to remove all admin-added forwarding groups?\n"
-            "(Server secret groups will remain active).",
-            parse_mode=ParseMode.HTML,
-            reply_markup=kb
-        )
-
-    elif query.data == "grp_clear_exec":
-        ok, reason = clear_dynamic_linked_groups()
-        if ok:
-            await query.answer("All dynamic groups cleared! 🗑️")
-        else:
-            await query.answer("⚠️ Minimum 1 group required! Cannot clear.", show_alert=True)
-        msg_text, markup = build_groups_list_view()
-        await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=markup)
-
-    elif query.data == "grp_add_prompt":
-        all_current = get_target_group_chat_ids()
-        if len(all_current) >= MAX_FORWARDING_GROUPS:
-            await query.answer("⚠️ Maximum limit of 10 groups reached! Remove an existing group first.", show_alert=True)
-            return
-        clear_all_admin_states(context)
-        context.user_data["awaiting_grp_action"] = "add"
-        context.user_data["prompt_msg_id"] = query.message.message_id
-        context.user_data["prompt_chat_id"] = query.message.chat_id
-        await query.answer("Send group chat ID 💬")
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")]
-        ])
-        await query.edit_message_text(
-            f"➕ <b>Link New Forwarding Group</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>Active Groups:</b> <code>{len(all_current)} / {MAX_FORWARDING_GROUPS}</code> (Limit: 1 - 10)\n\n"
-            f"💬 <b>Send the numerical chat ID</b> of the group below (e.g. <code>-1004473973263</code>):\n\n"
-            f"<i>Note: Make sure this bot is added to the group as an admin. Commands will be automatically wiped from the group chat menu (0 commands).</i>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=kb
-        )
-
-    elif query.data == "cancel_admin_action":
-        clear_all_admin_states(context)
-        await query.answer("Operation Cancelled ❌")
-        try:
-            await query.edit_message_text(
+        elif query.data == "cancel_admin_action":
+            clear_all_admin_states(context)
+            await _answer("Operation Cancelled ❌")
+            await _safe_edit_query_message(
+                query,
                 "❌ <b>Operation Cancelled</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 "No changes were made. All current settings remain active.",
                 parse_mode=ParseMode.HTML,
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("📊 View Live Status", callback_data="refresh_dash_msg")]
-                ])
+                ]),
+                fallback_reply=False,
             )
-        except Exception:
-            pass
 
-    elif query.data == "prompt_set_url":
-        clear_all_admin_states(context)
-        context.user_data["awaiting_api_url"] = True
-        context.user_data["prompt_msg_id"] = query.message.message_id
-        context.user_data["prompt_chat_id"] = query.message.chat_id
-        await query.answer("Send new API URL 💬")
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")]
-        ])
-        await query.edit_message_text(
-            f"🌐 <b>Update API Base URL</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>Current URL:</b> <code>{html.escape(client.base_url)}</code>\n\n"
-            f"💬 <b>Please send the new API URL</b> directly in this chat:\n"
-            f"<i>Example:</i> <code>https://thirdwave.im</code>\n\n"
-            f"Or click <b>❌ Cancel</b> below to abort.",
-            parse_mode=ParseMode.HTML,
-            reply_markup=kb
-        )
+        elif query.data == "prompt_set_url":
+            clear_all_admin_states(context)
+            context.user_data["awaiting_api_url"] = True
+            context.user_data["prompt_msg_id"] = query.message.message_id
+            context.user_data["prompt_chat_id"] = query.message.chat_id
+            await _answer("Send new API URL 💬")
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")]
+            ])
+            await _safe_edit_query_message(
+                query,
+                f"🌐 <b>Update API Base URL</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>Current URL:</b> <code>{html.escape(client.base_url)}</code>\n\n"
+                f"💬 <b>Please send the new API URL</b> directly in this chat:\n"
+                f"<i>Example:</i> <code>https://thirdwave.im</code>\n\n"
+                f"Or click <b>❌ Cancel</b> below to abort.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb
+            )
 
-    elif query.data == "reset_url_default":
-        default_url = "https://thirdwave.im"
-        client.update_base_url(default_url)
-        data = load_stored_data()
-        data["thirdwave_base_url"] = default_url
-        save_stored_data(data)
-        asyncio.create_task(sync_data_to_secret_db())
-        await query.answer("API URL Reset to Default ✅")
-        text_view, markup = build_api_url_view()
-        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
-
-    elif query.data == "api_url_menu":
-        clear_all_admin_states(context)
-        text_view, markup = build_api_url_view()
-        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
-
-    elif query.data == "prompt_set_key":
-        clear_all_admin_states(context)
-        context.user_data["awaiting_api_key"] = True
-        context.user_data["prompt_msg_id"] = query.message.message_id
-        context.user_data["prompt_chat_id"] = query.message.chat_id
-        await query.answer("Send new API Key 💬")
-        current_key = client.api_key
-        masked_key = f"{current_key[:8]}...{current_key[-4:]}" if len(current_key) > 12 else (current_key or "<i>None</i>")
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")]
-        ])
-        await query.edit_message_text(
-            f"🔑 <b>Update Thirdwave API Key</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>Current Key:</b> <code>{masked_key}</code>\n\n"
-            f"💬 <b>Please send your new API Key</b> directly in this chat:\n"
-            f"<i>Example:</i> <code>tw_live_1234567890abcdef</code>\n\n"
-            f"Or click <b>❌ Cancel</b> below to abort.",
-            parse_mode=ParseMode.HTML,
-            reply_markup=kb
-        )
-
-    elif query.data == "api_key_menu":
-        clear_all_admin_states(context)
-        text_view, markup = build_api_key_view()
-        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
-
-    elif query.data == "prompt_set_bot_name":
-        clear_all_admin_states(context)
-        context.user_data["awaiting_bot_name"] = True
-        context.user_data["prompt_msg_id"] = query.message.message_id
-        context.user_data["prompt_chat_id"] = query.message.chat_id
-        await query.answer("Send new bot name 💬")
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")]
-        ])
-        await query.edit_message_text(
-            f"✏️ <b>Change Bot Display Name</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>Current Name:</b> <code>{html.escape(get_bot_name())}</code>\n\n"
-            f"💬 <b>Please send the new bot display name</b> (1-64 characters) in chat.\n"
-            f"It will be updated on the Telegram Bot API and saved across reboots.\n\n"
-            f"💡 <i>Tip: Send <code>reset</code> or <code>default</code> to restore default name.</i>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=kb
-        )
-
-    elif query.data == "reset_bot_name_default":
-        default_name = get_default_bot_name()
-        try:
-            await context.bot.set_my_name(name=default_name)
-        except Exception as e:
-            logger.warning(f"Reset bot name error: {e}")
-        data = load_stored_data()
-        data["bot_name"] = default_name
-        data["default_bot_name"] = default_name
-        save_stored_data(data)
-        asyncio.create_task(sync_data_to_secret_db())
-        await query.answer("Bot Name Reset to Default ✅")
-        text_view, markup = build_bot_name_view()
-        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
-
-    elif query.data == "bot_name_menu":
-        clear_all_admin_states(context)
-        text_view, markup = build_bot_name_view()
-        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
-
-    elif query.data and query.data.startswith("fmt_set_"):
-        fmt_labels = {
-            "short": "SMS Format set to Short ⚡ (Header Country)",
-            "classic_short": "SMS Format set to Classic Short ⏳ (Compact, No Extra Space)",
-            "classic_long": "SMS Format set to Classic Long ⏳ (Compact + Full SMS)",
-            "long": "SMS Format set to Long 📜 (With View Full SMS)",
-            "glass_short": "SMS Format set to Direct Short 📩 (Signal Ticket)",
-            "glass_long": "SMS Format set to Direct Full 📩 (Open SMS Card)",
-            "compact_short": "SMS Format set to Direct Compact 📩 (No Extra Space)",
-            "compact_long": "SMS Format set to Compact Full 📩 (No Space + SMS)",
-        }
-        target_fmt = query.data[len("fmt_set_"):]
-        if target_fmt in fmt_labels:
+        elif query.data == "reset_url_default":
+            default_url = "https://thirdwave.im"
+            client.update_base_url(default_url)
             data = load_stored_data()
-            data["sms_format"] = target_fmt
+            data["thirdwave_base_url"] = default_url
             save_stored_data(data)
-            asyncio.create_task(sync_data_to_secret_db())
-            await query.answer(fmt_labels[target_fmt])
-            text_view, markup = build_sms_format_view(preview_mode=target_fmt)
+            create_safe_task(sync_data_to_secret_db())
+            await _answer("API URL Reset to Default ✅")
+            text_view, markup = build_api_url_view()
             await _safe_edit_query_message(query, text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
 
-    elif query.data and query.data.startswith("fmt_preview_"):
-        preview_labels = {
-            "short": "Previewing Short Format (Header Country)",
-            "classic_short": "Previewing Classic Short Format (Compact, No Extra Space)",
-            "classic_long": "Previewing Classic Long Format (Compact + Full SMS)",
-            "long": "Previewing Long Format (With View Full SMS)",
-            "glass_short": "Previewing Direct Short Format (Signal Ticket)",
-            "glass_long": "Previewing Direct Full Format (Open SMS Card)",
-            "compact_short": "Previewing Direct Compact Format (No Extra Space)",
-            "compact_long": "Previewing Compact Full Format (No Space + SMS)",
-        }
-        target_fmt = query.data[len("fmt_preview_"):]
-        if target_fmt in preview_labels:
-            await query.answer(preview_labels[target_fmt])
-            text_view, markup = build_sms_format_view(preview_mode=target_fmt)
+        elif query.data == "api_url_menu":
+            clear_all_admin_states(context)
+            text_view, markup = build_api_url_view()
             await _safe_edit_query_message(query, text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
 
-    elif query.data in ("admin_manage_admins", "admin_panel"):
-        clear_all_admin_states(context)
-        text_view, markup = build_admin_manage_view() if query.data == "admin_manage_admins" else build_status_dashboard()
-        try:
-            await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup, disable_web_page_preview=True)
-        except Exception as e:
-            if "not modified" not in str(e).lower():
-                try:
-                    await query.answer("Updated")
-                except Exception:
-                    pass
+        elif query.data == "prompt_set_key":
+            clear_all_admin_states(context)
+            context.user_data["awaiting_api_key"] = True
+            context.user_data["prompt_msg_id"] = query.message.message_id
+            context.user_data["prompt_chat_id"] = query.message.chat_id
+            await _answer("Send new API Key 💬")
+            current_key = client.api_key
+            raw_masked = f"{current_key[:8]}...{current_key[-4:]}" if len(current_key) > 12 else current_key
+            masked_html = f"<code>{html.escape(raw_masked)}</code>" if raw_masked else "<i>None</i>"
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")]
+            ])
+            await _safe_edit_query_message(
+                query,
+                f"🔑 <b>Update Thirdwave API Key</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>Current Key:</b> {masked_html}\n\n"
+                f"💬 <b>Please send your new API Key</b> directly in this chat:\n"
+                f"<i>Example:</i> <code>tw_live_1234567890abcdef</code>\n\n"
+                f"Or click <b>❌ Cancel</b> below to abort.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb
+            )
 
-    elif query.data == "close_admin_manage":
-        clear_all_admin_states(context)
-        await query.answer("Closed 🔒")
-        try:
-            await query.edit_message_text(
+        elif query.data == "api_key_menu":
+            clear_all_admin_states(context)
+            text_view, markup = build_api_key_view()
+            await _safe_edit_query_message(query, text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+        elif query.data == "prompt_set_bot_name":
+            clear_all_admin_states(context)
+            context.user_data["awaiting_bot_name"] = True
+            context.user_data["prompt_msg_id"] = query.message.message_id
+            context.user_data["prompt_chat_id"] = query.message.chat_id
+            await _answer("Send new bot name 💬")
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_admin_action")]
+            ])
+            await _safe_edit_query_message(
+                query,
+                f"✏️ <b>Change Bot Display Name</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>Current Name:</b> <code>{html.escape(get_bot_name())}</code>\n\n"
+                f"💬 <b>Please send the new bot display name</b> (1-64 characters) in chat.\n"
+                f"It will be updated on the Telegram Bot API and saved across reboots.\n\n"
+                f"💡 <i>Tip: Send <code>reset</code> or <code>default</code> to restore default name.</i>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb
+            )
+
+        elif query.data == "reset_bot_name_default":
+            default_name = get_default_bot_name()
+            try:
+                await context.bot.set_my_name(name=default_name)
+            except Exception as e:
+                logger.warning(f"Reset bot name error: {e}")
+            data = load_stored_data()
+            data["bot_name"] = default_name
+            data["default_bot_name"] = default_name
+            save_stored_data(data)
+            create_safe_task(sync_data_to_secret_db())
+            await _answer("Bot Name Reset to Default ✅")
+            text_view, markup = build_bot_name_view()
+            await _safe_edit_query_message(query, text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+        elif query.data == "bot_name_menu":
+            clear_all_admin_states(context)
+            text_view, markup = build_bot_name_view()
+            await _safe_edit_query_message(query, text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+        elif query.data and query.data.startswith("fmt_set_"):
+            fmt_labels = {
+                "short": "SMS Format set to Short ⚡ (Header Country)",
+                "classic_short": "SMS Format set to Classic Short ⏳ (Compact, No Extra Space)",
+                "classic_long": "SMS Format set to Classic Long ⏳ (Compact + Full SMS)",
+                "long": "SMS Format set to Long 📜 (With View Full SMS)",
+                "glass_short": "SMS Format set to Direct Short 📩 (Signal Ticket)",
+                "glass_long": "SMS Format set to Direct Full 📩 (Open SMS Card)",
+                "compact_short": "SMS Format set to Direct Compact 📩 (No Extra Space)",
+                "compact_long": "SMS Format set to Compact Full 📩 (No Space + SMS)",
+            }
+            target_fmt = query.data[len("fmt_set_"):]
+            if target_fmt in fmt_labels:
+                data = load_stored_data()
+                data["sms_format"] = target_fmt
+                save_stored_data(data)
+                create_safe_task(sync_data_to_secret_db())
+                await _answer(fmt_labels[target_fmt])
+                text_view, markup = build_sms_format_view(preview_mode=target_fmt)
+                await _safe_edit_query_message(query, text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+        elif query.data and query.data.startswith("fmt_preview_"):
+            preview_labels = {
+                "short": "Previewing Short Format (Header Country)",
+                "classic_short": "Previewing Classic Short Format (Compact, No Extra Space)",
+                "classic_long": "Previewing Classic Long Format (Compact + Full SMS)",
+                "long": "Previewing Long Format (With View Full SMS)",
+                "glass_short": "Previewing Direct Short Format (Signal Ticket)",
+                "glass_long": "Previewing Direct Full Format (Open SMS Card)",
+                "compact_short": "Previewing Direct Compact Format (No Extra Space)",
+                "compact_long": "Previewing Compact Full Format (No Space + SMS)",
+            }
+            target_fmt = query.data[len("fmt_preview_"):]
+            if target_fmt in preview_labels:
+                await _answer(preview_labels[target_fmt])
+                text_view, markup = build_sms_format_view(preview_mode=target_fmt)
+                await _safe_edit_query_message(query, text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+        elif query.data in ("admin_manage_admins", "admin_panel"):
+            clear_all_admin_states(context)
+            text_view, markup = build_admin_manage_view() if query.data == "admin_manage_admins" else build_status_dashboard()
+            changed = await _safe_edit_query_message(query, text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup, disable_web_page_preview=True, fallback_reply=False)
+            await _answer("Updated" if changed else "✅ Already up to date")
+
+        elif query.data == "close_admin_manage":
+            clear_all_admin_states(context)
+            await _answer("Closed 🔒")
+            await _safe_edit_query_message(
+                query,
                 "🔒 <b>Administrator Panel Closed</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 "<i>The administrator management panel has been closed safely.</i>",
                 parse_mode=ParseMode.HTML,
-                reply_markup=None
+                reply_markup=None,
+                fallback_reply=False,
             )
-        except Exception:
-            pass
 
-    elif query.data == "admin_add_admin_prompt":
-        context.user_data["awaiting_add_admin"] = True
-        context.user_data["prompt_msg_id"] = query.message.message_id
-        context.user_data["prompt_chat_id"] = query.message.chat_id
-        text = (
-            "➕ <b>Add New Administrator</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "Send the numerical <b>Telegram User ID</b> of the user you wish to promote to Admin.\n\n"
-            "💡 <i>Tip: The user can check their ID via @userinfobot.</i>"
-        )
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_admins")]
-        ])
-        await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        elif query.data == "admin_add_admin_prompt":
+            context.user_data["awaiting_add_admin"] = True
+            context.user_data["prompt_msg_id"] = query.message.message_id
+            context.user_data["prompt_chat_id"] = query.message.chat_id
+            text = (
+                "➕ <b>Add New Administrator</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "Send the numerical <b>Telegram User ID</b> of the user you wish to promote to Admin.\n\n"
+                "💡 <i>Tip: The user can check their ID via @userinfobot.</i>"
+            )
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_admins")]
+            ])
+            await _safe_edit_query_message(query, text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
 
-    elif query.data.startswith("admin_inspect_"):
-        target_id = int(query.data.split("_")[2])
-        admins = get_all_admin_details()
-        admin_info = next((a for a in admins if a["user_id"] == target_id), None)
+        elif query.data.startswith("admin_inspect_"):
+            try:
+                target_id = int(query.data.split("_")[2])
+            except (IndexError, ValueError):
+                await _answer("⚠️ Invalid admin ID.", show_alert=True)
+                return
+            admins = get_all_admin_details()
+            admin_info = next((a for a in admins if a["user_id"] == target_id), None)
 
-        fname = (admin_info.get("first_name") if admin_info else "") or "Administrator"
-        uname = (admin_info.get("username") if admin_info else "")
-        u_tag = f"@{html.escape(uname)}" if uname else "<i>None</i>"
-        is_super = admin_info.get("is_super", False) if admin_info else (target_id in ADMIN_USER_IDS)
-        role_badge = "👑 <b>Super Administrator</b> (Configured via .env)" if is_super else "🛡️ <b>Administrator</b> (Added via Bot)"
+            fname = (admin_info.get("first_name") if admin_info else "") or "Administrator"
+            uname = (admin_info.get("username") if admin_info else "")
+            u_tag = f"@{html.escape(uname)}" if uname else "<i>None</i>"
+            is_super = admin_info.get("is_super", False) if admin_info else (target_id in ADMIN_USER_IDS)
+            role_badge = "👑 <b>Super Administrator</b> (Configured via .env)" if is_super else "🛡️ <b>Administrator</b> (Added via Bot)"
 
-        profile_text = (
-            f"👑 <b>Administrator Profile & Access Control</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🆔 <b>Admin ID:</b> <code>{target_id}</code>\n"
-            f"📛 <b>Name:</b> <code>{html.escape(fname)}</code>\n"
-            f"🔗 <b>Username:</b> {u_tag}\n"
-            f"🔰 <b>Role & Tier:</b> {role_badge}\n"
-            f"🛡️ <b>Account Status:</b> <code>Active & Verified</code>\n"
-            f"━━━━━━━━━━━━━━━━━━━━"
-        )
-        buttons = []
-        if not is_super:
-            buttons.append([InlineKeyboardButton("🗑️ Revoke Administrator Privileges", callback_data=f"admin_rm_admin_{target_id}")])
-        buttons.append([InlineKeyboardButton("📋 Back to Admin List", callback_data="admin_manage_admins")])
-        buttons.append([InlineKeyboardButton("❌ Close", callback_data="close_admin_manage")])
-        await query.edit_message_text(profile_text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+            profile_text = (
+                f"👑 <b>Administrator Profile & Access Control</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🆔 <b>Admin ID:</b> <code>{target_id}</code>\n"
+                f"📛 <b>Name:</b> <code>{html.escape(fname)}</code>\n"
+                f"🔗 <b>Username:</b> {u_tag}\n"
+                f"🔰 <b>Role & Tier:</b> {role_badge}\n"
+                f"🛡️ <b>Account Status:</b> <code>Active & Verified</code>\n"
+                f"━━━━━━━━━━━━━━━━━━━━"
+            )
+            buttons = []
+            if not is_super:
+                buttons.append([InlineKeyboardButton("🗑️ Revoke Administrator Privileges", callback_data=f"admin_rm_admin_{target_id}")])
+            buttons.append([InlineKeyboardButton("📋 Back to Admin List", callback_data="admin_manage_admins")])
+            buttons.append([InlineKeyboardButton("❌ Close", callback_data="close_admin_manage")])
+            await _safe_edit_query_message(query, profile_text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
 
-    elif query.data == "admin_remove_admin_menu":
-        admins = get_all_admin_details()
-        removable = [a for a in admins if not a["is_super"]]
-        if not removable:
-            await query.answer("ℹ️ No removable database admins found. Super Admins (from .env) cannot be removed via Telegram.", show_alert=True)
-            return
+        elif query.data == "admin_remove_admin_menu":
+            admins = get_all_admin_details()
+            removable = [a for a in admins if not a["is_super"]]
+            if not removable:
+                await _answer("ℹ️ No removable database admins found. Super Admins (from .env) cannot be removed via Telegram.", show_alert=True)
+                return
 
-        buttons = []
-        for a in removable:
-            u_tag = f"@{a['username']}" if a["username"] else a["first_name"]
-            buttons.append([InlineKeyboardButton(f"🗑️ Remove {u_tag} ({a['user_id']})", callback_data=f"admin_rm_admin_{a['user_id']}")])
+            buttons = []
+            for a in removable:
+                u_tag = f"@{a['username']}" if a["username"] else a["first_name"]
+                buttons.append([InlineKeyboardButton(f"🗑️ Remove {u_tag} ({a['user_id']})", callback_data=f"admin_rm_admin_{a['user_id']}")])
 
-        buttons.append([InlineKeyboardButton("◀️ Back", callback_data="admin_manage_admins")])
-        text = (
-            "🗑️ <b>Remove Administrator</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "Tap an admin below to revoke their administrative privileges:"
-        )
-        await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
+            buttons.append([InlineKeyboardButton("◀️ Back", callback_data="admin_manage_admins")])
+            text = (
+                "🗑️ <b>Remove Administrator</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "Tap an admin below to revoke their administrative privileges:"
+            )
+            await _safe_edit_query_message(query, text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
 
-    elif query.data.startswith("admin_rm_admin_"):
-        target_id = int(query.data.split("_")[3])
-        ok = remove_admin(target_id)
-        if ok:
-            await query.answer(f"✅ Admin privileges revoked for {target_id}!", show_alert=True)
-            asyncio.create_task(notify_admin_revocation(context.bot, target_id))
-        else:
-            await query.answer(f"❌ Could not remove {target_id}.", show_alert=True)
+        elif query.data.startswith("admin_rm_admin_"):
+            try:
+                target_id = int(query.data.split("_")[3])
+            except (IndexError, ValueError):
+                await _answer("⚠️ Invalid admin ID.", show_alert=True)
+                return
+            ok = remove_admin(target_id)
+            if ok:
+                await _answer(f"✅ Admin privileges revoked for {target_id}!", show_alert=True)
+                create_safe_task(notify_admin_revocation(context.bot, target_id))
+            else:
+                await _answer(f"❌ Could not remove {target_id}.", show_alert=True)
 
-        text_view, markup = build_admin_manage_view()
-        await query.edit_message_text(text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
+            text_view, markup = build_admin_manage_view()
+            await _safe_edit_query_message(query, text=text_view, parse_mode=ParseMode.HTML, reply_markup=markup)
 
-    elif query.data in ("refresh_dash", "refresh_dash_msg"):
-        try:
+        elif query.data in ("refresh_dash", "refresh_dash_msg"):
             msg_text, reply_markup = build_status_dashboard()
-            await query.edit_message_text(text=msg_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup, disable_web_page_preview=True)
-            await query.answer("Dashboard Refreshed 🔄")
-        except Exception:
-            await query.answer("Refreshed")
+            changed = await _safe_edit_query_message(query, text=msg_text, parse_mode=ParseMode.HTML, reply_markup=reply_markup, disable_web_page_preview=True, fallback_reply=False)
+            await _answer("Dashboard Refreshed 🔄" if changed else "✅ Dashboard already up to date")
 
-    elif query.data == "confirm_restart":
-        await query.answer("Restarting engine 🔄")
-        try:
-            await query.edit_message_text(
+        elif query.data == "confirm_restart":
+            await _answer("Restarting engine 🔄")
+            await _safe_edit_query_message(
+                query,
                 "🔄 <b>Restarting Bot Engine...</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 "⏳ <i>Saving state and rebooting cleanly...</i>\n"
                 "<i>You will receive a confirmation message once online.</i>",
-                parse_mode=ParseMode.HTML
+                parse_mode=ParseMode.HTML,
+                fallback_reply=False,
             )
-        except Exception:
-            pass
-        await perform_zero_restart_handover(query.message, manual_restart=True)
+            await perform_zero_restart_handover(query.message, manual_restart=True)
 
-    elif query.data == "cancel_restart":
-        await query.answer("Cancelled")
-        try:
-            await query.edit_message_text(
+        elif query.data == "cancel_restart":
+            await _answer("Cancelled")
+            await _safe_edit_query_message(
+                query,
                 "❌ <b>Restart Cancelled</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
                 "The bot engine continues running normally without interruption.",
-                parse_mode=ParseMode.HTML
+                parse_mode=ParseMode.HTML,
+                fallback_reply=False,
             )
-        except Exception:
-            pass
 
-    else:
-        try:
-            await query.answer()
-        except Exception:
-            pass
+        else:
+            await _answer()
+    finally:
+        if not _answered:
+            await _safe_answer_query(query)
 
 async def seturl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat    = update.effective_chat
@@ -5650,11 +5835,7 @@ async def seturl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_bot_setting("thirdwave_base_url", new_url)
     save_stored_data(data)
     if "sync_data_to_secret_db" in globals():
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(sync_data_to_secret_db())
-        except (RuntimeError, Exception):
-            pass
+        create_safe_task(sync_data_to_secret_db())
 
     await msg_obj.reply_text(
         f"✅ <b>API Base URL Successfully Updated!</b>\n"
@@ -5694,17 +5875,13 @@ async def setkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_bot_setting("thirdwave_api_key", new_key)
     save_stored_data(data)
     if "sync_data_to_secret_db" in globals():
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(sync_data_to_secret_db())
-        except (RuntimeError, Exception):
-            pass
+        create_safe_task(sync_data_to_secret_db())
 
     new_masked = f"{new_key[:8]}...{new_key[-4:]}" if len(new_key) > 12 else new_key
     await msg_obj.reply_text(
         f"✅ <b>Thirdwave API Key Successfully Updated!</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"• <b>New Active Key:</b> <code>{new_masked}</code>\n\n"
+        f"• <b>New Active Key:</b> <code>{html.escape(new_masked)}</code>\n\n"
         f"The bot is now requesting OTP traffic with this key in real-time.",
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([
@@ -5741,7 +5918,7 @@ async def setname_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data["bot_name"] = new_name
     data["default_bot_name"] = new_name
     save_stored_data(data)
-    asyncio.create_task(sync_data_to_secret_db())
+    create_safe_task(sync_data_to_secret_db())
 
     await msg_obj.reply_text(
         f"✅ <b>Bot Name Successfully Updated!</b>\n"
@@ -5865,7 +6042,7 @@ async def addadmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("👑 Manage Admins", callback_data="admin_manage_admins")]
             ])
         )
-        asyncio.create_task(notify_admin_promoted(context.bot, target_id))
+        create_safe_task(notify_admin_promoted(context.bot, target_id))
     else:
         await msg_obj.reply_text("❌ Could not add administrator.", parse_mode=ParseMode.HTML)
 
@@ -5895,7 +6072,7 @@ async def removeadmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 [InlineKeyboardButton("👑 Manage Admins", callback_data="admin_manage_admins")]
             ])
         )
-        asyncio.create_task(notify_admin_revocation(context.bot, target_id))
+        create_safe_task(notify_admin_revocation(context.bot, target_id))
     else:
         await msg_obj.reply_text("❌ Could not remove administrator.", parse_mode=ParseMode.HTML)
 
@@ -6011,7 +6188,7 @@ async def send_startup_announcement(application: Application):
             if gist_storage.enabled:
                 try:
                     today_total, total_28h, active_countries = get_dashboard_stats()
-                    asyncio.create_task(gist_storage.save_state(
+                    create_safe_task(gist_storage.save_state(
                         seen_dict=seen_timestamps,
                         is_handover=_is_handover,
                         total_forwarded=today_total,
@@ -6228,7 +6405,7 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         return
 
     # Keep command menu button and slash commands permanently active
-    asyncio.create_task(setup_admin_menu_for_chat(context.bot, chat.id))
+    create_safe_task(setup_admin_menu_for_chat(context.bot, chat.id))
 
     text = (msg_obj.text or "").strip()
 
@@ -6342,7 +6519,7 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
                 ])
 
                 await render_prompt_response(context, prompt_chat_id, prompt_msg_id, msg_obj, confirm_text, confirm_kb)
-                asyncio.create_task(notify_admin_promoted(context.bot, aid))
+                create_safe_task(notify_admin_promoted(context.bot, aid))
             else:
                 fail_text = "❌ <b>Failed to add administrator.</b> Database write error."
                 fail_kb = InlineKeyboardMarkup([
@@ -6373,7 +6550,7 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         data = load_stored_data()
         data["thirdwave_base_url"] = new_url
         save_stored_data(data)
-        asyncio.create_task(sync_data_to_secret_db())
+        create_safe_task(sync_data_to_secret_db())
         resp_text = (
             f"✅ <b>API Base URL Successfully Updated!</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -6398,7 +6575,7 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         data = load_stored_data()
         data["thirdwave_api_key"] = new_key
         save_stored_data(data)
-        asyncio.create_task(sync_data_to_secret_db())
+        create_safe_task(sync_data_to_secret_db())
         new_masked = f"{new_key[:8]}...{new_key[-4:]}" if len(new_key) > 12 else new_key
         resp_text = (
             f"✅ <b>Thirdwave API Key Successfully Updated!</b>\n"
@@ -6433,7 +6610,7 @@ async def keyboard_button_handler(update: Update, context: ContextTypes.DEFAULT_
         data["bot_name"] = new_name
         data["default_bot_name"] = new_name
         save_stored_data(data)
-        asyncio.create_task(sync_data_to_secret_db())
+        create_safe_task(sync_data_to_secret_db())
 
         resp_text = (
             f"✅ <b>Bot Name Successfully Updated!</b>\n"
@@ -6882,6 +7059,11 @@ async def main():
 
     start_health_server()
 
+    start_time = time.time()
+    session_timeout = int(os.getenv("SESSION_TIMEOUT", "0"))
+    _bg_tasks: List[asyncio.Task] = []
+    _saved_handover_before_exit = False
+
     try:
         init_db()
         await application.initialize()
@@ -6905,7 +7087,7 @@ async def main():
                     # Immediately clear in Gist so next session doesn't see it either
                     try:
                         today_total, total_28h, active_countries = get_dashboard_stats()
-                        asyncio.create_task(gist_storage.save_state(
+                        create_safe_task(gist_storage.save_state(
                             seen_dict=seen_timestamps,
                             is_handover=_is_handover,
                             total_forwarded=today_total,
@@ -6928,10 +7110,15 @@ async def main():
             except Exception as e:
                 logger.debug(f"Initial Gist check notice: {e}")
 
-        create_safe_task(send_startup_announcement(application))
-        create_safe_task(poll_incoming_messages(application))
-        create_safe_task(periodic_db_cleanup_loop())
-        create_safe_task(periodic_gist_sync_loop())
+        for _coro in (
+            send_startup_announcement(application),
+            poll_incoming_messages(application),
+            periodic_db_cleanup_loop(),
+            periodic_gist_sync_loop(),
+        ):
+            _t = create_safe_task(_coro)
+            if _t is not None:
+                _bg_tasks.append(_t)
         async def background_menu_setup():
             try:
                 # 1. Fetch & cache Telegram bot name
@@ -6991,8 +7178,6 @@ async def main():
                 await asyncio.sleep(3.0)
 
         # Resilient keepalive loop with scheduled zero-restart session handover
-        start_time = time.time()
-        session_timeout = int(os.getenv("SESSION_TIMEOUT", "0"))
         if session_timeout > 0:
             logger.info(f"⏱️ Zero-restart handover timer armed: {session_timeout}s ({session_timeout/3600:.2f}h)")
 
@@ -7029,6 +7214,7 @@ async def main():
                             country_counts=active_countries,
                             base_url=client.base_url,
                         )
+                        _saved_handover_before_exit = True
                     logger.info("✅ Pre-handover state saved. Exiting cleanly for next runner switch (exit 0)...")
                     break
                 sleep_chunk = min(15, session_timeout) if session_timeout > 0 else 3600
@@ -7039,6 +7225,11 @@ async def main():
                 logger.error(f"Keepalive loop warning: {e}")
                 await asyncio.sleep(5)
     finally:
+        for _t in _bg_tasks:
+            if not _t.done():
+                _t.cancel()
+        if _bg_tasks:
+            await asyncio.gather(*_bg_tasks, return_exceptions=True)
         try:
             if application.updater and application.updater.running:
                 await application.updater.stop()
@@ -7058,7 +7249,7 @@ async def main():
                 conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
         except Exception:
             pass
-        if gist_storage.enabled:
+        if gist_storage.enabled and not _saved_handover_before_exit:
             today_total, total_28h, active_countries = get_dashboard_stats()
             near_timeout = session_timeout > 0 and (time.time() - start_time) >= (session_timeout - 120)
             await gist_storage.save_state(
